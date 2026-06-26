@@ -11,7 +11,7 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_gv")
-galaxy_seed = 73
+galaxy_seed = 69
 
 [node name="Title" type="Label" parent="." unique_id=1974349325]
 layout_mode = 1

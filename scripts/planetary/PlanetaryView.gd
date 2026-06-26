@@ -16,8 +16,10 @@ var _system_dock:      Control = null   # bottom navigation dock
 var _orbitron:         Font
 var _ring_back:    Node2D = null
 var _ring_front:   Node2D = null
-var _ring_angle:   float  = 0.0   # rotation for ring particles
-var _ring_particles: Array[Dictionary] = []   # [{angle, dist_t, size}]
+var _ring_angle:   float  = 0.0
+var _ring_particles: Array[Dictionary] = []
+var _light_angle:  float  = 0.8
+const LIGHT_SPEED: float = 0.04   # radians per second
 
 func _make_system(root: PlanetData) -> Array[PlanetData]:
 	var arr: Array[PlanetData] = [root]
@@ -55,11 +57,24 @@ func _ready() -> void:
 		# game start — always load home planet from GameState (Terran, persistent seed)
 		planet_to_load = GameState.get_home_planet()
 		_local_system  = _make_system(planet_to_load)
+	# restore light angle, advancing it by however much real time passed while away
+	var now := Time.get_unix_time_from_system() as int
+	if GameState.light_last_unix > 0:
+		var elapsed := float(now - GameState.light_last_unix)
+		GameState.light_angle = fposmod(GameState.light_angle + elapsed * LIGHT_SPEED, TAU)
+	_light_angle = GameState.light_angle
+	GameState.light_last_unix = now
+
 	load_planet(planet_to_load)
+
+func _save_light_angle() -> void:
+	GameState.light_angle     = _light_angle
+	GameState.light_last_unix = Time.get_unix_time_from_system() as int
 
 func _go_back() -> void:
 	if not GameState.solar_unlocked:
 		return
+	_save_light_angle()
 	var sd := _system_solar if _system_solar != null else GameState.get_home_solar()
 	SceneTransition.go("res://scenes/solar/SolarView.tscn", sd)
 
@@ -107,6 +122,7 @@ func load_planet(data: PlanetData) -> void:
 	_update_panel(data)
 	_build_companion_moons(data)
 	_build_rings(data)
+	_build_system_panel()
 	poi_layer.setup(planet_renderer)
 	poi_layer.clear_pois()
 
@@ -337,18 +353,20 @@ func _build_system_panel() -> void:
 		_system_dock.queue_free()
 		_system_dock = null
 
-	# Determine which bodies to show: planet always, moons only if unlocked
-	var pp := GameState.get_planet(current_data.seed) if current_data != null else null
+	# Moons unlock check — use the root planet's progress (not the moon's)
+	var root_planet := _local_system[0]
+	var pp := GameState.get_planet(root_planet.seed) if root_planet != null else null
 	var moons_unlocked := pp != null and pp.moons_unlocked
+
+	# Build visible list: planet always; moons only when unlocked
+	# No locked placeholders — if locked, dock just shows the planet alone
 	var visible_system: Array[PlanetData] = []
 	for body in _local_system:
-		if body == _local_system[0]:   # always show the planet itself
-			visible_system.append(body)
-		elif moons_unlocked:
+		if body == root_planet or moons_unlocked:
 			visible_system.append(body)
 
-	# Show dock only if there are moons (locked or unlocked) — dock shows lock state
-	if _local_system.size() <= 1:
+	# No dock needed if only one body is visible
+	if visible_system.size() <= 1:
 		return
 
 	const THUMB  := 52
@@ -385,18 +403,9 @@ func _build_system_panel() -> void:
 	dock.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bg.add_child(dock)
 
-	# Add locked moon placeholders for undiscovered moons
-	var has_locked_moons := _local_system.size() > 1 and not moons_unlocked
-
-	var body_count := visible_system.size() + (1 if has_locked_moons else 0)
-	var display_list: Array = visible_system.duplicate()
-	if has_locked_moons:
-		display_list.append(null)   # null = locked placeholder
-
-	for body_idx in display_list.size():
-		var body               = display_list[body_idx]
-		var is_locked: bool    = body == null
-		var is_active: bool    = not is_locked and (body == current_data)
+	for body_idx in visible_system.size():
+		var body      = visible_system[body_idx]
+		var is_active: bool = (body == current_data)
 
 		var slot := VBoxContainer.new()
 		slot.add_theme_constant_override("separation", 5)
@@ -407,94 +416,70 @@ func _build_system_panel() -> void:
 		rect.pivot_offset        = Vector2(THUMB, THUMB) * 0.5
 		rect.mouse_filter        = Control.MOUSE_FILTER_STOP
 
-		if is_locked:
-			# ── Locked moon placeholder ──────────────────────────────────────
-			rect.color = Color(0.12, 0.14, 0.20, 1.0)
-			rect.mouse_default_cursor_shape = Control.CURSOR_FORBIDDEN
-			var lock_lbl := Label.new()
-			lock_lbl.text = "🔒"
-			lock_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			lock_lbl.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
-			lock_lbl.size_flags_horizontal = Control.SIZE_FILL
-			lock_lbl.size_flags_vertical   = Control.SIZE_FILL
-			lock_lbl.add_theme_font_size_override("font_size", 18)
-			lock_lbl.modulate = Color(1, 1, 1, 0.35)
-			rect.add_child(lock_lbl)
+		rect.mouse_default_cursor_shape = Control.CURSOR_ARROW if is_active else Control.CURSOR_POINTING_HAND
+		var pd := body as PlanetData
+		_fill_planet_shader(rect, pd, THUMB)
+		if is_active:
+			rect.modulate = Color(1.35, 1.28, 0.85)
 
-			var sub_lbl := Label.new()
-			sub_lbl.text = "???"
-			sub_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			_apply_orbitron(sub_lbl, 8)
-			sub_lbl.modulate = Color(0.5, 0.52, 0.58, 0.5)
-			slot.add_child(rect)
-			slot.add_child(sub_lbl)
-			dock.add_child(slot)
-		else:
-			# ── Normal unlocked body slot ─────────────────────────────────────
-			rect.mouse_default_cursor_shape = Control.CURSOR_ARROW if is_active else Control.CURSOR_POINTING_HAND
-			var pd := body as PlanetData
-			_fill_planet_shader(rect, pd, THUMB)
-			if is_active:
-				rect.modulate = Color(1.35, 1.28, 0.85)
+		var lbl := Label.new()
+		lbl.text = pd.planet_name
+		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_apply_orbitron(lbl, 8)
+		lbl.modulate = Color(1.0, 0.92, 0.55) if is_active else Color(0.75, 0.78, 0.85, 0.7)
 
-			var lbl := Label.new()
-			lbl.text = pd.planet_name
-			lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			_apply_orbitron(lbl, 8)
-			lbl.modulate = Color(1.0, 0.92, 0.55) if is_active else Color(0.75, 0.78, 0.85, 0.7)
+		slot.add_child(rect)
+		slot.add_child(lbl)
+		dock.add_child(slot)
 
-			slot.add_child(rect)
-			slot.add_child(lbl)
-			dock.add_child(slot)
+		# callout label drawn above the slot via a Node2D overlay
+		var callout := Node2D.new()
+		callout.visible = is_active
+		callout.z_index = 20
+		slot.add_child(callout)
+		var body_name: String = pd.planet_name
+		var is_active_ref := is_active
+		var slot_idx      := body_idx
+		var slot_count    := visible_system.size()
+		callout.draw.connect(func() -> void:
+			if _orbitron == null: return
+			var go_right: bool = (slot_idx * 2 >= slot_count - 1)
+			var dir: float = 1.0 if go_right else -1.0
+			var anchor := Vector2(THUMB * 0.5, 0)
+			var diag  := Vector2(10.0 * dir, -28.0 if is_active_ref else -18.0)
+			var horiz := Vector2(28.0 * dir,   0.0)
+			var col   := Color(1.0, 0.92, 0.55) if is_active_ref else Color(0.85, 0.88, 1.0)
+			callout.draw_line(anchor, anchor + diag, Color(col, 0.7), 1.0, true)
+			callout.draw_line(anchor + diag, anchor + diag + horiz, Color(col, 0.7), 1.0, true)
+			callout.draw_circle(anchor, 2.2, Color(col, 0.9))
+			var text_offset := Vector2(3.0 * dir, 4.0) if go_right else Vector2(-3.0, 4.0)
+			var align := HORIZONTAL_ALIGNMENT_LEFT if go_right else HORIZONTAL_ALIGNMENT_RIGHT
+			var text_pos := anchor + diag + horiz + text_offset
+			if not go_right:
+				var tw := _orbitron.get_string_size(body_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 9).x
+				text_pos.x -= tw
+			callout.draw_string(_orbitron, text_pos, body_name, align, -1, 9, col))
 
-			# callout label drawn above the slot via a Node2D overlay
-			var callout := Node2D.new()
-			callout.visible = is_active
-			callout.z_index = 20
-			slot.add_child(callout)
-			var body_name: String = pd.planet_name
-			var is_active_ref := is_active
-			var slot_idx      := body_idx
-			var slot_count    := display_list.size()
-			callout.draw.connect(func() -> void:
-				if _orbitron == null: return
-				var go_right: bool = (slot_idx * 2 >= slot_count - 1)
-				var dir: float = 1.0 if go_right else -1.0
-				var anchor := Vector2(THUMB * 0.5, 0)
-				var diag  := Vector2(10.0 * dir, -28.0 if is_active_ref else -18.0)
-				var horiz := Vector2(28.0 * dir,   0.0)
-				var col   := Color(1.0, 0.92, 0.55) if is_active_ref else Color(0.85, 0.88, 1.0)
-				callout.draw_line(anchor, anchor + diag, Color(col, 0.7), 1.0, true)
-				callout.draw_line(anchor + diag, anchor + diag + horiz, Color(col, 0.7), 1.0, true)
-				callout.draw_circle(anchor, 2.2, Color(col, 0.9))
-				var text_offset := Vector2(3.0 * dir, 4.0) if go_right else Vector2(-3.0, 4.0)
-				var align := HORIZONTAL_ALIGNMENT_LEFT if go_right else HORIZONTAL_ALIGNMENT_RIGHT
-				var text_pos := anchor + diag + horiz + text_offset
-				if not go_right:
-					var tw := _orbitron.get_string_size(body_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 9).x
-					text_pos.x -= tw
-				callout.draw_string(_orbitron, text_pos, body_name, align, -1, 9, col))
+		var cap_lbl     := lbl
+		var cap_callout := callout
+		var cap_active  := is_active
+		rect.mouse_entered.connect(func() -> void:
+			var tw := rect.create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+			tw.tween_property(rect, "scale", Vector2(1.22, 1.22), 0.12)
+			cap_lbl.modulate = Color(1.0, 1.0, 1.0)
+			cap_callout.visible = true
+			cap_callout.queue_redraw())
+		rect.mouse_exited.connect(func() -> void:
+			var tw := rect.create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+			tw.tween_property(rect, "scale", Vector2(1.0, 1.0), 0.10)
+			cap_lbl.modulate = Color(1.0, 0.92, 0.55) if cap_active else Color(0.75, 0.78, 0.85, 0.7)
+			cap_callout.visible = cap_active)
 
-			var cap_lbl     := lbl
-			var cap_callout := callout
-			var cap_active  := is_active
-			rect.mouse_entered.connect(func() -> void:
-				var tw := rect.create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-				tw.tween_property(rect, "scale", Vector2(1.22, 1.22), 0.12)
-				cap_lbl.modulate = Color(1.0, 1.0, 1.0)
-				cap_callout.visible = true
-				cap_callout.queue_redraw())
-			rect.mouse_exited.connect(func() -> void:
-				var tw := rect.create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-				tw.tween_property(rect, "scale", Vector2(1.0, 1.0), 0.10)
-				cap_lbl.modulate = Color(1.0, 0.92, 0.55) if cap_active else Color(0.75, 0.78, 0.85, 0.7)
-				cap_callout.visible = cap_active)
-
-			if not is_active:
-				var captured_body: PlanetData = pd
-				rect.gui_input.connect(func(e: InputEvent) -> void:
-					if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
-						load_planet(captured_body))
+		if not is_active:
+			var captured_body: PlanetData = pd
+			rect.gui_input.connect(func(e: InputEvent) -> void:
+				if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
+					load_planet(captured_body))
 
 	# center horizontally, auto-height growing upward from 52px above bottom
 	# stick to bottom of planet container, centered horizontally within it
@@ -523,7 +508,7 @@ func _fill_planet_shader(rect: ColorRect, body: PlanetData, thumb: int) -> void:
 	mat.set_shader_parameter("seed",              body.seed)
 	mat.set_shader_parameter("terrain_roughness", body.terrain_roughness)
 	mat.set_shader_parameter("rotation_offset",   0.0)
-	mat.set_shader_parameter("light_direction",   Vector3(0.6, -0.55, 0.65))
+	mat.set_shader_parameter("light_direction",   Vector3(cos(_light_angle) * 0.85, -0.45, sin(_light_angle) * 0.55).normalized())
 	var stype := PlanetData.get_shader_type(body.planet_type)
 	match stype:
 		PlanetData.ShaderType.ROCKY:
@@ -578,12 +563,23 @@ func _on_resize() -> void:
 	await get_tree().process_frame
 	_update_aspect()
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	_update_aspect()
 	if _ring_back != null or _ring_front != null:
 		_ring_angle = planet_renderer.get_rotation_offset()
 		if _ring_back  and is_instance_valid(_ring_back):  _ring_back.queue_redraw()
 		if _ring_front and is_instance_valid(_ring_front): _ring_front.queue_redraw()
+
+	_light_angle = fposmod(_light_angle + delta * LIGHT_SPEED, TAU)
+	_apply_light_angle()
+
+func _apply_light_angle() -> void:
+	if planet_renderer == null or planet_renderer.material == null:
+		return
+	var lx := cos(_light_angle) * 0.85
+	var lz := sin(_light_angle) * 0.55
+	var ld := Vector3(lx, -0.45, lz).normalized()
+	(planet_renderer.material as ShaderMaterial).set_shader_parameter("light_direction", ld)
 
 func _on_planet_clicked(_screen_pos: Vector2) -> void:
 	pass

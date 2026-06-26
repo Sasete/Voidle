@@ -21,10 +21,14 @@ var _moon_base_pos:   Array[Vector2]       = []
 var _mini:        ColorRect
 var _hover_label: Label
 var _ring_front:  Node2D   # child drawn on top of planet for ring front half
+var _badge:       PanelContainer = null
+var _badge_label: Label          = null
 var _hover:       bool   = false
 var _height:      float  = 0.0
-var _hover_tween: Tween  = null
-var _is_home:     bool   = false
+var _hover_tween:    Tween  = null
+var _is_home:        bool   = false
+var _settlement_lv:  int    = 0
+var _orbitron:       Font   = null
 
 func setup(data: PlanetData, radius_x: float, start_angle: float) -> void:
 	planet_data    = data
@@ -44,8 +48,15 @@ func _process(delta: float) -> void:
 	_rotation_offset = fposmod(_rotation_offset + _spin_speed * delta, TAU)
 	if _mini and _mini.material:
 		(_mini.material as ShaderMaterial).set_shader_parameter("rotation_offset", _rotation_offset)
-	# keep rings in sync with _mini scale during hover tween; pulse home marker
-	if _is_home or _hover or (_mini and _mini.scale.x > 1.01):
+	# reposition badge when scale changes (hover tween)
+	if _badge and is_instance_valid(_badge) and _mini and _mini.scale.x != 1.0:
+		var scale_x := _mini.scale.x
+		var half_px := float(SIZE) * 0.5 * scale_x
+		var bh := _badge.size.y
+		_badge.position.y = half_px - bh * 0.55
+
+	# keep rings in sync with _mini scale during hover tween
+	if _hover or (_mini and _mini.scale.x > 1.01):
 		queue_redraw()
 		if _ring_front:
 			_ring_front.queue_redraw()
@@ -131,7 +142,7 @@ func _build() -> void:
 
 	_hover_label = Label.new()
 	_hover_label.text    = planet_data.planet_name
-	var _orbitron := load("res://Fonts/Orbitron-VariableFont_wght.ttf") as Font
+	_orbitron = load("res://Fonts/Orbitron-VariableFont_wght.ttf") as Font
 	if _orbitron:
 		_hover_label.add_theme_font_override("font", _orbitron)
 	_hover_label.add_theme_font_size_override("font_size", 13)
@@ -219,9 +230,67 @@ func _draw_rings(target: CanvasItem, from_a: float, to_a: float) -> void:
 		_ring_arc(target, from_a, to_a, rx, yr,
 			Color(col.r, col.g, col.b, alp), 1.8)
 
+func _reposition_badge() -> void:
+	if _badge == null or not is_instance_valid(_badge): return
+	await get_tree().process_frame   # wait one frame so PanelContainer measures itself
+	if not is_instance_valid(_badge): return
+	var scale_x: float = _mini.scale.x if _mini else 1.0
+	var half_px: float = float(SIZE) * 0.5 * scale_x
+	var bw: float = _badge.size.x
+	var bh: float = _badge.size.y
+	_badge.position = Vector2(-bw * 0.5, half_px - bh * 0.55)
+
 func mark_as_home() -> void:
 	_is_home = true
 	queue_redraw()
+
+func set_settlement_level(lv: int) -> void:
+	_settlement_lv = lv
+	if lv <= 0:
+		if _badge and is_instance_valid(_badge):
+			_badge.queue_free()
+			_badge = null
+		return
+	_build_badge(lv)
+
+func _build_badge(lv: int) -> void:
+	if _badge and is_instance_valid(_badge):
+		_badge.queue_free()
+
+	var style := StyleBoxFlat.new()
+	style.bg_color              = Color(0.05, 0.06, 0.14, 0.95)
+	style.border_width_left     = 1
+	style.border_width_right    = 1
+	style.border_width_top      = 1
+	style.border_width_bottom   = 1
+	style.border_color          = Color(0.9, 0.70, 0.15, 0.95)
+	style.corner_radius_top_left     = 3
+	style.corner_radius_top_right    = 3
+	style.corner_radius_bottom_left  = 3
+	style.corner_radius_bottom_right = 3
+	style.content_margin_left   = 5.0
+	style.content_margin_right  = 5.0
+	style.content_margin_top    = 2.0
+	style.content_margin_bottom = 2.0
+	style.shadow_color          = Color(0, 0, 0, 0.6)
+	style.shadow_size           = 2
+
+	_badge_label = Label.new()
+	_badge_label.text = str(lv)
+	if _orbitron:
+		_badge_label.add_theme_font_override("font", _orbitron)
+	_badge_label.add_theme_font_size_override("font_size", 10)
+	_badge_label.add_theme_color_override("font_color", Color(1.0, 0.92, 0.55))
+	_badge_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
+	_badge_label.add_theme_constant_override("outline_size", 3)
+
+	_badge = PanelContainer.new()
+	_badge.add_theme_stylebox_override("panel", style)
+	_badge.z_as_relative = false
+	_badge.z_index       = 150   # above planet, rings, everything
+	_badge.add_child(_badge_label)
+	add_child(_badge)
+	_reposition_badge()
 
 func _on_ring_front_draw() -> void:
 	_draw_rings(_ring_front, 0.0, PI)   # front half (closer to camera)
@@ -230,12 +299,7 @@ func _draw() -> void:
 	# ring back half — drawn before planet child renders
 	_draw_rings(self, PI, TAU)
 
-	# home planet marker: pulsing golden arc
-	if _is_home:
-		var r: float  = float(SIZE) * 0.5 * (_mini.scale.x if _mini else 1.0) + 5.0
-		var pulse_val := fposmod(Time.get_ticks_msec() * 0.002, TAU)
-		var a: float  = 0.55 + 0.25 * sin(pulse_val)
-		draw_arc(Vector2.ZERO, r, 0.0, TAU, 48, Color(1.0, 0.88, 0.35, a), 1.5)
+
 
 	if not _hover:
 		return

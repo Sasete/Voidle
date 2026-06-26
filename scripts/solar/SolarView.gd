@@ -270,6 +270,9 @@ func _build_planets(data: SolarData) -> void:
 		node.setup(data.planets[i], radius_x, start_angle)
 		if data.planets[i].has_meta("__is_home"):
 			node.mark_as_home()
+		if not data.planets[i].custom_pois.is_empty():
+			var lv := GameState.get_planet(data.planets[i].seed).level
+			node.set_settlement_level(lv)
 		_orbits.append(node)
 
 	# asteroid belts — always visible; asteroids only appear after discovery

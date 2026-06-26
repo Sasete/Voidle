@@ -18,6 +18,10 @@ var solar_unlocked:  bool = false
 var galaxy_unlocked: bool = false
 var discovered_asteroids: Array[int] = []
 
+# day/night cycle — persists across scene changes, advances in real time
+var light_angle:          float = 0.8
+var light_last_unix:      int   = 0   # unix timestamp when we last stored the angle
+
 # ── Per-planet progress ───────────────────────────────────────────────────────
 var _planet_progress:       Dictionary = {}
 var _body_resources:        Dictionary = {}
@@ -36,12 +40,9 @@ var _home_solar: SolarData  = null
 # ────────────────────────────────────────────────────────────────────────────
 
 func _ready() -> void:
-	var is_fresh := not load_save()
-	if is_fresh:
+	if home_planet_seed < 0:
 		home_planet_seed = randi_range(1000, 99999)
 	_bootstrap_world()
-	if is_fresh:
-		save()   # persist seed immediately so restarts load the same world
 
 func _bootstrap_world() -> void:
 	# Galaxy first

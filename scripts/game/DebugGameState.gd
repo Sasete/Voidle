@@ -1,5 +1,9 @@
 ## DebugGameState — attach to any node in the scene tree.
-## Use Inspector checkboxes to toggle unlocks at runtime.
+## Keyboard shortcuts (only active when enabled=true):
+##   F1 → toggle solar_unlocked
+##   F2 → toggle galaxy_unlocked
+##   F3 → toggle moons_unlocked (home planet)
+##   F9 → delete save file
 ## Remove this node (or set enabled=false) before shipping.
 @tool
 extends Node
@@ -26,6 +30,21 @@ extends Node
 @export_group("Asteroids")
 @export var discover_asteroid_slot: int = -1
 @export var do_discover: bool = false : set = _do_discover_btn
+
+func _input(event: InputEvent) -> void:
+	if Engine.is_editor_hint() or not enabled: return
+	if not event is InputEventKey or not event.pressed: return
+	match event.keycode:
+		KEY_F1:
+			_set_solar(not GameState.solar_unlocked)
+		KEY_F2:
+			_set_galaxy(not GameState.galaxy_unlocked)
+		KEY_F3:
+			var pp := GameState.get_planet(GameState.home_planet_seed)
+			_set_moons_unlocked(not pp.moons_unlocked)
+		KEY_F9:
+			GameState.delete_save()
+			print("[Debug] Save deleted — restart the game for a fresh world")
 
 func _reset_save_btn(v: bool) -> void:
 	reset_save = false
