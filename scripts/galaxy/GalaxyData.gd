@@ -9,6 +9,12 @@ var links:     Array[Vector2i] = []
 var unlocked:  Array[bool]     = []
 var home_idx:  int             = 0
 
+# persisted view state so returning from SolarView restores the same camera
+var view_offset:   Vector2 = Vector2.ZERO
+var view_zoom:     float   = 0.0   # 0 = unset, use default
+var view_tilt:     float   = 0.52
+var view_rotation: float   = 0.0
+
 func star_count() -> int:
 	return names.size()
 
