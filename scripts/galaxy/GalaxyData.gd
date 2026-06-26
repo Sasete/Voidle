@@ -5,6 +5,7 @@ var names:     Array[String]   = []
 var types:     Array[int]      = []
 var seeds:     Array[int]      = []
 var positions: Array[Vector2]  = []
+var heights:   Array[float]    = []   # slight Z offset per star
 var links:     Array[Vector2i] = []
 var unlocked:  Array[bool]     = []
 var home_idx:  int             = 0
@@ -47,6 +48,7 @@ static func from_seed(s: int) -> GalaxyData:
 	g.types.append(SolarData.StarType.YELLOW_DWARF)
 	g.seeds.append(s % 99999)
 	g.positions.append(Vector2.ZERO)
+	g.heights.append(0.0)
 	g.home_idx = 0
 
 	# random scatter — local neighbourhood, no galaxy shape
@@ -54,8 +56,9 @@ static func from_seed(s: int) -> GalaxyData:
 		var angle := rng.randf_range(0.0, TAU)
 		var dist  := rng.randf_range(55.0, 580.0)
 		if rng.randf() < 0.25:
-			dist *= 0.35   # occasional close cluster
+			dist *= 0.35
 		g.positions.append(Vector2(cos(angle) * dist, sin(angle) * dist))
+		g.heights.append(rng.randf_range(-18.0, 18.0))   # slight height variance
 		g.names.append(_gen_name(rng))
 		g.types.append(_roll_type(rng))
 		g.seeds.append(rng.randi() % 99999)

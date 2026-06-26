@@ -3,11 +3,17 @@ extends Resource
 
 enum StarType { YELLOW_DWARF, RED_DWARF, BLUE_GIANT, ORANGE_SUBGIANT, WHITE_DWARF }
 
-@export var system_name: String = "Unknown System"
-@export var star_type:   StarType = StarType.YELLOW_DWARF
-@export var seed:        int = 0
+@export var system_name:  String = "Unknown System"
+@export var star_type:    StarType = StarType.YELLOW_DWARF
+@export var seed:         int = 0
+@export var is_home:      bool = false   # true for the starting system
 @export var planets:          Array[PlanetData] = []
-@export var asteroid_belt_slots: Array[int] = []  # indices: belt sits after planets[i]
+@export var asteroid_belt_slots: Array[int] = []
+
+# Binary companion
+@export var is_binary:      bool     = false
+@export var secondary_type: StarType = StarType.RED_DWARF
+@export var binary_dist:    float    = 0.0   # px distance from primary (set in from_seed)  # indices: belt sits after planets[i]
 
 static func from_seed(s: int) -> SolarData:
 	var data := SolarData.new()
@@ -33,6 +39,15 @@ static func from_seed(s: int) -> SolarData:
 			pd = PlanetData.from_seed_no_minor(pseed + 3)
 		pd.generate_moons(pseed)
 		data.planets.append(pd)
+
+	# ~25% chance of binary companion (smaller type than primary)
+	if rng.randf() < 0.25:
+		data.is_binary = true
+		var secondary_roll := rng.randi() % 3
+		if   secondary_roll == 0: data.secondary_type = StarType.RED_DWARF
+		elif secondary_roll == 1: data.secondary_type = StarType.WHITE_DWARF
+		else:                     data.secondary_type = StarType.ORANGE_SUBGIANT
+		data.binary_dist = rng.randf_range(80.0, 140.0)
 
 	# 1-2 asteroid belts placed at random gaps between planets
 	var belt_count: int = rng.randi_range(1, 2)

@@ -9,6 +9,10 @@ func refresh(radii: Array[float]) -> void:
 	orbit_radii = radii
 	queue_redraw()
 
+func set_tilt(ratio: float) -> void:
+	y_ratio = ratio
+	queue_redraw()
+
 func _draw() -> void:
 	var count := orbit_radii.size()
 	for i in count:

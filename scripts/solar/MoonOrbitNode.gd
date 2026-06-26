@@ -2,17 +2,28 @@ class_name MoonOrbitNode
 extends Node2D
 
 # Static moon — fixed position relative to its parent planet, no orbit animation.
-const SIZE    := 14
-const Y_RATIO := 0.38
+const SIZE := 14
 
-var _mini: ColorRect
+var _mini:         ColorRect
+var _orbit_x:      float = 0.0
+var _start_angle:  float = 0.0
+var _y_ratio:      float = 0.38
 
 func setup(data: PlanetData, orbit_x: float, start_angle: float) -> void:
-	var z   := sin(start_angle)
-	position   = Vector2(cos(start_angle) * orbit_x, z * orbit_x * Y_RATIO)
+	_orbit_x     = orbit_x
+	_start_angle = start_angle
+	_apply_position()
+	_build(data)
+
+func set_tilt(ratio: float) -> void:
+	_y_ratio = ratio
+	_apply_position()
+
+func _apply_position() -> void:
+	var z   := sin(_start_angle)
+	position   = Vector2(cos(_start_angle) * _orbit_x, z * _orbit_x * _y_ratio)
 	modulate.a = lerp(0.30, 0.90, (z + 1.0) * 0.5)
 	z_index    = 1 if z >= 0.0 else -1
-	_build(data)
 
 func _build(data: PlanetData) -> void:
 	_mini              = ColorRect.new()

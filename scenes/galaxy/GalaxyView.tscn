@@ -1,9 +1,9 @@
-[gd_scene format=3 uid="uid://galaxy_view_001"]
+[gd_scene format=3 uid="uid://dxogq00e3kmbs"]
 
-[ext_resource type="Script" path="res://scripts/galaxy/GalaxyView.gd" id="1_gv"]
-[ext_resource type="FontFile" path="res://Fonts/Orbitron-VariableFont_wght.ttf" id="2_orbitron"]
+[ext_resource type="Script" uid="uid://dk5ommfbxru0k" path="res://scripts/galaxy/GalaxyView.gd" id="1_gv"]
+[ext_resource type="FontFile" uid="uid://ddi2q6ifb6h45" path="res://Fonts/Orbitron-VariableFont_wght.ttf" id="2_orbitron"]
 
-[node name="GalaxyView" type="Control"]
+[node name="GalaxyView" type="Control" unique_id=1643097481]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -11,28 +11,29 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_gv")
+galaxy_seed = 73
 
-[node name="Title" type="Label" parent="."]
+[node name="Title" type="Label" parent="." unique_id=1974349325]
 layout_mode = 1
+anchors_preset = 10
 anchor_right = 1.0
-offset_top = 12
-offset_bottom = 36
+offset_top = 12.0
+offset_bottom = 36.0
+theme_override_colors/font_color = Color(0.55, 0.65, 0.85, 0.6)
 theme_override_fonts/font = ExtResource("2_orbitron")
 theme_override_font_sizes/font_size = 13
-theme_override_colors/font_color = Color(0.55, 0.65, 0.85, 0.6)
 text = "GALAXY MAP"
 horizontal_alignment = 1
-mouse_filter = 2
 
-[node name="Hint" type="Label" parent="."]
+[node name="Hint" type="Label" parent="." unique_id=440152864]
 layout_mode = 1
+anchors_preset = 12
 anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_top = -28
+offset_top = -28.0
+theme_override_colors/font_color = Color(0.4, 0.4, 0.5, 0.45)
 theme_override_fonts/font = ExtResource("2_orbitron")
 theme_override_font_sizes/font_size = 9
-theme_override_colors/font_color = Color(0.4, 0.4, 0.5, 0.45)
 text = "DRAG TO PAN  ·  CLICK STAR TO ENTER SYSTEM"
 horizontal_alignment = 1
-mouse_filter = 2

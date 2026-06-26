@@ -81,10 +81,11 @@ func _process(delta: float) -> void:
 
 func _star_screen_pos(i: int) -> Vector2:
 	var p  := _galaxy.positions[i]
-	# rotate in world space (turntable around vertical axis)
 	var rx := p.x * cos(_rotation) - p.y * sin(_rotation)
 	var ry := p.x * sin(_rotation) + p.y * cos(_rotation)
-	return Vector2(rx * _zoom, ry * _tilt * _zoom) + _offset
+	# height contributes to screen Y inversely with tilt (more visible when viewing flat)
+	var h: float = _galaxy.heights[i] * (1.0 - _tilt) if i < _galaxy.heights.size() else 0.0
+	return Vector2(rx * _zoom, ry * _tilt * _zoom + h * _zoom) + _offset
 
 func _hit_radius(i: int) -> float:
 	return float(STAR_R.get(_galaxy.types[i], 3.5)) * _zoom + 10.0
@@ -256,8 +257,7 @@ func _reset_charge() -> void:
 	_entry_target = -1
 
 func _navigate_to(star_idx: int) -> void:
-	_galaxy.unlock(star_idx)
-	# save camera so we restore it on return
+	# don't auto-unlock — player must survey the system first
 	_galaxy.view_offset   = _offset
 	_galaxy.view_zoom     = _zoom
 	_galaxy.view_tilt     = _tilt
@@ -265,5 +265,19 @@ func _navigate_to(star_idx: int) -> void:
 	var sd := SolarData.from_seed(_galaxy.seeds[star_idx])
 	sd.system_name = _galaxy.names[star_idx]
 	sd.star_type   = _galaxy.types[star_idx] as SolarData.StarType
+	sd.is_home     = (star_idx == _galaxy.home_idx)
+	sd.set_meta("__galaxy_star_idx", star_idx)
+	if sd.is_home and sd.planets.size() > 0:
+		_add_capital_poi(sd.planets[0])
 	sd.set_meta("__galaxy_data", _galaxy)
 	SceneTransition.go("res://scenes/solar/SolarView.tscn", sd)
+
+func _add_capital_poi(planet: PlanetData) -> void:
+	if planet.custom_pois.size() > 0:
+		return
+	var poi             := POIData.new()
+	poi.label           = "Capital"
+	poi.type_tag        = "city"
+	poi.placement       = LocationFinder.Placement.LAND
+	poi.light_intensity = 1.0
+	planet.custom_pois.append(poi)

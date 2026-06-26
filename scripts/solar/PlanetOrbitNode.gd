@@ -20,18 +20,21 @@ var _moon_nodes:      Array[MoonOrbitNode] = []
 var _moon_base_pos:   Array[Vector2]       = []
 var _mini:        ColorRect
 var _hover_label: Label
-var _hover:       bool = false
+var _ring_front:  Node2D   # child drawn on top of planet for ring front half
+var _hover:       bool   = false
+var _height:      float  = 0.0
+var _hover_tween: Tween  = null   # tracked so we can kill before creating a new one
 
 func setup(data: PlanetData, radius_x: float, start_angle: float) -> void:
 	planet_data    = data
 	orbit_radius_x = radius_x
 	orbit_radius_y = radius_x * 0.38
 	angle          = start_angle
-	# each planet spins at a slightly different speed (seed-based)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = data.seed ^ 0xF00D
 	_spin_speed      = rng.randf_range(0.06, 0.18)
 	_rotation_offset = rng.randf_range(0.0, TAU)
+	_height          = rng.randf_range(-28.0, 28.0)
 	_build()
 	_build_moons(data)
 	_update_position()
@@ -40,10 +43,25 @@ func _process(delta: float) -> void:
 	_rotation_offset = fposmod(_rotation_offset + _spin_speed * delta, TAU)
 	if _mini and _mini.material:
 		(_mini.material as ShaderMaterial).set_shader_parameter("rotation_offset", _rotation_offset)
+	# keep rings in sync with _mini scale during hover tween
+	if _hover or (_mini and _mini.scale.x > 1.01):
+		queue_redraw()
+		if _ring_front:
+			_ring_front.queue_redraw()
 
 func set_view_angle(va: float) -> void:
 	_view_angle = va
 	_update_position()
+
+func set_tilt(ratio: float) -> void:
+	orbit_radius_y = orbit_radius_x * ratio
+	for moon in _moon_nodes:
+		moon.set_tilt(ratio)
+	_update_position()
+	for i in _moon_nodes.size():
+		_moon_base_pos[i] = _moon_nodes[i].position
+	if _ring_front:
+		_ring_front.queue_redraw()
 
 func _build() -> void:
 	_mini              = ColorRect.new()
@@ -97,6 +115,12 @@ func _build() -> void:
 	_mini.material = mat
 	add_child(_mini)
 
+	# ring front layer (drawn on top of planet sprite)
+	if planet_data.has_rings:
+		_ring_front = Node2D.new()
+		add_child(_ring_front)
+		_ring_front.draw.connect(_on_ring_front_draw)
+
 	_mini.mouse_entered.connect(_on_hover_start)
 	_mini.mouse_exited.connect(_on_hover_end)
 	_mini.gui_input.connect(func(e: InputEvent) -> void:
@@ -142,29 +166,65 @@ func _on_hover_start() -> void:
 	await get_tree().process_frame
 	_update_label_position()
 	queue_redraw()
-	var tw := create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	tw.tween_property(_mini, "scale", Vector2(1.9, 1.9), 0.14)
+	if _hover_tween:
+		_hover_tween.kill()
+	_hover_tween = create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	_hover_tween.tween_property(_mini, "scale", Vector2(1.9, 1.9), 0.14)
 	const S := 1.9
 	for i in _moon_nodes.size():
 		var moon := _moon_nodes[i]
 		var mt := moon.create_tween().set_parallel(true).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-		mt.tween_property(moon, "scale",    Vector2(S, S),             0.14)
-		mt.tween_property(moon, "position", _moon_base_pos[i] * S,     0.14)
+		mt.tween_property(moon, "scale",    Vector2(S, S),         0.14)
+		mt.tween_property(moon, "position", _moon_base_pos[i] * S, 0.14)
 
 func _on_hover_end() -> void:
 	_hover = false
 	hover_end.emit()
 	queue_redraw()
-	var tw := create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-	tw.tween_property(_mini, "scale", Vector2(1.0, 1.0), 0.12)
+	if _hover_tween:
+		_hover_tween.kill()
+	_hover_tween = create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	_hover_tween.tween_property(_mini, "scale", Vector2(1.0, 1.0), 0.12)
 	for i in _moon_nodes.size():
 		var moon := _moon_nodes[i]
 		var mt := moon.create_tween().set_parallel(true).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-		mt.tween_property(moon, "scale",    Vector2(1.0, 1.0),     0.12)
-		mt.tween_property(moon, "position", _moon_base_pos[i],     0.12)
+		mt.tween_property(moon, "scale",    Vector2(1.0, 1.0), 0.12)
+		mt.tween_property(moon, "position", _moon_base_pos[i], 0.12)
 	_hover_label.visible = false
 
+func _ring_arc(target: CanvasItem, from_a: float, to_a: float,
+		rx: float, yr: float, col: Color, w: float) -> void:
+	var pts := PackedVector2Array()
+	var steps := 36
+	for s in steps + 1:
+		var t := from_a + (to_a - from_a) * float(s) / float(steps)
+		pts.append(Vector2(cos(t) * rx, sin(t) * rx * yr))
+	target.draw_polyline(pts, col, w, true)
+
+func _draw_rings(target: CanvasItem, from_a: float, to_a: float) -> void:
+	if not planet_data or not planet_data.has_rings:
+		return
+	var scale_x: float = _mini.scale.x if _mini else 1.0
+	var half: float    = float(SIZE) * 0.5 * scale_x
+	var yr:   float    = orbit_radius_y / maxf(orbit_radius_x, 1.0)
+	var ir:   float = half * planet_data.ring_inner
+	var or_:  float = half * planet_data.ring_outer
+	var col:  Color = planet_data.ring_color
+	var bands: int  = 7
+	for k in bands:
+		var t:   float = float(k) / float(bands - 1)
+		var rx:  float = lerp(ir, or_, t)
+		var alp: float = col.a * lerp(0.55, 0.85, 1.0 - abs(t - 0.5) * 2.0)
+		_ring_arc(target, from_a, to_a, rx, yr,
+			Color(col.r, col.g, col.b, alp), 1.8)
+
+func _on_ring_front_draw() -> void:
+	_draw_rings(_ring_front, 0.0, PI)   # front half (closer to camera)
+
 func _draw() -> void:
+	# ring back half — drawn before planet child renders
+	_draw_rings(self, PI, TAU)
+
 	if not _hover:
 		return
 	var half:  float = SIZE * 0.5
@@ -176,7 +236,9 @@ func _update_position() -> void:
 	var eff:  float = angle + _view_angle
 	var cx:   float = cos(eff)
 	var z:    float = sin(eff)
-	position   = Vector2(cx * orbit_radius_x, z * orbit_radius_y)
+	var y_ratio: float = orbit_radius_y / maxf(orbit_radius_x, 1.0)
+	# height contributes to screen Y proportional to current tilt
+	position   = Vector2(cx * orbit_radius_x, z * orbit_radius_y + _height * y_ratio)
 	modulate.a = lerp(0.35, 1.0, (z + 1.0) * 0.5)
 
 	z_as_relative = false
@@ -189,6 +251,9 @@ func _update_position() -> void:
 	var ld := Vector3(-cx, -z * 0.6, 0.5).normalized()
 	if _mini and _mini.material:
 		(_mini.material as ShaderMaterial).set_shader_parameter("light_direction", ld)
+	queue_redraw()
+	if _ring_front:
+		_ring_front.queue_redraw()
 
 func _update_label_position() -> void:
 	if _hover_label == null:

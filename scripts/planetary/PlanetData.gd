@@ -39,6 +39,12 @@ static func get_shader_path(type: Type) -> String:
 @export var custom_pois: Array[POIData] = []
 @export var moons: Array[PlanetData] = []
 
+# Ring system
+@export var has_rings:   bool  = false
+@export var ring_color:  Color = Color(0.85, 0.78, 0.55, 0.65)
+@export var ring_inner:  float = 1.25
+@export var ring_outer:  float = 1.95
+
 # -----------------------------------------------------------------------
 # Factory
 # -----------------------------------------------------------------------
@@ -181,6 +187,13 @@ static func _apply_type_defaults(data: PlanetData, rng: RandomNumberGenerator) -
 			data.cloud_coverage     = 1.0
 			data.cloud_speed        = rng.randf_range(0.08, 0.20)
 			data.terrain_roughness  = rng.randf_range(0.4, 0.8)
+			# ~55% of gas giants get rings
+			if rng.randf() < 0.55:
+				data.has_rings  = true
+				data.ring_inner = rng.randf_range(1.15, 1.40)
+				data.ring_outer = rng.randf_range(1.75, 2.20)
+				var hue := rng.randf_range(0.07, 0.14)   # warm tan/gold
+				data.ring_color = Color.from_hsv(hue, rng.randf_range(0.15, 0.45), rng.randf_range(0.65, 0.90), rng.randf_range(0.50, 0.72))
 
 static func _generate_name_with_seed(s: int) -> String:
 	var rng := RandomNumberGenerator.new()

@@ -1,7 +1,7 @@
 class_name AsteroidBelt
 extends Node2D
 
-const Y_RATIO      := 0.38
+var Y_RATIO: float  = 0.38
 const DUST_COUNT   := 45
 const RING_R       := 13.0      # targeting circle radius
 const PREVIEW_SIZE := 80
@@ -108,6 +108,10 @@ func set_view_angle(va: float) -> void:
 	_refresh_popup()
 	queue_redraw()
 
+func set_tilt(ratio: float) -> void:
+	Y_RATIO = ratio
+	queue_redraw()
+
 func _ast_pos(i: int) -> Vector2:
 	var a  := _ast_angles[i] + _view_angle
 	var rx := orbit_radius_x + _ast_offsets[i]
@@ -127,22 +131,61 @@ func _process(delta: float) -> void:
 		_refresh_popup()
 	queue_redraw()
 
+var _zoom_charge: int = 0
+
+func _navigate_to_asteroid(idx: int) -> void:
+	var ast_seed: int = idx * 0x1337 ^ int(orbit_radius_x) ^ 0xBEEF
+	var pd := PlanetData.from_seed(ast_seed % 99999)
+	pd.planet_type  = PlanetData.Type.ASTEROID
+	pd.planet_name  = _names[idx]
+	pd.irregularity = 0.55
+	var solar: SolarData = get_tree().root.get_meta("__active_solar") as SolarData if get_tree().root.has_meta("__active_solar") else null
+	pd.set_meta("__solar_data", solar)
+	SceneTransition.go("res://scenes/planetary/PlanetaryView.tscn", pd)
+
 func _input(event: InputEvent) -> void:
 	if _hovered_idx < 0:
+		_zoom_charge = 0
 		return
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
-			# build a PlanetData for this asteroid and navigate to it
-			var ast_seed: int = _hovered_idx * 0x1337 ^ int(orbit_radius_x) ^ 0xBEEF
-			var pd := PlanetData.from_seed(ast_seed % 99999)
-			pd.planet_type   = PlanetData.Type.ASTEROID
-			pd.planet_name   = _names[_hovered_idx]
-			pd.irregularity  = 0.55
-			var solar: SolarData = get_tree().root.get_meta("__active_solar") as SolarData if get_tree().root.has_meta("__active_solar") else null
-			pd.set_meta("__solar_data", solar)
-			SceneTransition.go("res://scenes/planetary/PlanetaryView.tscn", pd)
+			_navigate_to_asteroid(_hovered_idx)
 			get_viewport().set_input_as_handled()
+		elif mb.button_index == MOUSE_BUTTON_WHEEL_UP and mb.pressed:
+			_zoom_charge += 1
+			if _zoom_charge >= 3:
+				_zoom_charge = 0
+				_navigate_to_asteroid(_hovered_idx)
+			get_viewport().set_input_as_handled()
+		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
+			_zoom_charge = 0
+	elif event is InputEventMagnifyGesture:
+		if event.factor > 1.0:
+			_zoom_charge += 1
+			if _zoom_charge >= 3:
+				_zoom_charge = 0
+				_navigate_to_asteroid(_hovered_idx)
+		else:
+			_zoom_charge = 0
+		get_viewport().set_input_as_handled()
+	elif event is InputEventPanGesture:
+		if event.delta.y < -0.5:
+			_zoom_charge += 1
+			if _zoom_charge >= 3:
+				_zoom_charge = 0
+				_navigate_to_asteroid(_hovered_idx)
+		elif event.delta.y > 0.5:
+			_zoom_charge = 0
+		get_viewport().set_input_as_handled()
+
+static func _popup_box_origin(ast_pos: Vector2) -> Vector2:
+	var side := 1.0 if ast_pos.x >= 0.0 else -1.0
+	var bx   := ast_pos.x + side * (RING_R + LINE_GAP)
+	if side < 0.0:
+		bx -= PREVIEW_SIZE + BOX_PAD * 2.0
+	var by := ast_pos.y - PREVIEW_SIZE * 0.5 - BOX_PAD
+	return Vector2(bx, by)
 
 func _refresh_popup() -> void:
 	for i in _previews.size():
@@ -151,17 +194,13 @@ func _refresh_popup() -> void:
 		_bg_panels[i].visible   = hov
 		_name_labels[i].visible = hov
 		if hov:
-			var pos      := _ast_pos(i)
-			var side     := 1.0 if pos.x >= 0.0 else -1.0
-			var box_x    := pos.x + side * (RING_R + LINE_GAP + BOX_PAD + PREVIEW_SIZE * 0.5) - PREVIEW_SIZE * 0.5
-			var box_y    := pos.y - PREVIEW_SIZE * 0.5
-			_previews[i].position   = Vector2(box_x, box_y)
-			# background panel (includes name label area)
-			_bg_panels[i].position  = Vector2(box_x - BOX_PAD, box_y - BOX_PAD)
-			# name label below the box
+			var pos    := _ast_pos(i)
+			var origin := _popup_box_origin(pos)   # top-left of border box (local Node2D space)
+			_previews[i].position  = origin + Vector2(BOX_PAD, BOX_PAD)
+			_bg_panels[i].position = origin
 			var lbl := _name_labels[i]
 			lbl.text     = _names[i]
-			lbl.position = Vector2(box_x, box_y + PREVIEW_SIZE + 4.0)
+			lbl.position = origin + Vector2(BOX_PAD, float(PREVIEW_SIZE) + BOX_PAD * 2.0 + 4.0)
 
 func _draw() -> void:
 	# background dust
@@ -207,25 +246,19 @@ func _draw_spinning_ring(center: Vector2, r: float, alp: float) -> void:
 	draw_circle(center, 2.0, Color(1.0, 0.92, 0.40, alp * 0.8))
 
 func _draw_popup_line_and_box(center: Vector2, alp: float, idx: int) -> void:
-	var pos      := _ast_pos(idx)
-	var side     := 1.0 if pos.x >= 0.0 else -1.0
-	var box_size := float(PREVIEW_SIZE + int(BOX_PAD) * 2)
+	var side   := 1.0 if center.x >= 0.0 else -1.0
+	var origin := _popup_box_origin(center)   # top-left of border box
+	var bw     := float(PREVIEW_SIZE + int(BOX_PAD) * 2)
+	var bh     := float(PREVIEW_SIZE + int(BOX_PAD) * 2)
 
-	# line from ring edge to box
-	var line_start := center + Vector2(side * (RING_R + LINE_GAP), 0.0)
-	var box_left   := center.x + side * (RING_R + LINE_GAP + BOX_PAD)
-	if side < 0.0:
-		box_left = center.x + side * (RING_R + LINE_GAP + BOX_PAD + PREVIEW_SIZE)
-	var line_end := Vector2(box_left, center.y)
+	# short horizontal line from ring edge to box border
+	var line_start := center + Vector2(side * RING_R, 0.0)
+	var line_end   := Vector2(origin.x + (bw if side < 0.0 else 0.0), center.y)
+	draw_line(line_start, line_end, Color(1.0, 0.92, 0.40, alp * 0.85), 1.2, true)
 
-	var col := Color(1.0, 0.92, 0.40, alp * 0.85)
-	draw_line(line_start, line_end, col, 1.2, true)
-
-	# border box around the preview
-	var bx: float = box_left - BOX_PAD if side > 0.0 else box_left - BOX_PAD
-	var by: float = center.y - PREVIEW_SIZE * 0.5 - BOX_PAD
-	draw_rect(Rect2(bx, by, PREVIEW_SIZE + BOX_PAD * 2.0, PREVIEW_SIZE + BOX_PAD * 2.0),
+	# border box
+	draw_rect(Rect2(origin, Vector2(bw, bh)),
 		Color(1.0, 0.92, 0.40, alp * 0.75), false, 1.5)
-	# subtle inner fill
-	draw_rect(Rect2(bx + 1.0, by + 1.0, PREVIEW_SIZE + BOX_PAD * 2.0 - 2.0, PREVIEW_SIZE + BOX_PAD * 2.0 - 2.0),
+	# inner fill
+	draw_rect(Rect2(origin + Vector2(1, 1), Vector2(bw - 2.0, bh - 2.0)),
 		Color(0.05, 0.08, 0.14, alp * 0.65), true)
