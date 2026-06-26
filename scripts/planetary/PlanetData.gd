@@ -75,8 +75,10 @@ func generate_moons(s: int) -> void:
 		Type.VOLCANIC, Type.BARREN:      max_count = 1
 		_:                               max_count = 0
 	var count: int = rng.randi_range(0, max_count)
+	const SUFFIXES := ["a", "b", "c", "d"]
 	for i in count:
 		var moon: PlanetData = make_moon(s * 13 + i * 777 + 1)
+		moon.planet_name = planet_name + " " + SUFFIXES[i]
 		moons.append(moon)
 
 # Convenience presets — pass a seed so name/micro-variation still differs

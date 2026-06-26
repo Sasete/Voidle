@@ -34,15 +34,14 @@ const STAR_PX: Dictionary = {
 }
 
 func _ready() -> void:
-	($RightPanel/PanelContent/BackButton as Button).pressed.connect(
-		func() -> void: back_pressed.emit())
+	($RightPanel/PanelContent/BackButton as Button).pressed.connect(_go_to_galaxy)
 	get_tree().root.size_changed.connect(_on_resize)
 	planet_selected.connect(_on_planet_selected)
 
 	# wait one frame so Control sizes are computed
 	await get_tree().process_frame
 
-	# restore system if returning from PlanetaryView
+	# data injected from GalaxyView (star selected) or PlanetaryView (back)
 	var sd: SolarData = SceneTransition.pending_data as SolarData
 	SceneTransition.pending_data = null
 	if sd != null:
@@ -53,6 +52,12 @@ func _ready() -> void:
 		load_system(SolarData.from_seed(randi() % 99999))
 	else:
 		load_system(SolarData.from_seed(debug_seed))
+
+func _go_to_galaxy() -> void:
+	var gd: GalaxyData = null
+	if _current != null and _current.has_meta("__galaxy_data"):
+		gd = _current.get_meta("__galaxy_data") as GalaxyData
+	SceneTransition.go("res://scenes/galaxy/GalaxyView.tscn", gd)
 
 func _on_planet_selected(pd: PlanetData) -> void:
 	pd.set_meta("__solar_data", _current)   # carry solar system for the back-button
