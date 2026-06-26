@@ -13,6 +13,7 @@ uniform vec3 color_band_a    = vec3(0.72, 0.55, 0.35);
 uniform vec3 color_band_b    = vec3(0.50, 0.32, 0.18);
 uniform vec3 color_storm     = vec3(0.85, 0.70, 0.50);
 uniform vec3 color_atmosphere = vec3(0.72, 0.55, 0.35);
+uniform vec3 light_direction  = vec3(0.6, -0.55, 0.65);
 
 vec3 hash3(vec3 p) {
 	float s = float(seed) * 0.001;
@@ -79,7 +80,7 @@ void fragment() {
 
 		// limb darkening
 		float limb = pow(nz, 0.4);
-		vec3  ld   = normalize(vec3(0.6, -0.55, 0.65));
+		vec3  ld   = normalize(light_direction);
 		float diff = max(dot(n, ld), 0.0);
 		float lit  = smoothstep(0.0, 0.5, diff) * limb;
 		surf *= 0.08 + 0.92 * lit;

@@ -26,7 +26,7 @@ static func noise3(p: Vector3, seed: int) -> float:
 	var v111 := hash3(i+Vector3(1,1,1),seed).dot(f-Vector3(1,1,1))
 
 	return lerp(lerp(lerp(v000,v100,u.x), lerp(v010,v110,u.x), u.y),
-	            lerp(lerp(v001,v101,u.x), lerp(v011,v111,u.x), u.y), u.z)
+				lerp(lerp(v001,v101,u.x), lerp(v011,v111,u.x), u.y), u.z)
 
 static func fbm3(p: Vector3, octaves: int, seed: int) -> float:
 	var v := 0.0; var amp := 0.5; var freq := 1.0
@@ -39,18 +39,47 @@ static func rot_y(p: Vector3, angle: float) -> Vector3:
 	var c := cos(angle); var s := sin(angle)
 	return Vector3(p.x*c + p.z*s, p.y, -p.x*s + p.z*c)
 
-static func terrain_height(lon_rad: float, lat_rad: float, seed: int, roughness: float = 1.0) -> float:
-	var nx := sin(lon_rad) * cos(lat_rad)
-	var ny := -sin(lat_rad)
-	var nz := cos(lon_rad) * cos(lat_rad)
-	return fbm3(Vector3(nx, ny, nz) * 3.2 * roughness, 7, seed)
+static func terrain_height(lon_rad: float, lat_rad: float, seed: int,
+		roughness: float = 1.0, continent_scale: float = 1.0) -> float:
+	var nx: float = sin(lon_rad) * cos(lat_rad)
+	var ny: float = -sin(lat_rad)
+	var nz: float = cos(lon_rad) * cos(lat_rad)
+	return fbm3(Vector3(nx, ny, nz) * 3.2 * roughness * continent_scale, 7, seed)
 
-static func is_land(lon_rad: float, lat_rad: float, seed: int, sea_level: float = 0.0, roughness: float = 1.0) -> bool:
-	return terrain_height(lon_rad, lat_rad, seed, roughness) - sea_level > 0.12
+static func height_class(lon_rad: float, lat_rad: float, seed: int,
+		sea_level: float, roughness: float, continent_scale: float) -> float:
+	return terrain_height(lon_rad, lat_rad, seed, roughness, continent_scale) - sea_level
 
-static func find_land_lon(base_lon: float, lat_rad: float, seed: int, sea_level: float = 0.0, roughness: float = 1.0, tries: int = 36) -> float:
+static func find_land_lon(base_lon: float, lat_rad: float, seed: int,
+		sea_level: float = 0.0, roughness: float = 1.0,
+		continent_scale: float = 1.0, tries: int = 48) -> float:
 	for i in tries:
-		var lon := fposmod(base_lon + (i / float(tries)) * TAU, TAU)
-		if is_land(lon, lat_rad, seed, sea_level, roughness):
+		var lon: float = fposmod(base_lon + (i / float(tries)) * TAU, TAU)
+		if height_class(lon, lat_rad, seed, sea_level, roughness, continent_scale) > 0.12:
 			return lon
 	return base_lon
+
+static func find_sea_lon(base_lon: float, lat_rad: float, seed: int,
+		sea_level: float = 0.0, roughness: float = 1.0,
+		continent_scale: float = 1.0, tries: int = 48) -> float:
+	for i in tries:
+		var lon: float = fposmod(base_lon + (i / float(tries)) * TAU, TAU)
+		if height_class(lon, lat_rad, seed, sea_level, roughness, continent_scale) < -0.10:
+			return lon
+	return base_lon
+
+static func find_coast_lon(base_lon: float, lat_rad: float, seed: int,
+		sea_level: float = 0.0, roughness: float = 1.0,
+		continent_scale: float = 1.0, tries: int = 72) -> float:
+	var best_lon:  float = base_lon
+	var best_dist: float = INF
+	for i in tries:
+		var lon: float = fposmod(base_lon + (i / float(tries)) * TAU, TAU)
+		var rel: float = height_class(lon, lat_rad, seed, sea_level, roughness, continent_scale)
+		# coast = transition zone: slightly above sea level (beach/cliff)
+		if rel > -0.06 and rel < 0.16:
+			var dist: float = abs(rel - 0.04)  # prefer slightly above water
+			if dist < best_dist:
+				best_dist = dist
+				best_lon  = lon
+	return best_lon

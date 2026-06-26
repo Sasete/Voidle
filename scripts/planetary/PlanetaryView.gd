@@ -31,14 +31,31 @@ func load_planet(data: PlanetData) -> void:
 
 	var pois: Array[Dictionary]
 	if data.custom_pois.size() > 0:
+		var lf := LocationFinder.new(data.seed, data.sea_level,
+				data.terrain_roughness, data.continent_scale)
 		for pd: POIData in data.custom_pois:
-			pois.append({"lon_deg": pd.lon_deg, "lat_deg": pd.lat_deg,
-				"label": pd.label, "data": {"type": pd.type_tag}})
+			var lon: float
+			var lat: float
+			if pd.manual_position:
+				lon = deg_to_rad(pd.lon_deg)
+				lat = deg_to_rad(pd.lat_deg)
+			else:
+				var pos: Vector2 = lf.find(pd.placement)
+				lon = pos.x
+				lat = pos.y
+			pois.append({
+				"lon_deg": rad_to_deg(lon), "lat_deg": rad_to_deg(lat),
+				"label": pd.label,
+				"data": {"type": pd.type_tag, "light_intensity": pd.light_intensity}
+			})
 	else:
-		pois = PlanetData.generate_pois(data.planet_type, data.seed, data.sea_level, data.terrain_roughness)
+		pois = PlanetData.generate_pois(data.planet_type, data.seed,
+				data.sea_level, data.terrain_roughness, data.continent_scale)
 
 	for poi in pois:
 		poi_layer.add_poi(poi["lon_deg"], poi["lat_deg"], poi["label"], poi["data"])
+
+	_upload_poi_lights(pois, data)
 
 func redraw() -> void:
 	load_planet(PlanetData.from_seed(randi() % 99999))
@@ -48,10 +65,15 @@ func _setup_material(data: PlanetData) -> void:
 	var mat := ShaderMaterial.new()
 	mat.shader = shader
 
-	var base_radius: float = 0.42 * clamp(data.planet_size, 0.2, 2.0)
+	var sz: float = clamp(data.planet_size, 0.2, 2.0)
+	var base_radius: float = clamp(0.42 * sz, 0.10, 0.48)
+	# scale pixel_count only when planet is large (>1.2) to preserve pixel art feel
+	var pcount: float = 140.0
+	if sz > 1.2:
+		pcount = round(clamp(140.0 * (sz / 1.2), 140.0, 280.0))
 	mat.set_shader_parameter("rotation_offset",   0.0)
-	mat.set_shader_parameter("planet_radius",     clamp(base_radius, 0.10, 0.48))
-	mat.set_shader_parameter("pixel_count",       140.0)
+	mat.set_shader_parameter("planet_radius",     base_radius)
+	mat.set_shader_parameter("pixel_count",       pcount)
 	mat.set_shader_parameter("seed",              data.seed)
 	mat.set_shader_parameter("terrain_roughness", data.terrain_roughness)
 
@@ -63,6 +85,9 @@ func _setup_material(data: PlanetData) -> void:
 			mat.set_shader_parameter("has_clouds",         1.0 if data.has_clouds else 0.0)
 			mat.set_shader_parameter("atmosphere_density", data.atmosphere_density if data.has_atmosphere else 0.0)
 			mat.set_shader_parameter("sea_level",          data.sea_level)
+			mat.set_shader_parameter("continent_scale",    data.continent_scale)
+			mat.set_shader_parameter("specular_strength",  data.specular_strength)
+			mat.set_shader_parameter("city_lights",        data.city_lights)
 			var colors := PlanetData.get_colors(data.planet_type)
 			for key in colors:
 				mat.set_shader_parameter(key, colors[key])
@@ -86,6 +111,29 @@ func _setup_material(data: PlanetData) -> void:
 
 	planet_renderer.material = mat
 	_update_aspect()
+
+func _upload_poi_lights(pois: Array[Dictionary], data: PlanetData) -> void:
+	var mat := planet_renderer.material as ShaderMaterial
+	if mat == null:
+		return
+	var stype := PlanetData.get_shader_type(data.planet_type)
+	if stype != PlanetData.ShaderType.ROCKY:
+		return
+
+	var count: int = mini(pois.size(), 5)
+	mat.set_shader_parameter("poi_count", count)
+	var names := ["poi_lights_0","poi_lights_1","poi_lights_2","poi_lights_3","poi_lights_4"]
+	for i in range(5):
+		if i < count:
+			var lon: float = deg_to_rad(float(pois[i].get("lon_deg", 0.0)))
+			var lat: float = deg_to_rad(float(pois[i].get("lat_deg", 0.0)))
+			var intensity: float = float(pois[i].get("data", {}).get("light_intensity", 1.0))
+			var nx: float = sin(lon) * cos(lat)
+			var ny: float = -sin(lat)
+			var nz: float = cos(lon) * cos(lat)
+			mat.set_shader_parameter(names[i], Vector4(nx, ny, nz, intensity))
+		else:
+			mat.set_shader_parameter(names[i], Vector4(0,0,0,0))
 
 func _update_panel(data: PlanetData) -> void:
 	var name_label  := $RightPanel/PanelContent/PlanetName as Label

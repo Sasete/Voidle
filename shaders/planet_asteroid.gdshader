@@ -1,16 +1,17 @@
 shader_type canvas_item;
 
-uniform float rotation_offset   : hint_range(0.0, 6.2832) = 0.0;
-uniform float planet_radius     : hint_range(0.05, 0.4)   = 0.20;
-uniform float pixel_count       : hint_range(32.0, 512.0) = 140.0;
-uniform float aspect_ratio      : hint_range(0.1, 4.0)    = 1.0;
-uniform float elongation        : hint_range(0.5, 2.5)    = 1.35;
-uniform float irregularity      : hint_range(0.0, 1.0)    = 0.3;   // 0=round, 1=chaotic
-uniform int   seed              : hint_range(0, 99999)    = 12345;
+uniform float rotation_offset : hint_range(0.0, 6.2832) = 0.0;
+uniform float planet_radius   : hint_range(0.05, 0.45)  = 0.18;
+uniform float pixel_count     : hint_range(32.0, 512.0) = 140.0;
+uniform float aspect_ratio    : hint_range(0.1, 4.0)    = 1.0;
+uniform float elongation      : hint_range(0.6, 2.2)    = 1.4;
+uniform float irregularity    : hint_range(0.0, 1.0)    = 0.4;
+uniform float terrain_roughness : hint_range(0.5, 2.0)  = 1.3;
+uniform int   seed             : hint_range(0, 99999)   = 12345;
 
-uniform vec3 color_rock_a   = vec3(0.32, 0.28, 0.24);
-uniform vec3 color_rock_b   = vec3(0.22, 0.20, 0.17);
-uniform vec3 color_highlight = vec3(0.48, 0.44, 0.38);
+uniform vec3 color_rock_dark  = vec3(0.18, 0.16, 0.14);
+uniform vec3 color_rock_mid   = vec3(0.32, 0.28, 0.24);
+uniform vec3 color_rock_light = vec3(0.50, 0.45, 0.38);
 
 vec3 hash3(vec3 p) {
 	float s = float(seed) * 0.001;
@@ -37,53 +38,61 @@ float fbm3(vec3 p, int oct) {
 }
 vec3 rot_y(vec3 p, float a) { float c=cos(a),s=sin(a); return vec3(p.x*c+p.z*s,p.y,-p.x*s+p.z*c); }
 
+// Irregular silhouette: bumps along the edge circle
+float silhouette_bump(float angle) {
+	float b  = sin(angle * 2.0 + float(seed) * 0.3) * 0.18 * irregularity;
+	b += sin(angle * 3.7 + float(seed) * 1.1) * 0.12 * irregularity;
+	b += sin(angle * 6.3 + float(seed) * 2.3) * 0.07 * irregularity;
+	b += sin(angle * 11.0 + float(seed) * 0.7) * 0.04 * irregularity;
+	return 1.0 + b;
+}
+
 void fragment() {
 	vec2 uv = floor(UV * pixel_count) / pixel_count;
 	vec2 c  = uv - vec2(0.5);
 	c.x    *= aspect_ratio;
 
-	// irregular SDF: ellipse + noise bump on boundary
-	vec2 ell = vec2(c.x / (planet_radius * elongation), c.y / planet_radius);
-	float base_dist = length(ell);
+	float angle   = atan(c.y, c.x / elongation);
+	float bump    = silhouette_bump(angle);
+	float ell_d   = length(vec2(c.x / elongation, c.y));
+	float shape_d = ell_d / (planet_radius * bump);
 
-	// bump the silhouette — more irregularity = bigger bumps
-	float angle = atan(c.y, c.x);
-	float bump_seed = float(seed) * 0.0001;
-	float bump_amp = 0.10 + irregularity * 0.35;
-	float bump_lo = noise3(vec3(cos(angle)*1.4, sin(angle)*1.4, bump_seed)) * bump_amp;
-	float bump_hi = noise3(vec3(cos(angle)*4.0, sin(angle)*4.0, bump_seed+0.5)) * bump_amp * 0.4 * irregularity;
-	float bump = 1.0 + bump_lo + bump_hi;
-	float dist = base_dist / bump;
-
-	if (dist > 1.0) {
+	if (shape_d > 1.0) {
 		COLOR = vec4(0.0);
 	} else {
-		// fake normal from ellipse gradient + noise
-		vec2 grad = ell / max(base_dist, 0.001);
-		float nz  = sqrt(max(0.0, 1.0 - dot(grad, grad)));
-		vec3  n   = normalize(vec3(grad, nz));
+		// Use corrected sphere-like normal for lighting stability
+		vec2 sn2  = vec2(c.x / (planet_radius * elongation), c.y / planet_radius);
+		float snd = length(sn2);
+		float snz = sqrt(max(0.0, 1.0 - snd * snd));
+		vec3  n   = normalize(vec3(sn2, snz));
 
 		vec3 rn = rot_y(n, rotation_offset);
-		float h = fbm3(rn * 4.0, 6);
-		vec3 surf = mix(color_rock_b, color_rock_a, h * 0.5 + 0.5);
+		vec3 rp = rn * terrain_roughness;
 
-		// craters
-		float cr = fbm3(rn * 8.0, 4);
-		float crater_mask = smoothstep(0.30, 0.36, abs(cr)) * smoothstep(0.42, 0.36, abs(cr));
-		surf = mix(surf, color_rock_b * 0.7, crater_mask * 0.8);
-		surf = mix(surf, color_highlight, crater_mask * 0.3);
+		// single-toned rocky surface with subtle variation
+		float h1 = fbm3(rp * 3.5, 5) * 0.5 + 0.5;
+		vec3 surf = mix(color_rock_dark, color_rock_mid, smoothstep(0.35, 0.65, h1));
+		// very subtle highlight from a second layer
+		float h2 = fbm3(rp * 9.0, 3) * 0.5 + 0.5;
+		surf = mix(surf, color_rock_light, smoothstep(0.72, 0.90, h2) * 0.30);
 
-		// detail
-		surf += vec3(fbm3(rn*16.0, 3) * 0.05 - 0.025);
+		// craters — dark floor, bright rim ring
+		float cr_a = abs(fbm3(rp * 2.0, 4));
+		float cr_b = abs(fbm3(rp * 5.0, 4));
+		float crater_floor = smoothstep(0.16, 0.06, cr_a) + smoothstep(0.11, 0.04, cr_b) * 0.45;
+		float crater_rim   = smoothstep(0.14, 0.18, cr_a) * smoothstep(0.22, 0.18, cr_a)
+		                   + smoothstep(0.09, 0.12, cr_b) * smoothstep(0.15, 0.12, cr_b) * 0.5;
+		surf = mix(surf, color_rock_dark * 0.4, clamp(crater_floor, 0.0, 1.0));
+		surf = mix(surf, color_rock_light * 0.85, clamp(crater_rim, 0.0, 1.0));
 
-		// lighting
+		// lighting — strong directional
 		vec3  ld   = normalize(vec3(0.6, -0.55, 0.65));
 		float diff = max(dot(n, ld), 0.0);
-		float lit  = smoothstep(0.0, 0.5, diff);
-		surf *= 0.06 + 0.94 * lit;
+		float lit  = smoothstep(0.0, 0.35, diff);
+		surf *= 0.04 + 0.96 * lit;
 
-		// soft edge
-		float edge = smoothstep(0.95, 1.0, dist);
+		// soft edge fade
+		float edge  = smoothstep(0.85, 1.0, shape_d);
 		float alpha = 1.0 - edge;
 
 		COLOR = vec4(clamp(surf, vec3(0.0), vec3(1.0)), alpha);

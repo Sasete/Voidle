@@ -8,9 +8,10 @@
 
 [sub_resource type="Resource" id="Resource_tyc8t"]
 script = ExtResource("2_u0ahp")
-planet_type = 7
+planet_type = 1
 seed = 313131
-planet_size = 0.8
+cloud_coverage = 1.0
+continent_scale = 0.3
 metadata/_custom_type_script = "uid://coxm64i80tb0v"
 
 [node name="PlanetaryView" type="Control" unique_id=279896849]

@@ -2,11 +2,11 @@ extends Node2D
 
 signal poi_clicked(index: int, data: Dictionary)
 
-const DOT_RADIUS       := 4.0
-const DOT_HOVER_RADIUS := 7.0
-const LINE_DIAG_LEN    := 26.0
-const LINE_HORIZ_LEN   := 48.0
-const FONT_SIZE        := 14
+const DOT_RADIUS       := 5.0
+const DOT_HOVER_RADIUS := 8.0
+const LINE_DIAG_LEN    := 28.0
+const LINE_HORIZ_LEN   := 52.0
+const FONT_SIZE        := 15
 
 var _planet: ColorRect
 var _pois: Array[Dictionary] = []
@@ -115,12 +115,17 @@ func _draw() -> void:
 		if horiz_dir < 0.0:
 			label_pos.x -= text_size.x
 
-		# shadow
-		draw_string(font, label_pos + Vector2(1, 1), label,
-			HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE, Color(0, 0, 0, alpha * 0.7))
-		# text
-		draw_string(font, label_pos, label,
-			HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE, Color(1, 1, 1, alpha))
+		# thick outline
+		var oc := Color(0.0, 0.0, 0.0, alpha * 0.90)
+		for ox: int in [-1, 0, 1]:
+			for oy: int in [-1, 0, 1]:
+				if ox == 0 and oy == 0:
+					continue
+				draw_string(font, label_pos + Vector2(ox * 1.5, oy * 1.5), label,
+					HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE, oc)
+		# foreground
+		var fc := Color(1.0, 0.95, 0.5, alpha) if hovered else Color(1.0, 1.0, 1.0, alpha)
+		draw_string(font, label_pos, label, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE, fc)
 
 		# hover ring
 		if hovered:

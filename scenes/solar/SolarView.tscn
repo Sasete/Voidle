@@ -1,0 +1,67 @@
+[gd_scene format=3 uid="uid://solar_view_main"]
+
+[ext_resource type="Script" path="res://scripts/solar/SolarView.gd" id="1_sv"]
+
+[node name="SolarView" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_sv")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.04, 0.05, 0.1, 1)
+
+[node name="SpaceContainer" type="Control" parent="."]
+layout_mode = 1
+anchor_right = 0.72
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="RightPanel" type="PanelContainer" parent="."]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.72
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 0
+
+[node name="PanelContent" type="VBoxContainer" parent="RightPanel"]
+layout_mode = 2
+
+[node name="SystemName" type="Label" parent="RightPanel/PanelContent"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "System Name"
+
+[node name="StarType" type="Label" parent="RightPanel/PanelContent"]
+layout_mode = 2
+text = "Yellow Dwarf"
+
+[node name="Separator" type="HSeparator" parent="RightPanel/PanelContent"]
+layout_mode = 2
+
+[node name="PlanetsLabel" type="Label" parent="RightPanel/PanelContent"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 11
+text = "PLANETS"
+
+[node name="PlanetList" type="VBoxContainer" parent="RightPanel/PanelContent"]
+layout_mode = 2
+
+[node name="Spacer" type="Control" parent="RightPanel/PanelContent"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="BackButton" type="Button" parent="RightPanel/PanelContent"]
+layout_mode = 2
+text = "← Back"

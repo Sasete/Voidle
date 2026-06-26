@@ -32,8 +32,11 @@ static func get_shader_path(type: Type) -> String:
 @export var cloud_speed: float = 0.05
 @export var terrain_roughness: float = 1.0    # affects fbm scale
 @export var sea_level: float = 0.0
-@export var irregularity: float = 0.3         # asteroid only: 0=round, 1=chaotic
-@export var custom_pois: Array[POIData] = []  # inspector-editable POIs (overrides generated)
+@export var continent_scale: float = 1.0      # 0.3=huge continents, 2.0=archipelago
+@export var specular_strength: float = 1.0    # 0=no ocean glint (barren/arid)
+@export var city_lights: float = 0.6          # night side glow
+@export var irregularity: float = 0.3
+@export var custom_pois: Array[POIData] = []
 
 # -----------------------------------------------------------------------
 # Factory
@@ -100,13 +103,16 @@ static func _apply_type_defaults(data: PlanetData, rng: RandomNumberGenerator) -
 			data.atmosphere_density = rng.randf_range(0.7, 1.2)
 			data.has_clouds         = true
 			data.cloud_coverage     = rng.randf_range(0.3, 0.7)
+			data.continent_scale    = rng.randf_range(0.55, 1.0)  # <1 = bigger landmasses
 		Type.ARID:
 			data.planet_size        = rng.randf_range(0.7, 1.1)
 			data.has_atmosphere     = true
 			data.atmosphere_density = rng.randf_range(0.2, 0.6)
 			data.has_clouds         = rng.randf() > 0.5
 			data.cloud_coverage     = rng.randf_range(0.0, 0.25)
-			data.sea_level          = rng.randf_range(0.25, 0.40)  # mostly dry land
+			data.sea_level          = rng.randf_range(0.25, 0.40)
+			data.specular_strength  = 0.0
+			data.city_lights        = 0.2
 		Type.ICE:
 			data.planet_size        = rng.randf_range(0.8, 1.2)
 			data.has_atmosphere     = true
@@ -127,6 +133,8 @@ static func _apply_type_defaults(data: PlanetData, rng: RandomNumberGenerator) -
 			data.has_clouds         = false
 			data.cloud_coverage     = 0.0
 			data.terrain_roughness  = rng.randf_range(1.0, 1.5)
+			data.specular_strength  = 0.0
+			data.city_lights        = 0.0
 		Type.MOON:
 			data.planet_size        = rng.randf_range(0.3, 0.55)
 			data.has_atmosphere     = false
@@ -259,79 +267,65 @@ static func get_colors(type: Type) -> Dictionary:
 # POI generation
 # -----------------------------------------------------------------------
 static func get_poi_templates(type: Type) -> Array[Dictionary]:
+	var L := LocationFinder.Placement.LAND
+	var S := LocationFinder.Placement.SEA
+	var C := LocationFinder.Placement.COAST
 	match type:
 		Type.TERRAN:
 			return [
-				{"label": "Capital",  "prefer_land": true,  "lat_range": [-0.5, 0.5]},
-				{"label": "Mine",     "prefer_land": true,  "lat_range": [-0.6, 0.6]},
-				{"label": "Outpost",  "prefer_land": true,  "lat_range": [-0.8, 0.8]},
-				{"label": "Port",     "prefer_land": false, "lat_range": [-0.4, 0.4]},
-				{"label": "Ruins",    "prefer_land": true,  "lat_range": [-0.7, 0.7]},
+				{"label": "Capital",  "placement": L, "lat_range": [-0.5, 0.5], "light_intensity": 2.0},
+				{"label": "Mine",     "placement": L, "lat_range": [-0.6, 0.6], "light_intensity": 0.8},
+				{"label": "Outpost",  "placement": L, "lat_range": [-0.8, 0.8], "light_intensity": 0.6},
+				{"label": "Port",     "placement": C, "lat_range": [-0.4, 0.4], "light_intensity": 1.2},
+				{"label": "Ruins",    "placement": L, "lat_range": [-0.7, 0.7], "light_intensity": 0.2},
 			]
 		Type.ARID:
 			return [
-				{"label": "Citadel",   "prefer_land": true, "lat_range": [-0.4, 0.4]},
-				{"label": "Sand Mine", "prefer_land": true, "lat_range": [-0.6, 0.6]},
-				{"label": "Oasis",     "prefer_land": true, "lat_range": [-0.3, 0.3]},
-				{"label": "Bunker",    "prefer_land": true, "lat_range": [-0.7, 0.7]},
+				{"label": "Citadel",   "placement": L, "lat_range": [-0.4, 0.4], "light_intensity": 1.5},
+				{"label": "Sand Mine", "placement": L, "lat_range": [-0.6, 0.6], "light_intensity": 0.7},
+				{"label": "Oasis",     "placement": L, "lat_range": [-0.3, 0.3], "light_intensity": 0.5},
+				{"label": "Bunker",    "placement": L, "lat_range": [-0.7, 0.7], "light_intensity": 0.4},
 			]
 		Type.VOLCANIC:
 			return [
-				{"label": "Forge",     "prefer_land": true, "lat_range": [-0.5, 0.5]},
-				{"label": "Crater",    "prefer_land": true, "lat_range": [-0.7, 0.7]},
-				{"label": "Vent Mine", "prefer_land": true, "lat_range": [-0.4, 0.4]},
+				{"label": "Forge",     "placement": L, "lat_range": [-0.5, 0.5], "light_intensity": 1.8},
+				{"label": "Crater",    "placement": L, "lat_range": [-0.7, 0.7], "light_intensity": 0.3},
+				{"label": "Vent Mine", "placement": L, "lat_range": [-0.4, 0.4], "light_intensity": 1.0},
 			]
 		Type.ICE:
 			return [
-				{"label": "Ice Base",   "prefer_land": true, "lat_range": [-0.6, 0.6]},
-				{"label": "Drill Rig",  "prefer_land": true, "lat_range": [-0.5, 0.5]},
-				{"label": "Observatory","prefer_land": true, "lat_range": [0.3, 0.8]},
+				{"label": "Ice Base",    "placement": L, "lat_range": [-0.6, 0.6], "light_intensity": 1.2},
+				{"label": "Drill Rig",   "placement": L, "lat_range": [-0.5, 0.5], "light_intensity": 0.9},
+				{"label": "Observatory", "placement": L, "lat_range": [0.3, 0.8],  "light_intensity": 0.6},
 			]
 		Type.MOON, Type.BARREN:
 			return [
-				{"label": "Crater Base", "prefer_land": true, "lat_range": [-0.6, 0.6]},
-				{"label": "Survey Post", "prefer_land": true, "lat_range": [-0.7, 0.7]},
+				{"label": "Crater Base", "placement": L, "lat_range": [-0.6, 0.6], "light_intensity": 0.5},
+				{"label": "Survey Post", "placement": L, "lat_range": [-0.7, 0.7], "light_intensity": 0.3},
 			]
 		_:
 			return [
-				{"label": "Station", "prefer_land": true, "lat_range": [-0.5, 0.5]},
-				{"label": "Depot",   "prefer_land": true, "lat_range": [-0.6, 0.6]},
+				{"label": "Station", "placement": S, "lat_range": [-0.5, 0.5], "light_intensity": 0.6},
+				{"label": "Depot",   "placement": L, "lat_range": [-0.6, 0.6], "light_intensity": 0.5},
 			]
 
-static func generate_pois(type: Type, planet_seed: int, sea_level: float = 0.0, roughness: float = 1.0) -> Array[Dictionary]:
-	var rng := RandomNumberGenerator.new()
-	rng.seed = planet_seed ^ 0xDEAD
+static func generate_pois(type: Type, planet_seed: int, sea_level: float = 0.0,
+		roughness: float = 1.0, continent_scale: float = 1.0) -> Array[Dictionary]:
+	var lf       := LocationFinder.new(planet_seed, sea_level, roughness, continent_scale)
 	var templates := get_poi_templates(type)
-	var result: Array[Dictionary] = []
-	var used_lons: Array[float] = []
+	var result:   Array[Dictionary] = []
 
 	for tmpl in templates:
 		var lat_min: float = tmpl["lat_range"][0]
 		var lat_max: float = tmpl["lat_range"][1]
-		var lat := rng.randf_range(lat_min, lat_max)
-		var base_lon := rng.randf_range(0.0, TAU)
+		var placement: LocationFinder.Placement = tmpl.get("placement", LocationFinder.Placement.LAND)
+		var pos: Vector2 = lf.find(placement, lat_min, lat_max)
 
-		for _attempt in 8:
-			var too_close := false
-			for used_lon: float in used_lons:
-				var diff: float = abs(fposmod(base_lon - used_lon + PI, TAU) - PI)
-				if diff < deg_to_rad(40.0):
-					too_close = true
-					break
-			if not too_close:
-				break
-			base_lon = fposmod(base_lon + deg_to_rad(55.0), TAU)
-
-		var final_lon := base_lon
-		if tmpl.get("prefer_land", true):
-			final_lon = PlanetNoise.find_land_lon(base_lon, lat, planet_seed, sea_level, roughness)
-
-		used_lons.append(final_lon)
 		result.append({
-			"lon_deg": rad_to_deg(final_lon),
-			"lat_deg": rad_to_deg(lat),
+			"lon_deg": rad_to_deg(pos.x),
+			"lat_deg": rad_to_deg(pos.y),
 			"label":   tmpl["label"],
-			"data":    {"type": tmpl["label"]},
+			"data":    {"type": tmpl["label"], "light_intensity": tmpl.get("light_intensity", 1.0)},
 		})
 
 	return result

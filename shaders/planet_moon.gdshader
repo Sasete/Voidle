@@ -11,6 +11,7 @@ uniform vec3 color_highland = vec3(0.62, 0.60, 0.56);
 uniform vec3 color_mare     = vec3(0.22, 0.21, 0.20);
 uniform vec3 color_rim      = vec3(0.78, 0.76, 0.72);
 uniform vec3 color_floor    = vec3(0.16, 0.15, 0.14);
+uniform vec3 light_direction = vec3(0.6, -0.55, 0.65);
 
 vec3 hash3(vec3 p) {
 	float s = float(seed) * 0.001;
@@ -92,7 +93,7 @@ void fragment() {
 		surf = mix(surf, color_rim,   clamp(total_rim, 0.0, 1.0) * (1.0 - mare_mask * 0.8));
 
 		// lighting — no atmosphere, sharp terminator
-		vec3  ld   = normalize(vec3(0.6, -0.55, 0.65));
+		vec3  ld   = normalize(light_direction);
 		float diff = max(dot(n, ld), 0.0);
 		float lit  = smoothstep(0.0, 0.25, diff);
 		surf *= 0.04 + 0.96 * lit;
