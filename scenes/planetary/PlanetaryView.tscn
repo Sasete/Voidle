@@ -1,0 +1,106 @@
+[gd_scene format=3 uid="uid://dpv4hbro7t72p"]
+
+[ext_resource type="Script" uid="uid://c1253iik86pas" path="res://scripts/planetary/PlanetaryView.gd" id="1_aaaa"]
+[ext_resource type="Script" uid="uid://djlsg3p7ukbka" path="res://scripts/planetary/PlanetRenderer.gd" id="2_bbbb"]
+[ext_resource type="Script" uid="uid://v51a1ergv7ld" path="res://scripts/planetary/POIData.gd" id="2_topvv"]
+[ext_resource type="Script" uid="uid://coxm64i80tb0v" path="res://scripts/planetary/PlanetData.gd" id="2_u0ahp"]
+[ext_resource type="Script" uid="uid://iiqjcdhvuo6" path="res://scripts/planetary/POILayer.gd" id="3_cccc"]
+
+[sub_resource type="Resource" id="Resource_tyc8t"]
+script = ExtResource("2_u0ahp")
+planet_type = 7
+seed = 313131
+planet_size = 0.8
+metadata/_custom_type_script = "uid://coxm64i80tb0v"
+
+[node name="PlanetaryView" type="Control" unique_id=279896849]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_aaaa")
+initial_planet = SubResource("Resource_tyc8t")
+debug_seed = 313131
+
+[node name="Background" type="ColorRect" parent="." unique_id=505283722]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.04, 0.05, 0.1, 1)
+
+[node name="PlanetContainer" type="Control" parent="." unique_id=1811771985]
+layout_mode = 1
+anchor_right = 0.7
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="PlanetRenderer" type="ColorRect" parent="PlanetContainer" unique_id=1423969338]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("2_bbbb")
+
+[node name="POILayer" type="Node2D" parent="." unique_id=236819060]
+script = ExtResource("3_cccc")
+
+[node name="RightPanel" type="PanelContainer" parent="." unique_id=744795451]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.7
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 0
+
+[node name="PanelContent" type="VBoxContainer" parent="RightPanel" unique_id=1853658727]
+layout_mode = 2
+
+[node name="PlanetName" type="Label" parent="RightPanel/PanelContent" unique_id=1277833476]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "PLANET NAME"
+
+[node name="PlanetType" type="Label" parent="RightPanel/PanelContent" unique_id=342667273]
+layout_mode = 2
+text = "Terran Wet"
+
+[node name="Separator" type="HSeparator" parent="RightPanel/PanelContent" unique_id=727120225]
+layout_mode = 2
+
+[node name="SeedRow" type="HBoxContainer" parent="RightPanel/PanelContent" unique_id=585218140]
+layout_mode = 2
+
+[node name="SeedLabel" type="Label" parent="RightPanel/PanelContent/SeedRow" unique_id=1907422609]
+layout_mode = 2
+theme_override_font_sizes/font_size = 11
+text = "SEED: "
+
+[node name="SeedValue" type="Label" parent="RightPanel/PanelContent/SeedRow" unique_id=1668830658]
+layout_mode = 2
+mouse_filter = 0
+theme_override_font_sizes/font_size = 11
+text = "0"
+
+[node name="Separator2" type="HSeparator" parent="RightPanel/PanelContent" unique_id=1858247195]
+layout_mode = 2
+
+[node name="InfoPlaceholder" type="Label" parent="RightPanel/PanelContent" unique_id=1436721657]
+layout_mode = 2
+text = "[Resources will appear here]"
+autowrap_mode = 3
+
+[node name="Spacer" type="Control" parent="RightPanel/PanelContent" unique_id=1865671988]
+custom_minimum_size = Vector2(0, 12)
+layout_mode = 2
+
+[node name="RedrawButton" type="Button" parent="RightPanel/PanelContent" unique_id=866336833]
+layout_mode = 2
+text = "New Planet"
