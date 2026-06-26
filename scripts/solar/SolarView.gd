@@ -19,8 +19,11 @@ var _orbit_lines:  OrbitLines
 var _orbits:       Array[PlanetOrbitNode] = []
 var _belts:        Array[AsteroidBelt]    = []
 
-var _view_angle: float = 0.0
-var _dragging:   bool  = false
+var _view_angle:      float     = 0.0
+var _dragging:        bool      = false
+var _hovered_planet:  PlanetData = null
+var _enter_charge:    int        = 0   # scroll-in on hovered planet
+var _back_charge:     int        = 0   # scroll-out to go back to galaxy
 
 const ORBIT_Y_RATIO := 0.38   # must match OrbitLines.y_ratio and PlanetOrbitNode
 
@@ -163,6 +166,12 @@ func _build_planets(data: SolarData) -> void:
 		var start_angle: float = rng.randf_range(0.0, TAU)
 		var node := PlanetOrbitNode.new()
 		node.clicked.connect(func(pd: PlanetData) -> void: planet_selected.emit(pd))
+		node.hover_start.connect(func(pd: PlanetData) -> void:
+			_hovered_planet = pd
+			_enter_charge   = 0)
+		node.hover_end.connect(func() -> void:
+			_hovered_planet = null
+			_enter_charge   = 0)
 		_pivot.add_child(node)
 		node.setup(data.planets[i], radius_x, start_angle)
 		_orbits.append(node)
@@ -195,11 +204,56 @@ func _update_panel(data: SolarData) -> void:
 func _input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_RIGHT and mb.pressed:
+			_go_to_galaxy()
+			return
 		if mb.button_index == MOUSE_BUTTON_LEFT:
 			if mb.pressed and _space.get_global_rect().has_point(mb.global_position):
 				_dragging = true
 			elif not mb.pressed:
+				if mb.double_click and _hovered_planet != null:
+					planet_selected.emit(_hovered_planet)
 				_dragging = false
+		elif mb.button_index == MOUSE_BUTTON_WHEEL_UP and mb.pressed:
+			if _hovered_planet != null:
+				_enter_charge += 1
+				_back_charge   = 0
+				if _enter_charge >= 3:
+					_enter_charge = 0
+					planet_selected.emit(_hovered_planet)
+		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
+			_enter_charge  = 0
+			_back_charge  += 1
+			if _back_charge >= 4:
+				_back_charge = 0
+				_go_to_galaxy()
+	elif event is InputEventMagnifyGesture:
+		if event.factor > 1.0 and _hovered_planet != null:
+			_enter_charge += 1
+			_back_charge   = 0
+			if _enter_charge >= 3:
+				_enter_charge = 0
+				planet_selected.emit(_hovered_planet)
+		elif event.factor < 1.0:
+			_enter_charge  = 0
+			_back_charge  += 1
+			if _back_charge >= 4:
+				_back_charge = 0
+				_go_to_galaxy()
+	elif event is InputEventPanGesture:
+		var dy: float = event.delta.y
+		if dy < -0.5 and _hovered_planet != null:   # scroll up = zoom in
+			_enter_charge += 1
+			_back_charge   = 0
+			if _enter_charge >= 3:
+				_enter_charge = 0
+				planet_selected.emit(_hovered_planet)
+		elif dy > 0.5:                               # scroll down = zoom out
+			_enter_charge  = 0
+			_back_charge  += 1
+			if _back_charge >= 4:
+				_back_charge = 0
+				_go_to_galaxy()
 	elif event is InputEventMouseMotion and _dragging:
 		var mm  := event as InputEventMouseMotion
 		# skip tiny motion so single planet clicks still fire

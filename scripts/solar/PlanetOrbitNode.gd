@@ -2,6 +2,8 @@ class_name PlanetOrbitNode
 extends Node2D
 
 signal clicked(planet_data: PlanetData)
+signal hover_start(planet_data: PlanetData)
+signal hover_end
 
 const SIZE := 40
 
@@ -136,6 +138,7 @@ func _build_moons(data: PlanetData) -> void:
 func _on_hover_start() -> void:
 	_hover = true
 	_hover_label.visible = true
+	hover_start.emit(planet_data)
 	await get_tree().process_frame
 	_update_label_position()
 	queue_redraw()
@@ -150,6 +153,7 @@ func _on_hover_start() -> void:
 
 func _on_hover_end() -> void:
 	_hover = false
+	hover_end.emit()
 	queue_redraw()
 	var tw := create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	tw.tween_property(_mini, "scale", Vector2(1.0, 1.0), 0.12)

@@ -57,12 +57,37 @@ func _ready() -> void:
 func _go_back() -> void:
 	SceneTransition.go("res://scenes/solar/SolarView.tscn", _system_solar)
 
-func _unhandled_input(event: InputEvent) -> void:
+var _back_charge: int = 0
+
+func _input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT:
 			_go_back()
 			get_viewport().set_input_as_handled()
+		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
+			_back_charge += 1
+			if _back_charge >= 4:
+				_back_charge = 0
+				_go_back()
+		elif mb.button_index == MOUSE_BUTTON_WHEEL_UP and mb.pressed:
+			_back_charge = 0
+	elif event is InputEventMagnifyGesture:
+		if event.factor < 1.0:
+			_back_charge += 1
+			if _back_charge >= 4:
+				_back_charge = 0
+				_go_back()
+		else:
+			_back_charge = 0
+	elif event is InputEventPanGesture:
+		if event.delta.y > 0.5:   # scroll down = zoom out = go back
+			_back_charge += 1
+			if _back_charge >= 4:
+				_back_charge = 0
+				_go_back()
+		elif event.delta.y < -0.5:
+			_back_charge = 0
 
 func load_planet(data: PlanetData) -> void:
 	current_data = data
