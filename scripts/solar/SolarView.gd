@@ -208,7 +208,7 @@ func _build_planets(data: SolarData) -> void:
 	for gap in count - 1:
 		total_weight += BELT_FACTOR if gap in data.asteroid_belt_slots else 1.0
 	total_weight = max(total_weight, 1.0)
-	var base_step: float = clamp((max_orbit - min_orbit) / total_weight, 50.0, 110.0)
+	var base_step: float = clamp((max_orbit - min_orbit) / total_weight, 80.0, 140.0)
 
 	# Pre-compute each planet's orbit radius
 	var orbit_radii_arr: Array[float] = []

@@ -11,6 +11,7 @@ var current_data:      PlanetData
 var _local_system:     Array[PlanetData] = []   # planet + all its moons, flat
 var _system_solar:     SolarData                # to restore when going back
 var _companion_moons:  Array[ColorRect] = []
+var _system_dock:      Control = null   # bottom navigation dock
 var _orbitron:         Font
 var _ring_back:    Node2D = null
 var _ring_front:   Node2D = null
@@ -119,6 +120,10 @@ func load_planet(data: PlanetData) -> void:
 			})
 	# no auto-generated POIs — only custom_pois are shown
 
+	# rotate so the first (primary) POI faces the viewer at load
+	if pois.size() > 0:
+		planet_renderer.set_rotation_offset(deg_to_rad(pois[0]["lon_deg"]))
+
 	for poi in pois:
 		poi_layer.add_poi(poi["lon_deg"], poi["lat_deg"], poi["label"], poi["data"])
 
@@ -209,16 +214,11 @@ func _upload_poi_lights(pois: Array[Dictionary], data: PlanetData) -> void:
 func _update_panel(data: PlanetData) -> void:
 	var name_label  := $RightPanel/PanelContent/PlanetName as Label
 	var type_label  := $RightPanel/PanelContent/PlanetType as Label
-	var seed_value  := $RightPanel/PanelContent/SeedRow/SeedValue as Label
 	var type_names  := ["Terran", "Arid", "Ice", "Volcanic", "Barren", "Gas Giant", "Moon", "Asteroid"]
 	if name_label: name_label.text = data.planet_name
 	if type_label: type_label.text = type_names[data.planet_type]
-	if seed_value:
-		seed_value.text = str(data.seed)
-		if not seed_value.gui_input.is_connected(_on_seed_clicked):
-			seed_value.gui_input.connect(_on_seed_clicked.bind(data.seed))
+	if type_label: type_label.visible = true
 	_build_system_panel()
-	_build_poi_form(data)
 
 func _build_poi_form(data: PlanetData) -> void:
 	var panel_content := $RightPanel/PanelContent
@@ -322,198 +322,195 @@ func _apply_orbitron(node: CanvasItem, size: int) -> void:
 	node.add_theme_font_size_override("font_size", size)
 
 func _build_system_panel() -> void:
-	var panel_content := $RightPanel/PanelContent
-	var old := panel_content.get_node_or_null("SystemSection")
-	if old:
-		old.free()
+	if _system_dock and is_instance_valid(_system_dock):
+		_system_dock.queue_free()
+		_system_dock = null
 	if _local_system.size() <= 1:
 		return
 
-	var section := VBoxContainer.new()
-	section.name = "SystemSection"
-	section.add_child(HSeparator.new())
+	const THUMB  := 52
+	const PAD_H  := 16
+	const PAD_V  := 10
+	const GAP    := 14
 
-	var title := Label.new()
-	title.text = "LOCAL SYSTEM"
-	_apply_orbitron(title, 10)
-	title.modulate = Color(0.65, 0.65, 0.65)
-	section.add_child(title)
+	# HUD background panel — anchored to planet container bottom-center
+	var planet_container: Control = planet_renderer.get_parent()
 
-	const THUMB := 48
-	for body in _local_system:
+	var bg := PanelContainer.new()
+	bg.name = "SystemDock"
+	# style: dark semi-transparent rounded pill
+	var style := StyleBoxFlat.new()
+	style.bg_color          = Color(0.06, 0.07, 0.12, 0.82)
+	style.corner_radius_top_left     = 12
+	style.corner_radius_top_right    = 12
+	style.corner_radius_bottom_left  = 0
+	style.corner_radius_bottom_right = 0
+	style.border_width_left   = 1
+	style.border_width_right  = 1
+	style.border_width_top    = 1
+	style.border_width_bottom = 0
+	style.border_color        = Color(0.35, 0.45, 0.70, 0.25)
+	style.content_margin_left   = PAD_H
+	style.content_margin_right  = PAD_H
+	style.content_margin_top    = PAD_V
+	style.content_margin_bottom = PAD_V
+	bg.add_theme_stylebox_override("panel", style)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var dock := HBoxContainer.new()
+	dock.add_theme_constant_override("separation", GAP)
+	dock.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bg.add_child(dock)
+
+	var body_count := _local_system.size()
+	for body_idx in body_count:
+		var body      := _local_system[body_idx]
 		var is_active := (body == current_data)
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 8)
-		if is_active:
-			row.modulate = Color(1.5, 1.5, 1.0)   # yellow tint for active
+
+		var slot := VBoxContainer.new()
+		slot.add_theme_constant_override("separation", 5)
+		slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 		var rect := ColorRect.new()
-		rect.custom_minimum_size     = Vector2(THUMB, THUMB)
-		rect.size_flags_horizontal   = Control.SIZE_SHRINK_BEGIN
-		rect.mouse_filter            = Control.MOUSE_FILTER_IGNORE
-		var shader_path := PlanetData.get_shader_path(body.planet_type)
-		var mat         := ShaderMaterial.new()
-		mat.shader       = load(shader_path)
-		mat.set_shader_parameter("planet_radius",     0.40)
-		mat.set_shader_parameter("pixel_count",       float(THUMB))
-		mat.set_shader_parameter("aspect_ratio",      1.0)
-		mat.set_shader_parameter("seed",              body.seed)
-		mat.set_shader_parameter("terrain_roughness", body.terrain_roughness)
-		mat.set_shader_parameter("rotation_offset",   0.0)
-		mat.set_shader_parameter("light_direction",   Vector3(0.6, -0.55, 0.65))
-		var stype := PlanetData.get_shader_type(body.planet_type)
-		match stype:
-			PlanetData.ShaderType.ROCKY:
-				mat.set_shader_parameter("sea_level",          body.sea_level)
-				mat.set_shader_parameter("continent_scale",    body.continent_scale)
-				mat.set_shader_parameter("has_clouds",         0.0)
-				mat.set_shader_parameter("atmosphere_density", 0.0)
-				mat.set_shader_parameter("specular_strength",  body.specular_strength)
-				mat.set_shader_parameter("city_lights",        0.0)
-				mat.set_shader_parameter("poi_count",          0)
-				for key in PlanetData.get_colors(body.planet_type):
-					mat.set_shader_parameter(key, PlanetData.get_colors(body.planet_type)[key])
-			PlanetData.ShaderType.GAS:
-				mat.set_shader_parameter("cloud_speed",        0.0)
-				mat.set_shader_parameter("atmosphere_density", body.atmosphere_density)
-				var c := PlanetData.get_colors(body.planet_type)
-				mat.set_shader_parameter("color_band_a",    c.get("color_sand",       Vector3(0.72,0.55,0.35)))
-				mat.set_shader_parameter("color_band_b",    c.get("color_forest",     Vector3(0.50,0.32,0.18)))
-				mat.set_shader_parameter("color_storm",     c.get("color_snow",       Vector3(0.88,0.82,0.72)))
-				mat.set_shader_parameter("color_atmosphere",c.get("color_atmosphere", Vector3(0.72,0.55,0.35)))
-			PlanetData.ShaderType.MOON:
-				var c := PlanetData.get_colors(body.planet_type)
-				mat.set_shader_parameter("color_highland", c.get("color_mountain",   Vector3(0.62,0.60,0.56)))
-				mat.set_shader_parameter("color_mare",     c.get("color_deep_ocean", Vector3(0.22,0.21,0.20)))
-				mat.set_shader_parameter("color_rim",      c.get("color_snow",       Vector3(0.78,0.76,0.72)))
-				mat.set_shader_parameter("color_floor",    c.get("color_ocean",      Vector3(0.16,0.15,0.14)))
-			PlanetData.ShaderType.ASTEROID:
-				mat.set_shader_parameter("irregularity", body.irregularity)
-				mat.set_shader_parameter("elongation",   1.0 + body.irregularity * 0.8)
-		rect.material = mat
-		row.add_child(rect)
+		rect.custom_minimum_size = Vector2(THUMB, THUMB)
+		rect.pivot_offset        = Vector2(THUMB, THUMB) * 0.5
+		rect.mouse_filter        = Control.MOUSE_FILTER_STOP
+		rect.mouse_default_cursor_shape = Control.CURSOR_ARROW if is_active else Control.CURSOR_POINTING_HAND
+		_fill_planet_shader(rect, body, THUMB)
+
+		# active body: golden ring border
+		if is_active:
+			rect.modulate = Color(1.35, 1.28, 0.85)
 
 		var lbl := Label.new()
 		lbl.text = body.planet_name
-		_apply_orbitron(lbl, 10)
-		lbl.vertical_alignment    = VERTICAL_ALIGNMENT_CENTER
-		lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		lbl.clip_contents         = true
-		row.add_child(lbl)
+		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_apply_orbitron(lbl, 8)
+		lbl.modulate = Color(1.0, 0.92, 0.55) if is_active else Color(0.75, 0.78, 0.85, 0.7)
 
-		# make the whole row clickable
-		var captured_body := body
+		slot.add_child(rect)
+		slot.add_child(lbl)
+		dock.add_child(slot)
+
+		# callout label drawn above the slot via a Node2D overlay
+		var callout := Node2D.new()
+		callout.visible = is_active   # active body shows callout by default
+		callout.z_index = 20
+		slot.add_child(callout)
+		var body_name     := body.planet_name
+		var is_active_ref := is_active
+		var slot_idx      := body_idx
+		var slot_count    := body_count
+		callout.draw.connect(func() -> void:
+			if _orbitron == null: return
+			# slots in the left half point left, right half point right
+			# for center slot (odd count, middle index) use right
+			var go_right: bool = (slot_idx * 2 >= slot_count - 1)
+			var dir: float = 1.0 if go_right else -1.0
+			var anchor := Vector2(THUMB * 0.5, 0)
+			var diag  := Vector2(10.0 * dir, -28.0 if is_active_ref else -18.0)
+			var horiz := Vector2(28.0 * dir,   0.0)
+			var col   := Color(1.0, 0.92, 0.55) if is_active_ref else Color(0.85, 0.88, 1.0)
+			callout.draw_line(anchor, anchor + diag, Color(col, 0.7), 1.0, true)
+			callout.draw_line(anchor + diag, anchor + diag + horiz, Color(col, 0.7), 1.0, true)
+			callout.draw_circle(anchor, 2.2, Color(col, 0.9))
+			var text_offset := Vector2(3.0 * dir, 4.0) if go_right else Vector2(-3.0, 4.0)
+			var align := HORIZONTAL_ALIGNMENT_LEFT if go_right else HORIZONTAL_ALIGNMENT_RIGHT
+			# shift text start to beginning of horizontal line when going left
+			var text_pos := anchor + diag + horiz + text_offset
+			if not go_right:
+				var tw := _orbitron.get_string_size(body_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 9).x
+				text_pos.x -= tw
+			callout.draw_string(_orbitron, text_pos, body_name, align, -1, 9, col))
+
+		rect.mouse_entered.connect(func() -> void:
+			var tw := rect.create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+			tw.tween_property(rect, "scale", Vector2(1.22, 1.22), 0.12)
+			lbl.modulate = Color(1.0, 1.0, 1.0)
+			callout.visible = true
+			callout.queue_redraw())
+		rect.mouse_exited.connect(func() -> void:
+			var tw := rect.create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+			tw.tween_property(rect, "scale", Vector2(1.0, 1.0), 0.10)
+			lbl.modulate = Color(1.0, 0.92, 0.55) if is_active else Color(0.75, 0.78, 0.85, 0.7)
+			callout.visible = is_active)
+
 		if not is_active:
-			row.mouse_filter             = Control.MOUSE_FILTER_STOP
-			row.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-			row.gui_input.connect(func(e: InputEvent) -> void:
+			var captured_body := body
+			rect.gui_input.connect(func(e: InputEvent) -> void:
 				if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
-					load_planet(captured_body)
-			)
-			row.mouse_entered.connect(func() -> void: row.modulate = Color(1.3, 1.3, 1.1))
-			row.mouse_exited.connect(func()  -> void: row.modulate = Color.WHITE)
+					load_planet(captured_body))
 
-		section.add_child(row)
+	# center horizontally, auto-height growing upward from 52px above bottom
+	# stick to bottom of planet container, centered horizontally within it
+	bg.anchor_left   = 0.5
+	bg.anchor_right  = 0.5
+	bg.anchor_top    = 1.0
+	bg.anchor_bottom = 1.0
+	bg.z_as_relative = false
+	bg.z_index       = 100   # always on top of rings and planet
+	bg.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	bg.grow_vertical   = Control.GROW_DIRECTION_BEGIN
+	bg.offset_left   = 0.0
+	bg.offset_right  = 0.0
+	bg.offset_bottom = 20.0   # bleed below screen edge so bottom border/corners are hidden
+	bg.offset_top    = 0.0
 
-	var spacer_idx: int = panel_content.get_child_count() - 2
-	panel_content.add_child(section)
-	panel_content.move_child(section, max(spacer_idx, 0))
+	planet_container.add_child(bg)
+	_system_dock = bg
 
-func _build_companion_moons(data: PlanetData) -> void:
-	for r in _companion_moons:
-		r.queue_free()
-	_companion_moons.clear()
+func _fill_planet_shader(rect: ColorRect, body: PlanetData, thumb: int) -> void:
+	var mat := ShaderMaterial.new()
+	mat.shader = load(PlanetData.get_shader_path(body.planet_type))
+	mat.set_shader_parameter("planet_radius",     0.40)
+	mat.set_shader_parameter("pixel_count",       float(thumb))
+	mat.set_shader_parameter("aspect_ratio",      1.0)
+	mat.set_shader_parameter("seed",              body.seed)
+	mat.set_shader_parameter("terrain_roughness", body.terrain_roughness)
+	mat.set_shader_parameter("rotation_offset",   0.0)
+	mat.set_shader_parameter("light_direction",   Vector3(0.6, -0.55, 0.65))
+	var stype := PlanetData.get_shader_type(body.planet_type)
+	match stype:
+		PlanetData.ShaderType.ROCKY:
+			mat.set_shader_parameter("sea_level",          body.sea_level)
+			mat.set_shader_parameter("continent_scale",    body.continent_scale)
+			mat.set_shader_parameter("has_clouds",         0.0)
+			mat.set_shader_parameter("atmosphere_density", 0.0)
+			mat.set_shader_parameter("specular_strength",  body.specular_strength)
+			mat.set_shader_parameter("city_lights",        0.0)
+			mat.set_shader_parameter("poi_count",          0)
+			for key in PlanetData.get_colors(body.planet_type):
+				mat.set_shader_parameter(key, PlanetData.get_colors(body.planet_type)[key])
+		PlanetData.ShaderType.GAS:
+			mat.set_shader_parameter("cloud_speed",        0.0)
+			mat.set_shader_parameter("atmosphere_density", body.atmosphere_density)
+			var c := PlanetData.get_colors(body.planet_type)
+			mat.set_shader_parameter("color_band_a",    c.get("color_sand",       Vector3(0.72,0.55,0.35)))
+			mat.set_shader_parameter("color_band_b",    c.get("color_forest",     Vector3(0.50,0.32,0.18)))
+			mat.set_shader_parameter("color_storm",     c.get("color_snow",       Vector3(0.88,0.82,0.72)))
+			mat.set_shader_parameter("color_atmosphere",c.get("color_atmosphere", Vector3(0.72,0.55,0.35)))
+		PlanetData.ShaderType.MOON:
+			var c := PlanetData.get_colors(body.planet_type)
+			mat.set_shader_parameter("color_highland", c.get("color_mountain",   Vector3(0.62,0.60,0.56)))
+			mat.set_shader_parameter("color_mare",     c.get("color_deep_ocean", Vector3(0.22,0.21,0.20)))
+			mat.set_shader_parameter("color_rim",      c.get("color_snow",       Vector3(0.78,0.76,0.72)))
+			mat.set_shader_parameter("color_floor",    c.get("color_ocean",      Vector3(0.16,0.15,0.14)))
+		PlanetData.ShaderType.ASTEROID:
+			mat.set_shader_parameter("irregularity", body.irregularity)
+			mat.set_shader_parameter("elongation",   1.0 + body.irregularity * 0.8)
+	rect.material = mat
 
-	# show all other bodies in the local system as background companions
-	var others: Array[PlanetData] = []
-	for b in _local_system:
-		if b != data:
-			others.append(b)
-	if others.is_empty():
-		return
-
-	const S := 90
-	var offsets := [Vector2(-0.44, 0.12), Vector2(0.44, -0.18)]
-
-	for i in mini(others.size(), offsets.size()):
-		var moon := others[i]
-		var rect := ColorRect.new()
-		rect.custom_minimum_size = Vector2(S, S)
-		rect.size                = Vector2(S, S)
-		rect.z_index             = -1    # behind main planet renderer
-		rect.mouse_filter        = Control.MOUSE_FILTER_IGNORE  # pass clicks to planet renderer
-
-		var mat         := ShaderMaterial.new()
-		mat.shader       = load(PlanetData.get_shader_path(moon.planet_type))
-		mat.set_shader_parameter("planet_radius",     0.38)
-		mat.set_shader_parameter("pixel_count",       float(S))
-		mat.set_shader_parameter("aspect_ratio",      1.0)
-		mat.set_shader_parameter("seed",              moon.seed)
-		mat.set_shader_parameter("terrain_roughness", moon.terrain_roughness)
-		mat.set_shader_parameter("rotation_offset",   0.0)
-		mat.set_shader_parameter("light_direction",   Vector3(0.6, -0.55, 0.65))
-		var stype := PlanetData.get_shader_type(moon.planet_type)
-		match stype:
-			PlanetData.ShaderType.ROCKY:
-				mat.set_shader_parameter("sea_level",          moon.sea_level)
-				mat.set_shader_parameter("continent_scale",    moon.continent_scale)
-				mat.set_shader_parameter("has_clouds",         0.0)
-				mat.set_shader_parameter("atmosphere_density", 0.0)
-				mat.set_shader_parameter("specular_strength",  moon.specular_strength)
-				mat.set_shader_parameter("city_lights",        0.0)
-				mat.set_shader_parameter("poi_count",          0)
-				for key in PlanetData.get_colors(moon.planet_type):
-					mat.set_shader_parameter(key, PlanetData.get_colors(moon.planet_type)[key])
-			PlanetData.ShaderType.GAS:
-				mat.set_shader_parameter("cloud_speed",        0.0)
-				mat.set_shader_parameter("atmosphere_density", moon.atmosphere_density)
-				var gc := PlanetData.get_colors(moon.planet_type)
-				mat.set_shader_parameter("color_band_a",    gc.get("color_sand",       Vector3(0.72,0.55,0.35)))
-				mat.set_shader_parameter("color_band_b",    gc.get("color_forest",     Vector3(0.50,0.32,0.18)))
-				mat.set_shader_parameter("color_storm",     gc.get("color_snow",       Vector3(0.88,0.82,0.72)))
-				mat.set_shader_parameter("color_atmosphere",gc.get("color_atmosphere", Vector3(0.72,0.55,0.35)))
-			PlanetData.ShaderType.MOON:
-				var mc := PlanetData.get_colors(moon.planet_type)
-				mat.set_shader_parameter("color_highland", mc.get("color_mountain",   Vector3(0.62,0.60,0.56)))
-				mat.set_shader_parameter("color_mare",     mc.get("color_deep_ocean", Vector3(0.22,0.21,0.20)))
-				mat.set_shader_parameter("color_rim",      mc.get("color_snow",       Vector3(0.78,0.76,0.72)))
-				mat.set_shader_parameter("color_floor",    mc.get("color_ocean",      Vector3(0.16,0.15,0.14)))
-			PlanetData.ShaderType.ASTEROID:
-				mat.set_shader_parameter("irregularity", moon.irregularity)
-				mat.set_shader_parameter("elongation",   1.0 + moon.irregularity * 0.8)
-		rect.material     = mat
-		rect.pivot_offset = Vector2(S, S) * 0.5
-
-		$PlanetContainer.add_child(rect)
-		_companion_moons.append(rect)
-
-	_position_companions()
+func _build_companion_moons(_data: PlanetData) -> void:
+	pass   # replaced by bottom dock in _build_system_panel
 
 func _on_planet_hover_on() -> void:
-	for r in _companion_moons:
-		var tw := r.create_tween().set_parallel(true).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-		tw.tween_property(r, "modulate",   Color(1.5, 1.5, 1.5), 0.15)
-		tw.tween_property(r, "scale",      Vector2(1.25, 1.25),  0.15)
+	pass
 
 func _on_planet_hover_off() -> void:
-	for r in _companion_moons:
-		var tw := r.create_tween().set_parallel(true).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-		tw.tween_property(r, "modulate",   Color(1.0, 1.0, 1.0), 0.12)
-		tw.tween_property(r, "scale",      Vector2(1.0, 1.0),    0.12)
+	pass
 
 func _position_companions() -> void:
-	if _companion_moons.is_empty():
-		return
-	const S := 90
-	var offsets := [Vector2(-0.44, 0.12), Vector2(0.44, -0.18)]
-	var sz := ($PlanetContainer as Control).size
-	for i in _companion_moons.size():
-		var off: Vector2 = offsets[i]
-		_companion_moons[i].scale    = Vector2.ONE
-		_companion_moons[i].position = Vector2(
-			sz.x * 0.5 + off.x * sz.x * 0.5 - S * 0.5,
-			sz.y * 0.5 + off.y * sz.y * 0.5 - S * 0.5
-		)
+	pass
 
 func _update_aspect() -> void:
 	if planet_renderer.material == null:
@@ -525,36 +522,13 @@ func _update_aspect() -> void:
 func _on_resize() -> void:
 	await get_tree().process_frame
 	_update_aspect()
-	_position_companions()
-
-var _companions_highlighted: bool = false
 
 func _process(_delta: float) -> void:
 	_update_aspect()
-	_update_companion_hover()
 	if _ring_back != null or _ring_front != null:
-		# rings rotate with the planet surface, not on their own
 		_ring_angle = planet_renderer.get_rotation_offset()
 		if _ring_back  and is_instance_valid(_ring_back):  _ring_back.queue_redraw()
 		if _ring_front and is_instance_valid(_ring_front): _ring_front.queue_redraw()
-
-func _update_companion_hover() -> void:
-	if _companion_moons.is_empty():
-		return
-	var mouse_g := get_viewport().get_mouse_position()
-	var pr_rect  := planet_renderer.get_global_rect()
-	var hov      := pr_rect.has_point(mouse_g)
-	if not hov:
-		for r: ColorRect in _companion_moons:
-			if r.get_global_rect().has_point(mouse_g):
-				hov = true
-				break
-	if hov != _companions_highlighted:
-		_companions_highlighted = hov
-		if hov:
-			_on_planet_hover_on()
-		else:
-			_on_planet_hover_off()
 
 func _on_planet_clicked(_screen_pos: Vector2) -> void:
 	pass

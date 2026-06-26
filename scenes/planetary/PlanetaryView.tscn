@@ -14,6 +14,19 @@ cloud_coverage = 1.0
 continent_scale = 0.3
 metadata/_custom_type_script = "uid://coxm64i80tb0v"
 
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_panel"]
+bg_color = Color(0.07, 0.08, 0.13, 1.0)
+border_width_left = 1
+border_color = Color(0.20, 0.25, 0.40, 0.5)
+corner_radius_top_left = 0
+corner_radius_top_right = 0
+corner_radius_bottom_left = 0
+corner_radius_bottom_right = 0
+content_margin_left = 20.0
+content_margin_right = 20.0
+content_margin_top = 24.0
+content_margin_bottom = 24.0
+
 [node name="PlanetaryView" type="Control" unique_id=279896849]
 layout_mode = 3
 anchors_preset = 15
@@ -61,55 +74,31 @@ anchor_left = 0.7
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 0
+z_as_relative = false
+z_index = 200
+theme_override_styles/panel = SubResource("StyleBoxFlat_panel")
 
 [node name="PanelContent" type="VBoxContainer" parent="RightPanel" unique_id=1853658727]
 layout_mode = 2
+theme_override_constants/separation = 3
 
 [node name="PlanetName" type="Label" parent="RightPanel/PanelContent" unique_id=1277833476]
 layout_mode = 2
 theme_override_fonts/font = ExtResource("4_orbitron")
-theme_override_font_sizes/font_size = 16
+theme_override_font_sizes/font_size = 18
 text = "PLANET NAME"
 
 [node name="PlanetType" type="Label" parent="RightPanel/PanelContent" unique_id=342667273]
 layout_mode = 2
+theme_override_colors/font_color = Color(0.55, 0.60, 0.75, 0.8)
 theme_override_fonts/font = ExtResource("4_orbitron")
-theme_override_font_sizes/font_size = 12
-text = "Terran Wet"
-
-[node name="Separator" type="HSeparator" parent="RightPanel/PanelContent" unique_id=727120225]
-layout_mode = 2
-
-[node name="SeedRow" type="HBoxContainer" parent="RightPanel/PanelContent" unique_id=585218140]
-layout_mode = 2
-
-[node name="SeedLabel" type="Label" parent="RightPanel/PanelContent/SeedRow" unique_id=1907422609]
-layout_mode = 2
-theme_override_fonts/font = ExtResource("4_orbitron")
-theme_override_font_sizes/font_size = 10
-text = "SEED: "
-
-[node name="SeedValue" type="Label" parent="RightPanel/PanelContent/SeedRow" unique_id=1668830658]
-layout_mode = 2
-mouse_filter = 0
-theme_override_fonts/font = ExtResource("4_orbitron")
-theme_override_font_sizes/font_size = 10
-text = "0"
-
-[node name="Separator2" type="HSeparator" parent="RightPanel/PanelContent" unique_id=1858247195]
-layout_mode = 2
-
-[node name="InfoPlaceholder" type="Label" parent="RightPanel/PanelContent" unique_id=1436721657]
-layout_mode = 2
-theme_override_fonts/font = ExtResource("4_orbitron")
-theme_override_font_sizes/font_size = 10
-text = "[Resources will appear here]"
-autowrap_mode = 3
+theme_override_font_sizes/font_size = 11
+text = "Terran"
 
 [node name="Spacer" type="Control" parent="RightPanel/PanelContent" unique_id=1865671988]
-custom_minimum_size = Vector2(0, 12)
+custom_minimum_size = Vector2(0, 8)
 layout_mode = 2
-
+size_flags_vertical = 3
 
 [node name="BackButton" type="Button" parent="RightPanel/PanelContent" unique_id=123456789]
 layout_mode = 2

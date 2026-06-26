@@ -23,6 +23,11 @@ func _update_radius() -> void:
 func get_rotation_offset() -> float:
 	return _rotation_offset
 
+func set_rotation_offset(val: float) -> void:
+	_rotation_offset = fposmod(val, TAU)
+	if material:
+		(material as ShaderMaterial).set_shader_parameter("rotation_offset", _rotation_offset)
+
 func _input(event: InputEvent) -> void:
 	_update_radius()
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
