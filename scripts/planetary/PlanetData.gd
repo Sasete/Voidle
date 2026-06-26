@@ -58,6 +58,17 @@ static func from_seed(s: int) -> PlanetData:
 	_apply_type_defaults(data, rng)
 	return data
 
+## Like from_seed but forces a specific type (re-applies type defaults with the same rng seed).
+static func from_seed_as_type(s: int, forced_type: Type) -> PlanetData:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = s
+	var data := PlanetData.new()
+	data.seed        = s
+	data.planet_type = forced_type
+	data.planet_name = _generate_name(rng)
+	_apply_type_defaults(data, rng)
+	return data
+
 static func from_seed_no_minor(s: int) -> PlanetData:
 	# Like from_seed but never returns MOON or ASTEROID (for use as a main planet)
 	var rng := RandomNumberGenerator.new()

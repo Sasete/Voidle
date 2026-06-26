@@ -30,7 +30,7 @@ func _ready() -> void:
 	planet_renderer.planet_clicked.connect(_on_planet_clicked)
 	poi_layer.poi_clicked.connect(_on_poi_clicked)
 	get_tree().root.size_changed.connect(_on_resize)
-	($RightPanel/PanelContent/BackButton as Button).pressed.connect(_go_back)
+	# back button removed — navigation handled via system dock / unlock flow
 
 	# load from transition if navigating from SolarView
 	var planet_to_load: PlanetData = SceneTransition.pending_data as PlanetData
@@ -41,22 +41,22 @@ func _ready() -> void:
 		_system_solar = planet_to_load.get_meta("__solar_data") as SolarData if planet_to_load.has_meta("__solar_data") else null
 		_local_system = _make_system(planet_to_load)
 	elif initial_planet != null:
+		# inspector-assigned planet (editor testing)
 		if initial_planet.moons.is_empty():
 			initial_planet.generate_moons(initial_planet.seed)
 		planet_to_load = initial_planet
 		_local_system = _make_system(planet_to_load)
-	elif random_on_start:
-		planet_to_load = PlanetData.from_seed(randi() % 99999)
-		planet_to_load.generate_moons(planet_to_load.seed)
-		_local_system = _make_system(planet_to_load)
 	else:
-		planet_to_load = PlanetData.from_seed(debug_seed)
-		planet_to_load.generate_moons(planet_to_load.seed)
-		_local_system = _make_system(planet_to_load)
+		# game start — always load home planet from GameState (Terran, persistent seed)
+		planet_to_load = GameState.get_home_planet()
+		_local_system  = _make_system(planet_to_load)
 	load_planet(planet_to_load)
 
 func _go_back() -> void:
-	SceneTransition.go("res://scenes/solar/SolarView.tscn", _system_solar)
+	if _system_solar != null and GameState.solar_unlocked:
+		SceneTransition.go("res://scenes/solar/SolarView.tscn", _system_solar)
+	elif _system_solar == null:
+		pass   # home planet: no back destination yet
 
 var _back_charge: int = 0
 

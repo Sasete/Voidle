@@ -95,13 +95,3 @@ theme_override_fonts/font = ExtResource("4_orbitron")
 theme_override_font_sizes/font_size = 11
 text = "Terran"
 
-[node name="Spacer" type="Control" parent="RightPanel/PanelContent" unique_id=1865671988]
-custom_minimum_size = Vector2(0, 8)
-layout_mode = 2
-size_flags_vertical = 3
-
-[node name="BackButton" type="Button" parent="RightPanel/PanelContent" unique_id=123456789]
-layout_mode = 2
-theme_override_fonts/font = ExtResource("4_orbitron")
-theme_override_font_sizes/font_size = 11
-text = "← Back to System"
