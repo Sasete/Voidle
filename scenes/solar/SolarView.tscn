@@ -1,8 +1,9 @@
-[gd_scene format=3 uid="uid://solar_view_main"]
+[gd_scene format=3 uid="uid://c2j74hdpe1s1i"]
 
-[ext_resource type="Script" path="res://scripts/solar/SolarView.gd" id="1_sv"]
+[ext_resource type="Script" uid="uid://bntsmx52or47r" path="res://scripts/solar/SolarView.gd" id="1_sv"]
+[ext_resource type="FontFile" path="res://Fonts/Orbitron-VariableFont_wght.ttf" id="2_orbitron"]
 
-[node name="SolarView" type="Control"]
+[node name="SolarView" type="Control" unique_id=1623851356]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -11,7 +12,7 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_sv")
 
-[node name="Background" type="ColorRect" parent="."]
+[node name="Background" type="ColorRect" parent="." unique_id=20722524]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -20,14 +21,14 @@ grow_horizontal = 2
 grow_vertical = 2
 color = Color(0.04, 0.05, 0.1, 1)
 
-[node name="SpaceContainer" type="Control" parent="."]
+[node name="SpaceContainer" type="Control" parent="." unique_id=1074792099]
 layout_mode = 1
 anchor_right = 0.72
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="RightPanel" type="PanelContainer" parent="."]
+[node name="RightPanel" type="PanelContainer" parent="." unique_id=401181337]
 layout_mode = 1
 anchors_preset = -1
 anchor_left = 0.72
@@ -35,33 +36,39 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 0
 
-[node name="PanelContent" type="VBoxContainer" parent="RightPanel"]
+[node name="PanelContent" type="VBoxContainer" parent="RightPanel" unique_id=1342141614]
 layout_mode = 2
 
-[node name="SystemName" type="Label" parent="RightPanel/PanelContent"]
+[node name="SystemName" type="Label" parent="RightPanel/PanelContent" unique_id=473665898]
 layout_mode = 2
-theme_override_font_sizes/font_size = 20
+theme_override_fonts/font = ExtResource("2_orbitron")
+theme_override_font_sizes/font_size = 18
 text = "System Name"
 
-[node name="StarType" type="Label" parent="RightPanel/PanelContent"]
+[node name="StarType" type="Label" parent="RightPanel/PanelContent" unique_id=226972663]
 layout_mode = 2
+theme_override_fonts/font = ExtResource("2_orbitron")
+theme_override_font_sizes/font_size = 12
 text = "Yellow Dwarf"
 
-[node name="Separator" type="HSeparator" parent="RightPanel/PanelContent"]
+[node name="Separator" type="HSeparator" parent="RightPanel/PanelContent" unique_id=1837698426]
 layout_mode = 2
 
-[node name="PlanetsLabel" type="Label" parent="RightPanel/PanelContent"]
+[node name="PlanetsLabel" type="Label" parent="RightPanel/PanelContent" unique_id=65002938]
 layout_mode = 2
-theme_override_font_sizes/font_size = 11
+theme_override_fonts/font = ExtResource("2_orbitron")
+theme_override_font_sizes/font_size = 10
 text = "PLANETS"
 
-[node name="PlanetList" type="VBoxContainer" parent="RightPanel/PanelContent"]
+[node name="PlanetList" type="VBoxContainer" parent="RightPanel/PanelContent" unique_id=52620883]
 layout_mode = 2
 
-[node name="Spacer" type="Control" parent="RightPanel/PanelContent"]
+[node name="Spacer" type="Control" parent="RightPanel/PanelContent" unique_id=724419288]
 layout_mode = 2
 size_flags_vertical = 3
 
-[node name="BackButton" type="Button" parent="RightPanel/PanelContent"]
+[node name="BackButton" type="Button" parent="RightPanel/PanelContent" unique_id=1687847654]
 layout_mode = 2
+theme_override_fonts/font = ExtResource("2_orbitron")
+theme_override_font_sizes/font_size = 12
 text = "← Back"

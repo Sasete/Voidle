@@ -3,7 +3,7 @@ extends Control
 signal planet_selected(planet_data: PlanetData)
 signal back_pressed
 
-@export var initial_system: SolarData
+@export var solar_data: SolarData       # inject from parent scene / inspector
 @export var random_on_start: bool = true
 @export var debug_seed: int = 99999
 
@@ -17,6 +17,7 @@ var _star:         ColorRect
 var _pivot:        Node2D
 var _orbit_lines:  OrbitLines
 var _orbits:       Array[PlanetOrbitNode] = []
+var _belts:        Array[AsteroidBelt]    = []
 
 var _view_angle: float = 0.0
 var _dragging:   bool  = false
@@ -36,18 +37,30 @@ func _ready() -> void:
 	($RightPanel/PanelContent/BackButton as Button).pressed.connect(
 		func() -> void: back_pressed.emit())
 	get_tree().root.size_changed.connect(_on_resize)
+	planet_selected.connect(_on_planet_selected)
 
 	# wait one frame so Control sizes are computed
 	await get_tree().process_frame
-	if initial_system != null:
-		load_system(initial_system)
+
+	# restore system if returning from PlanetaryView
+	var sd: SolarData = SceneTransition.pending_data as SolarData
+	SceneTransition.pending_data = null
+	if sd != null:
+		load_system(sd)
+	elif solar_data != null:
+		load_system(solar_data)
 	elif random_on_start:
 		load_system(SolarData.from_seed(randi() % 99999))
 	else:
 		load_system(SolarData.from_seed(debug_seed))
 
+func _on_planet_selected(pd: PlanetData) -> void:
+	pd.set_meta("__solar_data", _current)   # carry solar system for the back-button
+	SceneTransition.go("res://scenes/planetary/PlanetaryView.tscn", pd)
+
 func load_system(data: SolarData) -> void:
 	_current = data
+	get_tree().root.set_meta("__active_solar", data)
 	_clear()
 	_build_star(data)
 	_build_planets(data)
@@ -65,6 +78,7 @@ func _clear() -> void:
 		_pivot.queue_free()
 		_pivot = null
 	_orbit_lines = null
+	_belts.clear()
 	for child in _planet_list.get_children():
 		child.queue_free()
 
@@ -109,31 +123,56 @@ func _build_planets(data: SolarData) -> void:
 	var max_orbit: float = min(max_by_x, max_by_y)
 	max_orbit = max(max_orbit, min_orbit + 60.0)   # always room for at least one orbit
 
-	var count: int   = data.planets.size()
-	var step:  float = (max_orbit - min_orbit) / float(max(count, 1))
-	step = clamp(step, 55.0, 100.0)
+	var count: int = data.planets.size()
+
+	# Build per-gap step sizes: belt gaps are 2.2x wider than planet gaps.
+	# Total weighted slots = (count-1) gaps where belt gaps count as 2.2
+	const BELT_FACTOR := 2.2
+	var total_weight: float = 0.0
+	for gap in count - 1:
+		total_weight += BELT_FACTOR if gap in data.asteroid_belt_slots else 1.0
+	total_weight = max(total_weight, 1.0)
+	var base_step: float = clamp((max_orbit - min_orbit) / total_weight, 50.0, 110.0)
+
+	# Pre-compute each planet's orbit radius
+	var orbit_radii_arr: Array[float] = []
+	var cur: float = min_orbit
+	orbit_radii_arr.append(cur)
+	for gap in count - 1:
+		var w: float = BELT_FACTOR if gap in data.asteroid_belt_slots else 1.0
+		cur += base_step * w
+		orbit_radii_arr.append(cur)
 
 	# orbit lines: absolute z=10 so they're behind star(50) and all planets
 	_orbit_lines               = OrbitLines.new()
 	_orbit_lines.z_as_relative = false
 	_orbit_lines.z_index       = 10
 	_pivot.add_child(_orbit_lines)
-	var radii: Array[float] = []
-	for i in count:
-		radii.append(min_orbit + i * step)
-	_orbit_lines.refresh(radii)
+	_orbit_lines.refresh(orbit_radii_arr)
 
 	var rng := RandomNumberGenerator.new()
 	rng.seed = data.seed ^ 0xABCD
 
 	for i in count:
-		var radius_x:    float = min_orbit + i * step
+		var radius_x:    float = orbit_radii_arr[i]
 		var start_angle: float = rng.randf_range(0.0, TAU)
 		var node := PlanetOrbitNode.new()
 		node.clicked.connect(func(pd: PlanetData) -> void: planet_selected.emit(pd))
 		_pivot.add_child(node)
 		node.setup(data.planets[i], radius_x, start_angle)
 		_orbits.append(node)
+
+	# asteroid belts — centered in their wide gap
+	for slot in data.asteroid_belt_slots:
+		if slot < 0 or slot >= count - 1:
+			continue
+		var inner:   float = orbit_radii_arr[slot]
+		var outer:   float = orbit_radii_arr[slot + 1]
+		var belt_rx: float = (inner + outer) * 0.5
+		var belt := AsteroidBelt.new()
+		_pivot.add_child(belt)
+		belt.setup(belt_rx, data.seed ^ (slot * 0x1337))
+		_belts.append(belt)
 
 func _update_panel(data: SolarData) -> void:
 	_system_name.text = data.system_name
@@ -164,6 +203,8 @@ func _input(event: InputEvent) -> void:
 		_view_angle -= mm.relative.x * 0.0042
 		for node in _orbits:
 			node.set_view_angle(_view_angle)
+		for belt in _belts:
+			belt.set_view_angle(_view_angle)
 		get_viewport().set_input_as_handled()
 
 func _star_center() -> Vector2:

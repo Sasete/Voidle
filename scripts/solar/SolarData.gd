@@ -6,7 +6,8 @@ enum StarType { YELLOW_DWARF, RED_DWARF, BLUE_GIANT, ORANGE_SUBGIANT, WHITE_DWAR
 @export var system_name: String = "Unknown System"
 @export var star_type:   StarType = StarType.YELLOW_DWARF
 @export var seed:        int = 0
-@export var planets:     Array[PlanetData] = []
+@export var planets:          Array[PlanetData] = []
+@export var asteroid_belt_slots: Array[int] = []  # indices: belt sits after planets[i]
 
 static func from_seed(s: int) -> SolarData:
 	var data := SolarData.new()
@@ -22,15 +23,25 @@ static func from_seed(s: int) -> SolarData:
 
 	data.system_name = _gen_name(rng)
 
-	var count := rng.randi_range(2, 6)
+	var count := rng.randi_range(3, 6)
 	for i in count:
 		var pseed: int = (s * 31 + i * 1337 + 7) % 99999
-		var pd    := PlanetData.from_seed(pseed)
-		# bias inner planets rocky, outer planets ice/gas
+		var pd    := PlanetData.from_seed_no_minor(pseed)
+		# bias inner planets rocky, outer planets gas
 		var orbit_ratio: float = float(i) / float(count - 1) if count > 1 else 0.5
 		if orbit_ratio < 0.35 and pd.planet_type == PlanetData.Type.GAS_GIANT:
-			pd = PlanetData.from_seed(pseed + 3)
+			pd = PlanetData.from_seed_no_minor(pseed + 3)
+		pd.generate_moons(pseed)
 		data.planets.append(pd)
+
+	# 1-2 asteroid belts placed at random gaps between planets
+	var belt_count: int = rng.randi_range(1, 2)
+	var used: Array[int] = []
+	for _b in belt_count:
+		var slot: int = rng.randi_range(0, count - 2)
+		if slot not in used:
+			used.append(slot)
+			data.asteroid_belt_slots.append(slot)
 
 	return data
 

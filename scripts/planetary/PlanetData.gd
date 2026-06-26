@@ -37,6 +37,7 @@ static func get_shader_path(type: Type) -> String:
 @export var city_lights: float = 0.6          # night side glow
 @export var irregularity: float = 0.3
 @export var custom_pois: Array[POIData] = []
+@export var moons: Array[PlanetData] = []
 
 # -----------------------------------------------------------------------
 # Factory
@@ -50,6 +51,33 @@ static func from_seed(s: int) -> PlanetData:
 	data.planet_name  = _generate_name(rng)
 	_apply_type_defaults(data, rng)
 	return data
+
+static func from_seed_no_minor(s: int) -> PlanetData:
+	# Like from_seed but never returns MOON or ASTEROID (for use as a main planet)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = s
+	var data := PlanetData.new()
+	data.seed = s
+	var allowed := [Type.TERRAN, Type.ARID, Type.ICE, Type.VOLCANIC, Type.BARREN, Type.GAS_GIANT]
+	data.planet_type = allowed[rng.randi() % allowed.size()]
+	data.planet_name  = _generate_name(rng)
+	_apply_type_defaults(data, rng)
+	return data
+
+func generate_moons(s: int) -> void:
+	moons.clear()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = s ^ 0xBEEF
+	var max_count: int
+	match planet_type:
+		Type.GAS_GIANT:                  max_count = 3
+		Type.TERRAN, Type.ICE:           max_count = 2
+		Type.VOLCANIC, Type.BARREN:      max_count = 1
+		_:                               max_count = 0
+	var count: int = rng.randi_range(0, max_count)
+	for i in count:
+		var moon: PlanetData = make_moon(s * 13 + i * 777 + 1)
+		moons.append(moon)
 
 # Convenience presets — pass a seed so name/micro-variation still differs
 static func make_moon(s: int) -> PlanetData:

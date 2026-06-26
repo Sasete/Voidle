@@ -69,10 +69,15 @@ func _process(_delta: float) -> void:
 
 	queue_redraw()
 
+var _orbitron: Font
+
+func _ready() -> void:
+	_orbitron = load("res://Fonts/Orbitron-VariableFont_wght.ttf")
+
 func _draw() -> void:
 	if _pois.is_empty():
 		return
-	var font := ThemeDB.fallback_font
+	var font: Font = _orbitron if _orbitron else ThemeDB.fallback_font
 
 	for i in _pois.size():
 		var poi: Dictionary = _pois[i]

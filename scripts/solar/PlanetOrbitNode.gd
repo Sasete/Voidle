@@ -13,7 +13,9 @@ var angle:          float
 var _view_angle:      float = 0.0
 var _side:            float = 1.0
 var _rotation_offset: float = 0.0
-var _spin_speed:      float = 0.0   # rad/s, set in setup
+var _spin_speed:      float = 0.0
+var _moon_nodes:      Array[MoonOrbitNode] = []
+var _moon_base_pos:   Array[Vector2]       = []
 var _mini:        ColorRect
 var _hover_label: Label
 var _hover:       bool = false
@@ -29,6 +31,7 @@ func setup(data: PlanetData, radius_x: float, start_angle: float) -> void:
 	_spin_speed      = rng.randf_range(0.06, 0.18)
 	_rotation_offset = rng.randf_range(0.0, TAU)
 	_build()
+	_build_moons(data)
 	_update_position()
 
 func _process(delta: float) -> void:
@@ -101,31 +104,60 @@ func _build() -> void:
 
 	_hover_label = Label.new()
 	_hover_label.text    = planet_data.planet_name
-	_hover_label.add_theme_font_size_override("font_size", 14)
-	_hover_label.add_theme_color_override("font_color",              Color(1.0, 1.0, 1.0, 1.0))
-	_hover_label.add_theme_color_override("font_outline_color",      Color(0.0, 0.0, 0.0, 1.0))
-	_hover_label.add_theme_constant_override("outline_size",         4)
-	_hover_label.add_theme_color_override("font_shadow_color",       Color(0.0, 0.0, 0.0, 0.8))
-	_hover_label.add_theme_constant_override("shadow_offset_x",      2)
-	_hover_label.add_theme_constant_override("shadow_offset_y",      2)
-	_hover_label.visible = false
+	var _orbitron := load("res://Fonts/Orbitron-VariableFont_wght.ttf") as Font
+	if _orbitron:
+		_hover_label.add_theme_font_override("font", _orbitron)
+	_hover_label.add_theme_font_size_override("font_size", 13)
+	_hover_label.add_theme_color_override("font_color",         Color(1.0, 1.0, 1.0, 1.0))
+	_hover_label.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 1.0))
+	_hover_label.add_theme_constant_override("outline_size",    4)
+	_hover_label.add_theme_color_override("font_shadow_color",  Color(0.0, 0.0, 0.0, 0.8))
+	_hover_label.add_theme_constant_override("shadow_offset_x", 2)
+	_hover_label.add_theme_constant_override("shadow_offset_y", 2)
+	_hover_label.z_as_relative = false
+	_hover_label.z_index       = 200    # always on top of everything
+	_hover_label.visible       = false
 	add_child(_hover_label)
+
+func _build_moons(data: PlanetData) -> void:
+	if data.moons.is_empty():
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = data.seed ^ 0x1234
+	for i in data.moons.size():
+		var moon_rx:  float = 22.0 + i * 12.0
+		var start:    float = rng.randf_range(0.0, TAU)
+		var node := MoonOrbitNode.new()
+		add_child(node)
+		node.setup(data.moons[i], moon_rx, start)
+		_moon_nodes.append(node)
+		_moon_base_pos.append(node.position)
 
 func _on_hover_start() -> void:
 	_hover = true
 	_hover_label.visible = true
-	# let label compute its size before positioning
 	await get_tree().process_frame
 	_update_label_position()
 	queue_redraw()
 	var tw := create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	tw.tween_property(_mini, "scale", Vector2(1.9, 1.9), 0.14)
+	const S := 1.9
+	for i in _moon_nodes.size():
+		var moon := _moon_nodes[i]
+		var mt := moon.create_tween().set_parallel(true).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		mt.tween_property(moon, "scale",    Vector2(S, S),             0.14)
+		mt.tween_property(moon, "position", _moon_base_pos[i] * S,     0.14)
 
 func _on_hover_end() -> void:
 	_hover = false
 	queue_redraw()
 	var tw := create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	tw.tween_property(_mini, "scale", Vector2(1.0, 1.0), 0.12)
+	for i in _moon_nodes.size():
+		var moon := _moon_nodes[i]
+		var mt := moon.create_tween().set_parallel(true).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+		mt.tween_property(moon, "scale",    Vector2(1.0, 1.0),     0.12)
+		mt.tween_property(moon, "position", _moon_base_pos[i],     0.12)
 	_hover_label.visible = false
 
 func _draw() -> void:
