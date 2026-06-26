@@ -25,7 +25,8 @@ extends Resource
 @export var stored_resources: Dictionary = {}
 
 # ── Unlock flags ─────────────────────────────────────────────────────────────
-@export var has_spaceport: bool = false   # true once a SpacePort is built
+@export var has_spaceport:    bool = false
+@export var moons_unlocked:   bool = false   # true once orbital access is researched
 
 # ────────────────────────────────────────────────────────────────────────────
 

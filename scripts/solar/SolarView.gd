@@ -47,7 +47,7 @@ const STAR_PX: Dictionary = {
 }
 
 func _ready() -> void:
-	($RightPanel/PanelContent/BackButton as Button).pressed.connect(_go_to_galaxy)
+	# back button removed — right-click navigates back
 	get_tree().root.size_changed.connect(_on_resize)
 	planet_selected.connect(_on_planet_selected)
 
@@ -66,14 +66,34 @@ func _ready() -> void:
 	else:
 		load_system(SolarData.from_seed(debug_seed))
 
+	# restore saved view angle so entering/leaving doesn't reset the orbit view
+	if _current != null:
+		var angle_key := "solar_angle_%d" % _current.seed
+		if GameState.has_meta(angle_key):
+			_view_angle = GameState.get_meta(angle_key)
+			for node in _orbits:
+				node.set_view_angle(_view_angle)
+			for belt in _belts:
+				belt.set_view_angle(_view_angle)
+
+func _save_view_angle() -> void:
+	if _current != null:
+		GameState.set_meta("solar_angle_%d" % _current.seed, _view_angle)
+
 func _go_to_galaxy() -> void:
+	if not GameState.galaxy_unlocked:
+		return
+	_save_view_angle()
 	var gd: GalaxyData = null
 	if _current != null and _current.has_meta("__galaxy_data"):
 		gd = _current.get_meta("__galaxy_data") as GalaxyData
+	if gd == null:
+		gd = GameState.home_galaxy
 	SceneTransition.go("res://scenes/galaxy/GalaxyView.tscn", gd)
 
 func _on_planet_selected(pd: PlanetData) -> void:
-	pd.set_meta("__solar_data", _current)   # carry solar system for the back-button
+	_save_view_angle()
+	pd.set_meta("__solar_data", _current)
 	SceneTransition.go("res://scenes/planetary/PlanetaryView.tscn", pd)
 
 func load_system(data: SolarData) -> void:
@@ -192,12 +212,12 @@ func _build_planets(data: SolarData) -> void:
 	var star_px:   float = float(STAR_PX.get(data.star_type, 210))
 	var min_orbit: float = star_px * 0.5 + 40.0
 
-	# max orbit: fits inside SpaceContainer on both axes (star center at 50%/52%)
-	var margin:    float = 36.0
-	var max_by_x:  float = _space.size.x * 0.50 - margin
-	var max_by_y:  float = (_space.size.y * 0.46) / ORBIT_Y_RATIO   # ry = rx * ratio
+	# max orbit: fits inside SpaceContainer; clamp tightly so system doesn't sprawl
+	var margin:    float = 60.0
+	var max_by_x:  float = _space.size.x * 0.44 - margin
+	var max_by_y:  float = (_space.size.y * 0.42) / ORBIT_Y_RATIO
 	var max_orbit: float = min(max_by_x, max_by_y)
-	max_orbit = max(max_orbit, min_orbit + 60.0)   # always room for at least one orbit
+	max_orbit = clamp(max_orbit, min_orbit + 60.0, 420.0)
 
 	var count: int = data.planets.size()
 
@@ -208,7 +228,7 @@ func _build_planets(data: SolarData) -> void:
 	for gap in count - 1:
 		total_weight += BELT_FACTOR if gap in data.asteroid_belt_slots else 1.0
 	total_weight = max(total_weight, 1.0)
-	var base_step: float = clamp((max_orbit - min_orbit) / total_weight, 80.0, 140.0)
+	var base_step: float = clamp((max_orbit - min_orbit) / total_weight, 55.0, 100.0)
 
 	# Pre-compute each planet's orbit radius
 	var orbit_radii_arr: Array[float] = []
@@ -248,9 +268,11 @@ func _build_planets(data: SolarData) -> void:
 				_enter_charge   = 0)
 		_pivot.add_child(node)
 		node.setup(data.planets[i], radius_x, start_angle)
+		if data.planets[i].has_meta("__is_home"):
+			node.mark_as_home()
 		_orbits.append(node)
 
-	# asteroid belts — centered in their wide gap
+	# asteroid belts — always visible; asteroids only appear after discovery
 	for slot in data.asteroid_belt_slots:
 		if slot < 0 or slot >= count - 1:
 			continue
@@ -259,7 +281,8 @@ func _build_planets(data: SolarData) -> void:
 		var belt_rx: float = (inner + outer) * 0.5
 		var belt := AsteroidBelt.new()
 		_pivot.add_child(belt)
-		belt.setup(belt_rx, data.seed ^ (slot * 0x1337))
+		var ast_count: int = 3 if GameState.discovered_asteroids.has(slot) else 0
+		belt.setup(belt_rx, data.seed ^ (slot * 0x1337), ast_count)
 		_belts.append(belt)
 
 	_max_orbit_px = orbit_radii_arr.back() if orbit_radii_arr.size() > 0 else 200.0

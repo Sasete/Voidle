@@ -47,10 +47,20 @@ func _ready() -> void:
 	if gd != null:
 		SceneTransition.pending_data = null
 		_galaxy = gd
+	elif GameState.home_galaxy != null:
+		_galaxy = GameState.home_galaxy
 	else:
 		_galaxy = GalaxyData.from_seed(galaxy_seed)
 
 	await get_tree().process_frame
+
+	# First launch (no solar/galaxy unlock) → go straight to home planet
+	if not GameState.solar_unlocked and not GameState.galaxy_unlocked:
+		var home_pd := GameState.get_home_planet()
+		if home_pd != null:
+			SceneTransition.go("res://scenes/planetary/PlanetaryView.tscn", home_pd)
+			return
+
 	# restore saved camera or default to center
 	if _galaxy.view_zoom > 0.0:
 		_offset   = _galaxy.view_offset
@@ -262,22 +272,15 @@ func _navigate_to(star_idx: int) -> void:
 	_galaxy.view_zoom     = _zoom
 	_galaxy.view_tilt     = _tilt
 	_galaxy.view_rotation = _rotation
-	var sd := SolarData.from_seed(_galaxy.seeds[star_idx])
-	sd.system_name = _galaxy.names[star_idx]
-	sd.star_type   = _galaxy.types[star_idx] as SolarData.StarType
-	sd.is_home     = (star_idx == _galaxy.home_idx)
+	var sd: SolarData
+	if star_idx == GameState.home_star_idx:
+		# Always use the pre-generated home solar so home planet stays consistent
+		sd = GameState.get_home_solar()
+	else:
+		sd = SolarData.from_seed(_galaxy.seeds[star_idx])
+		sd.system_name = _galaxy.names[star_idx]
+		sd.star_type   = _galaxy.types[star_idx] as SolarData.StarType
+	sd.is_home = (star_idx == GameState.home_star_idx)
 	sd.set_meta("__galaxy_star_idx", star_idx)
-	if sd.is_home and sd.planets.size() > 0:
-		_add_capital_poi(sd.planets[0])
 	sd.set_meta("__galaxy_data", _galaxy)
 	SceneTransition.go("res://scenes/solar/SolarView.tscn", sd)
-
-func _add_capital_poi(planet: PlanetData) -> void:
-	if planet.custom_pois.size() > 0:
-		return
-	var poi             := POIData.new()
-	poi.label           = "Capital"
-	poi.type_tag        = "city"
-	poi.placement       = LocationFinder.Placement.LAND
-	poi.light_intensity = 1.0
-	planet.custom_pois.append(poi)

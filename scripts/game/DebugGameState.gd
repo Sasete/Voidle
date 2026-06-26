@@ -6,6 +6,9 @@ extends Node
 
 @export var enabled: bool = true
 
+@export_group("Save")
+@export var reset_save: bool = false : set = _reset_save_btn
+
 @export_group("Unlocks")
 @export var solar_unlocked:  bool = false : set = _set_solar
 @export var galaxy_unlocked: bool = false : set = _set_galaxy
@@ -17,9 +20,18 @@ extends Node
 @export_group("Planet")
 @export var home_planet_level: int = 1 : set = _set_home_level
 
+@export_group("Moons")
+@export var unlock_home_moons: bool = false : set = _set_moons_unlocked
+
 @export_group("Asteroids")
 @export var discover_asteroid_slot: int = -1
 @export var do_discover: bool = false : set = _do_discover_btn
+
+func _reset_save_btn(v: bool) -> void:
+	reset_save = false
+	if Engine.is_editor_hint() or not enabled or not v: return
+	GameState.delete_save()
+	print("[Debug] Save deleted — restart the game for a fresh world")
 
 func _set_solar(v: bool) -> void:
 	solar_unlocked = v
@@ -46,6 +58,14 @@ func _set_home_level(v: int) -> void:
 	pp.level = v
 	pp.recalculate_limits()
 	print("[Debug] Home planet level = ", v, " | max_districts=", pp.max_districts)
+
+func _set_moons_unlocked(v: bool) -> void:
+	unlock_home_moons = v
+	if Engine.is_editor_hint() or not enabled: return
+	var pp := GameState.get_planet(GameState.home_planet_seed)
+	pp.moons_unlocked = v
+	GameState.planet_progress_changed.emit(GameState.home_planet_seed)
+	print("[Debug] moons_unlocked = ", v)
 
 func _do_discover_btn(v: bool) -> void:
 	do_discover = false

@@ -10,6 +10,7 @@ extends Control
 var current_data:      PlanetData
 var _local_system:     Array[PlanetData] = []   # planet + all its moons, flat
 var _system_solar:     SolarData                # to restore when going back
+var _solar_btn:        Button = null            # shown when solar is unlocked
 var _companion_moons:  Array[ColorRect] = []
 var _system_dock:      Control = null   # bottom navigation dock
 var _orbitron:         Font
@@ -31,14 +32,18 @@ func _ready() -> void:
 	poi_layer.poi_clicked.connect(_on_poi_clicked)
 	get_tree().root.size_changed.connect(_on_resize)
 	# back button removed — navigation handled via system dock / unlock flow
+	GameState.unlock_changed.connect(_on_unlock_changed)
+	_refresh_solar_btn()
 
-	# load from transition if navigating from SolarView
+	# load from transition if navigating from SolarView or first launch
 	var planet_to_load: PlanetData = SceneTransition.pending_data as PlanetData
 	if planet_to_load != null:
 		SceneTransition.pending_data = null
 		if planet_to_load.moons.is_empty():
 			planet_to_load.generate_moons(planet_to_load.seed)
-		_system_solar = planet_to_load.get_meta("__solar_data") as SolarData if planet_to_load.has_meta("__solar_data") else null
+		_system_solar = planet_to_load.get_meta("__solar_data") as SolarData \
+			if planet_to_load.has_meta("__solar_data") \
+			else GameState.get_home_solar()
 		_local_system = _make_system(planet_to_load)
 	elif initial_planet != null:
 		# inspector-assigned planet (editor testing)
@@ -53,10 +58,16 @@ func _ready() -> void:
 	load_planet(planet_to_load)
 
 func _go_back() -> void:
-	if _system_solar != null and GameState.solar_unlocked:
-		SceneTransition.go("res://scenes/solar/SolarView.tscn", _system_solar)
-	elif _system_solar == null:
-		pass   # home planet: no back destination yet
+	if not GameState.solar_unlocked:
+		return
+	var sd := _system_solar if _system_solar != null else GameState.get_home_solar()
+	SceneTransition.go("res://scenes/solar/SolarView.tscn", sd)
+
+func _on_unlock_changed(_key: String, _val: bool) -> void:
+	_refresh_solar_btn()
+
+func _refresh_solar_btn() -> void:
+	pass   # navigation via right-click only
 
 var _back_charge: int = 0
 
@@ -325,6 +336,18 @@ func _build_system_panel() -> void:
 	if _system_dock and is_instance_valid(_system_dock):
 		_system_dock.queue_free()
 		_system_dock = null
+
+	# Determine which bodies to show: planet always, moons only if unlocked
+	var pp := GameState.get_planet(current_data.seed) if current_data != null else null
+	var moons_unlocked := pp != null and pp.moons_unlocked
+	var visible_system: Array[PlanetData] = []
+	for body in _local_system:
+		if body == _local_system[0]:   # always show the planet itself
+			visible_system.append(body)
+		elif moons_unlocked:
+			visible_system.append(body)
+
+	# Show dock only if there are moons (locked or unlocked) — dock shows lock state
 	if _local_system.size() <= 1:
 		return
 
@@ -362,10 +385,18 @@ func _build_system_panel() -> void:
 	dock.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bg.add_child(dock)
 
-	var body_count := _local_system.size()
-	for body_idx in body_count:
-		var body      := _local_system[body_idx]
-		var is_active := (body == current_data)
+	# Add locked moon placeholders for undiscovered moons
+	var has_locked_moons := _local_system.size() > 1 and not moons_unlocked
+
+	var body_count := visible_system.size() + (1 if has_locked_moons else 0)
+	var display_list: Array = visible_system.duplicate()
+	if has_locked_moons:
+		display_list.append(null)   # null = locked placeholder
+
+	for body_idx in display_list.size():
+		var body               = display_list[body_idx]
+		var is_locked: bool    = body == null
+		var is_active: bool    = not is_locked and (body == current_data)
 
 		var slot := VBoxContainer.new()
 		slot.add_theme_constant_override("separation", 5)
@@ -375,71 +406,95 @@ func _build_system_panel() -> void:
 		rect.custom_minimum_size = Vector2(THUMB, THUMB)
 		rect.pivot_offset        = Vector2(THUMB, THUMB) * 0.5
 		rect.mouse_filter        = Control.MOUSE_FILTER_STOP
-		rect.mouse_default_cursor_shape = Control.CURSOR_ARROW if is_active else Control.CURSOR_POINTING_HAND
-		_fill_planet_shader(rect, body, THUMB)
 
-		# active body: golden ring border
-		if is_active:
-			rect.modulate = Color(1.35, 1.28, 0.85)
+		if is_locked:
+			# ── Locked moon placeholder ──────────────────────────────────────
+			rect.color = Color(0.12, 0.14, 0.20, 1.0)
+			rect.mouse_default_cursor_shape = Control.CURSOR_FORBIDDEN
+			var lock_lbl := Label.new()
+			lock_lbl.text = "🔒"
+			lock_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			lock_lbl.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
+			lock_lbl.size_flags_horizontal = Control.SIZE_FILL
+			lock_lbl.size_flags_vertical   = Control.SIZE_FILL
+			lock_lbl.add_theme_font_size_override("font_size", 18)
+			lock_lbl.modulate = Color(1, 1, 1, 0.35)
+			rect.add_child(lock_lbl)
 
-		var lbl := Label.new()
-		lbl.text = body.planet_name
-		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		_apply_orbitron(lbl, 8)
-		lbl.modulate = Color(1.0, 0.92, 0.55) if is_active else Color(0.75, 0.78, 0.85, 0.7)
+			var sub_lbl := Label.new()
+			sub_lbl.text = "???"
+			sub_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			_apply_orbitron(sub_lbl, 8)
+			sub_lbl.modulate = Color(0.5, 0.52, 0.58, 0.5)
+			slot.add_child(rect)
+			slot.add_child(sub_lbl)
+			dock.add_child(slot)
+		else:
+			# ── Normal unlocked body slot ─────────────────────────────────────
+			rect.mouse_default_cursor_shape = Control.CURSOR_ARROW if is_active else Control.CURSOR_POINTING_HAND
+			var pd := body as PlanetData
+			_fill_planet_shader(rect, pd, THUMB)
+			if is_active:
+				rect.modulate = Color(1.35, 1.28, 0.85)
 
-		slot.add_child(rect)
-		slot.add_child(lbl)
-		dock.add_child(slot)
-
-		# callout label drawn above the slot via a Node2D overlay
-		var callout := Node2D.new()
-		callout.visible = is_active   # active body shows callout by default
-		callout.z_index = 20
-		slot.add_child(callout)
-		var body_name     := body.planet_name
-		var is_active_ref := is_active
-		var slot_idx      := body_idx
-		var slot_count    := body_count
-		callout.draw.connect(func() -> void:
-			if _orbitron == null: return
-			# slots in the left half point left, right half point right
-			# for center slot (odd count, middle index) use right
-			var go_right: bool = (slot_idx * 2 >= slot_count - 1)
-			var dir: float = 1.0 if go_right else -1.0
-			var anchor := Vector2(THUMB * 0.5, 0)
-			var diag  := Vector2(10.0 * dir, -28.0 if is_active_ref else -18.0)
-			var horiz := Vector2(28.0 * dir,   0.0)
-			var col   := Color(1.0, 0.92, 0.55) if is_active_ref else Color(0.85, 0.88, 1.0)
-			callout.draw_line(anchor, anchor + diag, Color(col, 0.7), 1.0, true)
-			callout.draw_line(anchor + diag, anchor + diag + horiz, Color(col, 0.7), 1.0, true)
-			callout.draw_circle(anchor, 2.2, Color(col, 0.9))
-			var text_offset := Vector2(3.0 * dir, 4.0) if go_right else Vector2(-3.0, 4.0)
-			var align := HORIZONTAL_ALIGNMENT_LEFT if go_right else HORIZONTAL_ALIGNMENT_RIGHT
-			# shift text start to beginning of horizontal line when going left
-			var text_pos := anchor + diag + horiz + text_offset
-			if not go_right:
-				var tw := _orbitron.get_string_size(body_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 9).x
-				text_pos.x -= tw
-			callout.draw_string(_orbitron, text_pos, body_name, align, -1, 9, col))
-
-		rect.mouse_entered.connect(func() -> void:
-			var tw := rect.create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-			tw.tween_property(rect, "scale", Vector2(1.22, 1.22), 0.12)
-			lbl.modulate = Color(1.0, 1.0, 1.0)
-			callout.visible = true
-			callout.queue_redraw())
-		rect.mouse_exited.connect(func() -> void:
-			var tw := rect.create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-			tw.tween_property(rect, "scale", Vector2(1.0, 1.0), 0.10)
+			var lbl := Label.new()
+			lbl.text = pd.planet_name
+			lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			_apply_orbitron(lbl, 8)
 			lbl.modulate = Color(1.0, 0.92, 0.55) if is_active else Color(0.75, 0.78, 0.85, 0.7)
-			callout.visible = is_active)
 
-		if not is_active:
-			var captured_body := body
-			rect.gui_input.connect(func(e: InputEvent) -> void:
-				if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
-					load_planet(captured_body))
+			slot.add_child(rect)
+			slot.add_child(lbl)
+			dock.add_child(slot)
+
+			# callout label drawn above the slot via a Node2D overlay
+			var callout := Node2D.new()
+			callout.visible = is_active
+			callout.z_index = 20
+			slot.add_child(callout)
+			var body_name: String = pd.planet_name
+			var is_active_ref := is_active
+			var slot_idx      := body_idx
+			var slot_count    := display_list.size()
+			callout.draw.connect(func() -> void:
+				if _orbitron == null: return
+				var go_right: bool = (slot_idx * 2 >= slot_count - 1)
+				var dir: float = 1.0 if go_right else -1.0
+				var anchor := Vector2(THUMB * 0.5, 0)
+				var diag  := Vector2(10.0 * dir, -28.0 if is_active_ref else -18.0)
+				var horiz := Vector2(28.0 * dir,   0.0)
+				var col   := Color(1.0, 0.92, 0.55) if is_active_ref else Color(0.85, 0.88, 1.0)
+				callout.draw_line(anchor, anchor + diag, Color(col, 0.7), 1.0, true)
+				callout.draw_line(anchor + diag, anchor + diag + horiz, Color(col, 0.7), 1.0, true)
+				callout.draw_circle(anchor, 2.2, Color(col, 0.9))
+				var text_offset := Vector2(3.0 * dir, 4.0) if go_right else Vector2(-3.0, 4.0)
+				var align := HORIZONTAL_ALIGNMENT_LEFT if go_right else HORIZONTAL_ALIGNMENT_RIGHT
+				var text_pos := anchor + diag + horiz + text_offset
+				if not go_right:
+					var tw := _orbitron.get_string_size(body_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 9).x
+					text_pos.x -= tw
+				callout.draw_string(_orbitron, text_pos, body_name, align, -1, 9, col))
+
+			var cap_lbl     := lbl
+			var cap_callout := callout
+			var cap_active  := is_active
+			rect.mouse_entered.connect(func() -> void:
+				var tw := rect.create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+				tw.tween_property(rect, "scale", Vector2(1.22, 1.22), 0.12)
+				cap_lbl.modulate = Color(1.0, 1.0, 1.0)
+				cap_callout.visible = true
+				cap_callout.queue_redraw())
+			rect.mouse_exited.connect(func() -> void:
+				var tw := rect.create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+				tw.tween_property(rect, "scale", Vector2(1.0, 1.0), 0.10)
+				cap_lbl.modulate = Color(1.0, 0.92, 0.55) if cap_active else Color(0.75, 0.78, 0.85, 0.7)
+				cap_callout.visible = cap_active)
+
+			if not is_active:
+				var captured_body: PlanetData = pd
+				rect.gui_input.connect(func(e: InputEvent) -> void:
+					if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
+						load_planet(captured_body))
 
 	# center horizontally, auto-height growing upward from 52px above bottom
 	# stick to bottom of planet container, centered horizontally within it

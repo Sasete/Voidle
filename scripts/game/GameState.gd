@@ -3,6 +3,7 @@
 extends Node
 
 signal credits_changed(new_val: float)
+signal world_ready
 signal unlock_changed(key: String, value: bool)
 signal planet_progress_changed(seed_val: int)
 
@@ -13,36 +14,133 @@ var credits: float = 500.0 :
 		credits_changed.emit(credits)
 
 # ── Unlock flags ─────────────────────────────────────────────────────────────
-## solar_unlocked: player can enter SolarView (requires SpacePort on home moon/planet)
 var solar_unlocked:  bool = false
-## galaxy_unlocked: player can enter GalaxyView
 var galaxy_unlocked: bool = false
-## discovered_asteroid_ids: set of asteroid slot indices visible in SolarView
 var discovered_asteroids: Array[int] = []
 
 # ── Per-planet progress ───────────────────────────────────────────────────────
-## Keyed by planet seed (int → PlanetProgress)
-var _planet_progress: Dictionary = {}
+var _planet_progress:       Dictionary = {}
+var _body_resources:        Dictionary = {}
+var known_resources:        Dictionary = {}
+var resource_deposit_counts: Dictionary = {}
 
-# ── Home planet seed (set at game start) ────────────────────────────────────
-var home_planet_seed: int = -1
+# ── Home location (set once at world generation, then saved) ─────────────────
+var home_planet_seed: int  = -1   # seed of the Terran home planet
+var home_star_idx:    int  = -1   # which star in home_galaxy is the home system
+var home_planet_idx:  int  = -1   # which planet index in that system
+
+# ── Pre-generated world ───────────────────────────────────────────────────────
+var home_galaxy: GalaxyData = null
+var _home_solar: SolarData  = null
 
 # ────────────────────────────────────────────────────────────────────────────
 
-## Returns the home PlanetData, always Terran, consistent across sessions.
-## Returns the home PlanetData — always Terran, same planet every session.
+func _ready() -> void:
+	var is_fresh := not load_save()
+	if is_fresh:
+		home_planet_seed = randi_range(1000, 99999)
+	_bootstrap_world()
+	if is_fresh:
+		save()   # persist seed immediately so restarts load the same world
+
+func _bootstrap_world() -> void:
+	# Galaxy first
+	if home_galaxy == null:
+		home_galaxy = GalaxyData.from_seed(home_planet_seed ^ 0xABCDEF)
+
+	# Home star is always galaxy.home_idx (index 0, center star)
+	if home_star_idx < 0 and home_galaxy != null:
+		home_star_idx = home_galaxy.home_idx
+
+	# Build home solar and inject home planet at chosen index
+	if _home_solar == null:
+		_home_solar = _build_home_solar()
+
+	world_ready.emit()
+
+func _build_home_solar() -> SolarData:
+	# Use the galaxy star's own seed so the system matches what the galaxy would generate
+	var solar_seed: int
+	if home_galaxy != null and home_star_idx >= 0 and home_star_idx < home_galaxy.seeds.size():
+		solar_seed = home_galaxy.seeds[home_star_idx]
+	else:
+		solar_seed = home_planet_seed ^ 0x1234
+	var sd         := SolarData.from_seed(solar_seed)
+	sd.is_home     = true
+	if home_galaxy != null and home_star_idx >= 0:
+		sd.system_name = home_galaxy.names[home_star_idx]
+		sd.star_type   = home_galaxy.types[home_star_idx] as SolarData.StarType
+
+	# Decide home planet index by seed (not necessarily 0)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = home_planet_seed ^ 0x5678
+	home_planet_idx = rng.randi() % maxi(sd.planets.size(), 1)
+
+	# Override that slot with guaranteed Terran planet — always exactly 1 moon
+	var home_pd := PlanetData.from_seed_as_type(home_planet_seed, PlanetData.Type.TERRAN)
+	home_pd.moons.clear()
+	var moon := PlanetData.make_moon(home_planet_seed ^ 0x4D6F6F6E)
+	moon.planet_name = home_pd.planet_name + " a"
+	home_pd.moons.append(moon)
+	home_pd.set_meta("__is_home", true)
+
+	# Attach starting Capital POI only once (first time world is built)
+	if home_pd.custom_pois.is_empty():
+		var poi       := POIData.new()
+		poi.label      = "Capital"
+		poi.type_tag   = "city"
+		poi.placement  = LocationFinder.Placement.LAND
+		poi.light_intensity = 2.0
+		home_pd.custom_pois.append(poi)
+
+	if home_planet_idx < sd.planets.size():
+		sd.planets[home_planet_idx] = home_pd
+	else:
+		sd.planets.append(home_pd)
+		home_planet_idx = sd.planets.size() - 1
+
+	# Tag the solar data with the galaxy reference for back-navigation
+	if home_galaxy != null:
+		sd.set_meta("__galaxy_data",    home_galaxy)
+		sd.set_meta("__galaxy_star_idx", home_star_idx)
+
+	return sd
+
+# ── Accessors ─────────────────────────────────────────────────────────────────
+
+func get_home_solar() -> SolarData:
+	return _home_solar
+
 func get_home_planet() -> PlanetData:
-	if home_planet_seed < 0:
-		home_planet_seed = randi() % 99999
-	var pd := PlanetData.from_seed_as_type(home_planet_seed, PlanetData.Type.TERRAN)
-	pd.generate_moons(home_planet_seed)
-	pd.set_meta("__is_home", true)
-	return pd
+	if _home_solar == null or home_planet_idx < 0:
+		return null
+	return _home_solar.planets[home_planet_idx]
 
 func get_planet(seed_val: int) -> PlanetProgress:
 	if not _planet_progress.has(seed_val):
 		_planet_progress[seed_val] = PlanetProgress.make(seed_val)
 	return _planet_progress[seed_val]
+
+func get_body_resources(body_seed: int, tier_min: int = 1, tier_max: int = 1) -> BodyResources:
+	if not _body_resources.has(body_seed):
+		var br := BodyResources.generate(body_seed, tier_min, tier_max)
+		_body_resources[body_seed] = br
+		_register_resources(br)
+	return _body_resources[body_seed] as BodyResources
+
+func _register_resources(br: BodyResources) -> void:
+	for rd: ResourceData in br.as_array():
+		var type_key := rd.resource_id()
+		if not known_resources.has(type_key):
+			known_resources[type_key] = rd
+			resource_deposit_counts[type_key] = 1
+		else:
+			resource_deposit_counts[type_key] = resource_deposit_counts.get(type_key, 1) + 1
+
+func deposit_count(resource_id: String) -> int:
+	return resource_deposit_counts.get(resource_id, 0)
+
+# ── Unlocks ───────────────────────────────────────────────────────────────────
 
 func set_unlock(key: String, value: bool) -> void:
 	match key:
@@ -54,6 +152,8 @@ func discover_asteroid(slot_idx: int) -> void:
 	if slot_idx not in discovered_asteroids:
 		discovered_asteroids.append(slot_idx)
 
+# ── Economy ───────────────────────────────────────────────────────────────────
+
 func spend_credits(amount: float) -> bool:
 	if credits < amount:
 		return false
@@ -63,7 +163,7 @@ func spend_credits(amount: float) -> bool:
 func earn_credits(amount: float) -> void:
 	credits += amount
 
-# ── Save / Load ──────────────────────────────────────────────────────────────
+# ── Save / Load ───────────────────────────────────────────────────────────────
 const SAVE_PATH := "user://voidle_save.dat"
 
 func save() -> void:
@@ -73,6 +173,8 @@ func save() -> void:
 		"galaxy_unlocked":      galaxy_unlocked,
 		"discovered_asteroids": discovered_asteroids,
 		"home_planet_seed":     home_planet_seed,
+		"home_star_idx":        home_star_idx,
+		"home_planet_idx":      home_planet_idx,
 		"planet_progress":      {},
 	}
 	for seed_val in _planet_progress:
@@ -83,6 +185,7 @@ func save() -> void:
 			"buildings":        pp.buildings,
 			"stored_resources": pp.stored_resources,
 			"has_spaceport":    pp.has_spaceport,
+			"moons_unlocked":   pp.moons_unlocked,
 		}
 	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if file:
@@ -94,21 +197,24 @@ func load_save() -> bool:
 	var file := FileAccess.open(SAVE_PATH, FileAccess.READ)
 	if not file:
 		return false
-	var data: Dictionary = file.get_var()
-	credits              = data.get("credits",              500.0)
-	solar_unlocked       = data.get("solar_unlocked",       false)
-	galaxy_unlocked      = data.get("galaxy_unlocked",      false)
-	home_planet_seed     = data.get("home_planet_seed",     -1)
-	discovered_asteroids = data.get("discovered_asteroids", [])
+	var data: Dictionary     = file.get_var()
+	credits                  = data.get("credits",              500.0)
+	solar_unlocked           = data.get("solar_unlocked",       false)
+	galaxy_unlocked          = data.get("galaxy_unlocked",      false)
+	home_planet_seed         = data.get("home_planet_seed",     -1)
+	home_star_idx            = data.get("home_star_idx",        -1)
+	home_planet_idx          = data.get("home_planet_idx",      -1)
+	discovered_asteroids     = data.get("discovered_asteroids", [])
 	for key in data.get("planet_progress", {}).keys():
 		var seed_val: int    = int(key)
 		var d: Dictionary    = data["planet_progress"][key]
 		var pp               := PlanetProgress.make(seed_val)
-		pp.level             = d.get("level",          1)
-		pp.districts_used    = d.get("districts_used", 0)
-		pp.buildings         = d.get("buildings",      [])
+		pp.level             = d.get("level",            1)
+		pp.districts_used    = d.get("districts_used",   0)
+		pp.buildings         = d.get("buildings",        [])
 		pp.stored_resources  = d.get("stored_resources", {})
-		pp.has_spaceport     = d.get("has_spaceport",  false)
+		pp.has_spaceport     = d.get("has_spaceport",    false)
+		pp.moons_unlocked    = d.get("moons_unlocked",   false)
 		pp.recalculate_limits()
 		_planet_progress[seed_val] = pp
 	return true
@@ -120,5 +226,10 @@ func delete_save() -> void:
 	solar_unlocked       = false
 	galaxy_unlocked      = false
 	discovered_asteroids = []
-	home_planet_seed     = -1
+	home_planet_seed     = randi_range(1000, 99999)
+	home_star_idx        = -1
+	home_planet_idx      = -1
+	_home_solar          = null
+	home_galaxy          = null
 	_planet_progress.clear()
+	_bootstrap_world()

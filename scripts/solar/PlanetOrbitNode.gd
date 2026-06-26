@@ -23,7 +23,8 @@ var _hover_label: Label
 var _ring_front:  Node2D   # child drawn on top of planet for ring front half
 var _hover:       bool   = false
 var _height:      float  = 0.0
-var _hover_tween: Tween  = null   # tracked so we can kill before creating a new one
+var _hover_tween: Tween  = null
+var _is_home:     bool   = false
 
 func setup(data: PlanetData, radius_x: float, start_angle: float) -> void:
 	planet_data    = data
@@ -43,8 +44,8 @@ func _process(delta: float) -> void:
 	_rotation_offset = fposmod(_rotation_offset + _spin_speed * delta, TAU)
 	if _mini and _mini.material:
 		(_mini.material as ShaderMaterial).set_shader_parameter("rotation_offset", _rotation_offset)
-	# keep rings in sync with _mini scale during hover tween
-	if _hover or (_mini and _mini.scale.x > 1.01):
+	# keep rings in sync with _mini scale during hover tween; pulse home marker
+	if _is_home or _hover or (_mini and _mini.scale.x > 1.01):
 		queue_redraw()
 		if _ring_front:
 			_ring_front.queue_redraw()
@@ -218,12 +219,23 @@ func _draw_rings(target: CanvasItem, from_a: float, to_a: float) -> void:
 		_ring_arc(target, from_a, to_a, rx, yr,
 			Color(col.r, col.g, col.b, alp), 1.8)
 
+func mark_as_home() -> void:
+	_is_home = true
+	queue_redraw()
+
 func _on_ring_front_draw() -> void:
 	_draw_rings(_ring_front, 0.0, PI)   # front half (closer to camera)
 
 func _draw() -> void:
 	# ring back half — drawn before planet child renders
 	_draw_rings(self, PI, TAU)
+
+	# home planet marker: pulsing golden arc
+	if _is_home:
+		var r: float  = float(SIZE) * 0.5 * (_mini.scale.x if _mini else 1.0) + 5.0
+		var pulse_val := fposmod(Time.get_ticks_msec() * 0.002, TAU)
+		var a: float  = 0.55 + 0.25 * sin(pulse_val)
+		draw_arc(Vector2.ZERO, r, 0.0, TAU, 48, Color(1.0, 0.88, 0.35, a), 1.5)
 
 	if not _hover:
 		return
