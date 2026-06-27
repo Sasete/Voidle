@@ -23,6 +23,7 @@ CursorManager="*res://scripts/system/CursorManager.gd"
 ProductionManager="*res://scripts/game/ProductionManager.gd"
 TooltipManager="*res://scripts/system/TooltipManager.gd"
 HUDManager="*res://scripts/system/HUDManager.gd"
+DevConsole="*res://scripts/system/DevConsole.gd"
 
 [display]
 

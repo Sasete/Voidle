@@ -133,6 +133,7 @@ func _input(event: InputEvent) -> void:
 
 func load_planet(data: PlanetData) -> void:
 	current_data = data
+	GameState.active_planet_seed = data.seed
 	GameState.cache_planet_data(data)
 	_setup_material(data)
 	_update_panel(data)

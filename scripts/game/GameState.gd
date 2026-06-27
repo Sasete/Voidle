@@ -7,6 +7,16 @@ signal world_ready
 signal unlock_changed(key: String, value: bool)
 signal planet_progress_changed(seed_val: int)
 
+# ── Starting Config (edit these to change new-game defaults) ─────────────────
+## Starting credits for a new game.
+@export var start_credits:        float = 500.0
+## Whether Solar View is unlocked from the start.
+@export var start_solar_unlocked: bool  = false
+## Whether Galaxy View is unlocked from the start.
+@export var start_galaxy_unlocked: bool = false
+## Whether the home planet starts colonized.
+@export var start_colonized:      bool  = true
+
 # ── Economy ──────────────────────────────────────────────────────────────────
 var credits: float = 500.0 :
 	set(v):
@@ -14,8 +24,10 @@ var credits: float = 500.0 :
 		credits_changed.emit(credits)
 
 # ── Unlock flags ─────────────────────────────────────────────────────────────
-var solar_unlocked:  bool = false
-var galaxy_unlocked: bool = false
+var solar_unlocked:    bool = false
+var galaxy_unlocked:   bool = false
+## Seed of the planet currently shown in PlanetaryView. -1 when not in that scene.
+var active_planet_seed: int = -1
 var discovered_asteroids: Array[int] = []
 
 # day/night cycle — persists across scene changes, advances in real time
@@ -85,9 +97,13 @@ func _build_home_solar() -> SolarData:
 	home_pd.moons.append(moon)
 	home_pd.set_meta("__is_home", true)
 
-	# Home planet starts colonized
+	# Apply starting config
+	credits         = start_credits
+	solar_unlocked  = start_solar_unlocked
+	galaxy_unlocked = start_galaxy_unlocked
+
 	var home_pp := get_planet(home_planet_seed)
-	home_pp.is_colonized = true
+	home_pp.is_colonized = start_colonized
 
 	# Attach starting Capital POI only once (first time world is built)
 	if home_pd.custom_pois.is_empty():
