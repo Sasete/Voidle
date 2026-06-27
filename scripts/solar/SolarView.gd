@@ -46,7 +46,23 @@ const STAR_PX: Dictionary = {
 	SolarData.StarType.BLUE_GIANT:      340,
 }
 
+func _process(_delta: float) -> void:
+	if _dragging or _right_dragging:
+		CursorManager.set_state(CursorManager.State.GRAB)
+		return
+	if _active_orbit != null:
+		CursorManager.set_state(CursorManager.State.POINTER)
+		return
+	var mouse := get_viewport().get_mouse_position()
+	var vp    := get_viewport().get_visible_rect().size
+	const EDGE := 40.0
+	if mouse.x < EDGE or mouse.y < EDGE or mouse.x > vp.x - EDGE or mouse.y > vp.y - EDGE:
+		CursorManager.set_state(CursorManager.State.EXIT)
+		return
+	CursorManager.set_state(CursorManager.State.NORMAL)
+
 func _ready() -> void:
+	CursorManager.set_state(CursorManager.State.NORMAL)
 	# back button removed — right-click navigates back
 	get_tree().root.size_changed.connect(_on_resize)
 	planet_selected.connect(_on_planet_selected)

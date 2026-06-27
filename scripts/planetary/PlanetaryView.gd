@@ -12,7 +12,10 @@ var _local_system:     Array[PlanetData] = []   # planet + all its moons, flat
 var _system_solar:     SolarData                # to restore when going back
 var _solar_btn:        Button = null            # shown when solar is unlocked
 var _companion_moons:  Array[ColorRect] = []
-var _system_dock:      Control = null   # bottom navigation dock
+var _system_dock:      Control = null
+var _details_panel:    Control = null
+var _details_open:     bool    = false
+var _hovering_ui:      bool    = false
 var _orbitron:         Font
 var _ring_back:    Node2D = null
 var _ring_front:   Node2D = null
@@ -29,12 +32,18 @@ func _make_system(root: PlanetData) -> Array[PlanetData]:
 
 
 func _ready() -> void:
+	CursorManager.set_state(CursorManager.State.NORMAL)
 	_orbitron = load("res://Fonts/Orbitron-VariableFont_wght.ttf")
 	planet_renderer.planet_clicked.connect(_on_planet_clicked)
 	poi_layer.poi_clicked.connect(_on_poi_clicked)
 	get_tree().root.size_changed.connect(_on_resize)
+	pass  # cursor handled per-element, not per-panel
 	# back button removed — navigation handled via system dock / unlock flow
 	GameState.unlock_changed.connect(_on_unlock_changed)
+	GameState.planet_progress_changed.connect(func(_s: int) -> void:
+		_build_system_panel()
+		if current_data != null:
+			_build_details_panel(current_data))
 	_refresh_solar_btn()
 
 	# load from transition if navigating from SolarView or first launch
@@ -90,6 +99,7 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT:
+			CursorManager.set_state(CursorManager.State.EXIT)
 			_go_back()
 			get_viewport().set_input_as_handled()
 		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
@@ -123,6 +133,7 @@ func load_planet(data: PlanetData) -> void:
 	_build_companion_moons(data)
 	_build_rings(data)
 	_build_system_panel()
+	_build_details_panel(data)
 	poi_layer.setup(planet_renderer)
 	poi_layer.clear_pois()
 
@@ -348,6 +359,162 @@ func _apply_orbitron(node: CanvasItem, size: int) -> void:
 	node.add_theme_font_override("font", _orbitron)
 	node.add_theme_font_size_override("font_size", size)
 
+# ── Details Panel ─────────────────────────────────────────────────────────────
+
+func _build_details_panel(data: PlanetData) -> void:
+	if _details_panel and is_instance_valid(_details_panel):
+		_details_panel.queue_free()
+		_details_panel = null
+
+	var container: Control = planet_renderer.get_parent()
+	var pp := GameState.get_planet(data.seed)
+
+	# Root wrapper — freed as one unit via _details_panel
+	var root := Control.new()
+	root.mouse_filter    = Control.MOUSE_FILTER_IGNORE
+	root.z_as_relative   = false
+	root.z_index         = 120
+	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	container.add_child(root)
+	_details_panel = root
+
+	# ── Toggle button ─────────────────────────────────────────────────────────
+	var toggle_btn := Button.new()
+	toggle_btn.text   = "i"
+	toggle_btn.flat   = false
+	_apply_orbitron(toggle_btn, 11)
+	toggle_btn.add_theme_color_override("font_color",        Color(0.75, 0.80, 1.0, 0.9))
+	toggle_btn.add_theme_color_override("font_hover_color",  Color(1.0, 1.0, 1.0))
+	toggle_btn.add_theme_stylebox_override("normal",  _make_hud_style(Color(0.07, 0.08, 0.14, 0.85), 6))
+	toggle_btn.add_theme_stylebox_override("hover",   _make_hud_style(Color(0.12, 0.14, 0.22, 0.95), 6))
+	toggle_btn.add_theme_stylebox_override("pressed", _make_hud_style(Color(0.05, 0.06, 0.12, 0.95), 6))
+	toggle_btn.add_theme_stylebox_override("focus",   StyleBoxEmpty.new())
+	toggle_btn.custom_minimum_size = Vector2(28, 28)
+	toggle_btn.anchor_left   = 0.0
+	toggle_btn.anchor_top    = 0.0
+	toggle_btn.offset_left   = 12.0
+	toggle_btn.offset_top    = 12.0
+	toggle_btn.mouse_filter  = Control.MOUSE_FILTER_STOP
+	root.add_child(toggle_btn)
+
+	# ── Info panel ────────────────────────────────────────────────────────────
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", _make_hud_style(Color(0.06, 0.07, 0.13, 0.94), 10))
+	panel.anchor_left   = 0.0
+	panel.anchor_top    = 0.0
+	panel.offset_left   = 12.0
+	panel.offset_top    = 48.0
+	panel.custom_minimum_size = Vector2(200, 0)
+	panel.mouse_filter  = Control.MOUSE_FILTER_STOP
+	panel.visible       = _details_open
+	root.add_child(panel)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 10)
+	panel.add_child(vbox)
+
+	if pp.is_colonized:
+		_fill_colonized_details(vbox, data, pp)
+	else:
+		_fill_uncolonized_details(vbox, data)
+
+	toggle_btn.pressed.connect(func() -> void:
+		_details_open = not _details_open
+		panel.visible = _details_open)
+
+	toggle_btn.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
+	toggle_btn.mouse_exited.connect(func()  -> void: CursorManager.set_state(CursorManager.State.NORMAL))
+
+func _make_hud_style(col: Color, radius: int) -> StyleBoxFlat:
+	var s := StyleBoxFlat.new()
+	s.bg_color = col
+	s.border_width_left   = 1
+	s.border_width_right  = 1
+	s.border_width_top    = 1
+	s.border_width_bottom = 1
+	s.border_color = Color(0.25, 0.30, 0.50, 0.35)
+	s.corner_radius_top_left     = radius
+	s.corner_radius_top_right    = radius
+	s.corner_radius_bottom_left  = radius
+	s.corner_radius_bottom_right = radius
+	s.content_margin_left   = 10.0
+	s.content_margin_right  = 10.0
+	s.content_margin_top    = 8.0
+	s.content_margin_bottom = 8.0
+	return s
+
+func _details_row(parent: VBoxContainer, label: String, value: String,
+		val_color: Color = Color(0.85, 0.90, 1.0)) -> void:
+	var hbox := HBoxContainer.new()
+	var lbl := Label.new()
+	lbl.text = label
+	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_orbitron(lbl, 9)
+	lbl.add_theme_color_override("font_color", Color(0.5, 0.55, 0.7))
+	var val := Label.new()
+	val.text = value
+	_apply_orbitron(val, 9)
+	val.add_theme_color_override("font_color", val_color)
+	hbox.add_child(lbl)
+	hbox.add_child(val)
+	parent.add_child(hbox)
+
+func _details_section(parent: VBoxContainer, title: String) -> void:
+	var lbl := Label.new()
+	lbl.text = title
+	_apply_orbitron(lbl, 8)
+	lbl.add_theme_color_override("font_color", Color(0.4, 0.45, 0.65))
+	parent.add_child(lbl)
+	var sep := HSeparator.new()
+	var sep_style := StyleBoxFlat.new()
+	sep_style.bg_color = Color(0.2, 0.25, 0.4, 0.4)
+	sep_style.content_margin_top    = 0
+	sep_style.content_margin_bottom = 0
+	sep.add_theme_stylebox_override("separator", sep_style)
+	parent.add_child(sep)
+
+func _fill_uncolonized_details(vbox: VBoxContainer, data: PlanetData) -> void:
+	_details_section(vbox, "PLANET INFO")
+	_details_row(vbox, "Type",  PlanetData.Type.keys()[data.planet_type].capitalize())
+	var size_str := "Small" if data.planet_size < 0.8 else ("Large" if data.planet_size > 1.3 else "Medium")
+	_details_row(vbox, "Size",  size_str)
+	if data.has_atmosphere:
+		var atm := "Thin" if data.atmosphere_density < 0.4 else ("Dense" if data.atmosphere_density > 0.7 else "Standard")
+		_details_row(vbox, "Atm.", atm)
+	else:
+		_details_row(vbox, "Atm.",  "None", Color(0.6, 0.4, 0.4))
+	_details_row(vbox, "Sea",  "%.0f%%" % (data.sea_level * 100.0) if data.has_atmosphere else "—")
+
+	_details_section(vbox, "RESOURCES")
+	var br := GameState.get_body_resources(data.seed, 1, 3)
+	for rd: ResourceData in br.as_array():
+		_details_row(vbox, "T%d" % rd.tier, rd.unique_name, Color(rd.display_color.r, rd.display_color.g, rd.display_color.b))
+
+	_details_section(vbox, "STATUS")
+	_details_row(vbox, "Colony", "Not established", Color(0.65, 0.45, 0.35))
+
+func _fill_colonized_details(vbox: VBoxContainer, data: PlanetData, pp: PlanetProgress) -> void:
+	# Header: name + level
+	var name_lbl := Label.new()
+	name_lbl.text = data.planet_name
+	_apply_orbitron(name_lbl, 13)
+	name_lbl.add_theme_color_override("font_color", Color(1.0, 0.92, 0.55))
+	vbox.add_child(name_lbl)
+
+	_details_section(vbox, "COLONY")
+	_details_row(vbox, "Level",     "Lv %d" % pp.level, Color(1.0, 0.88, 0.4))
+	_details_row(vbox, "Districts", "%d / %d" % [pp.districts_used, pp.max_districts])
+
+	_details_section(vbox, "RESOURCES")
+	var br := GameState.get_body_resources(data.seed, 1, 3)
+	for rd: ResourceData in br.as_array():
+		_details_row(vbox, "T%d  %s" % [rd.tier, rd.unique_name], "Available", Color(rd.display_color.r, rd.display_color.g, rd.display_color.b))
+
+	_details_section(vbox, "PLANET INFO")
+	_details_row(vbox, "Type", PlanetData.Type.keys()[data.planet_type].capitalize())
+	var size_str := "Small" if data.planet_size < 0.8 else ("Large" if data.planet_size > 1.3 else "Medium")
+	_details_row(vbox, "Size", size_str)
+
 func _build_system_panel() -> void:
 	if _system_dock and is_instance_valid(_system_dock):
 		_system_dock.queue_free()
@@ -464,12 +631,14 @@ func _build_system_panel() -> void:
 		var cap_callout := callout
 		var cap_active  := is_active
 		rect.mouse_entered.connect(func() -> void:
+			CursorManager.set_state(CursorManager.State.POINTER)
 			var tw := rect.create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 			tw.tween_property(rect, "scale", Vector2(1.22, 1.22), 0.12)
 			cap_lbl.modulate = Color(1.0, 1.0, 1.0)
 			cap_callout.visible = true
 			cap_callout.queue_redraw())
 		rect.mouse_exited.connect(func() -> void:
+			CursorManager.set_state(CursorManager.State.NORMAL)
 			var tw := rect.create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 			tw.tween_property(rect, "scale", Vector2(1.0, 1.0), 0.10)
 			cap_lbl.modulate = Color(1.0, 0.92, 0.55) if cap_active else Color(0.75, 0.78, 0.85, 0.7)
@@ -572,6 +741,30 @@ func _process(delta: float) -> void:
 
 	_light_angle = fposmod(_light_angle + delta * LIGHT_SPEED, TAU)
 	_apply_light_angle()
+	_update_cursor()
+
+func _update_cursor() -> void:
+	if planet_renderer == null or planet_renderer._planet_radius_px <= 0:
+		return
+	var mouse := get_viewport().get_mouse_position()
+	var vp    := get_viewport().get_visible_rect().size
+
+	# Drag takes highest priority
+	if planet_renderer._dragging:
+		_hovering_ui = false
+		CursorManager.set_state(CursorManager.State.GRAB)
+		return
+	# POI hover
+	if poi_layer._hovered_index >= 0:
+		CursorManager.set_state(CursorManager.State.POINTER)
+		return
+	# Screen edge → EXIT
+	const EDGE := 40.0
+	if mouse.x < EDGE or mouse.y < EDGE or mouse.x > vp.x - EDGE or mouse.y > vp.y - EDGE:
+		CursorManager.set_state(CursorManager.State.EXIT)
+		return
+	# Everything else → NORMAL (panel bg, planet surface, empty space)
+	CursorManager.set_state(CursorManager.State.NORMAL)
 
 func _apply_light_angle() -> void:
 	if planet_renderer == null or planet_renderer.material == null:
@@ -585,8 +778,136 @@ func _on_planet_clicked(_screen_pos: Vector2) -> void:
 	pass
 
 func _on_poi_clicked(index: int, _data: Dictionary) -> void:
-	if index < poi_layer._pois.size():
-		print("POI clicked: ", poi_layer._pois[index]["label"])
+	if index >= poi_layer._pois.size():
+		return
+	var poi_dict: Dictionary = poi_layer._pois[index]
+	var poi_label: String    = poi_dict.get("label", "")
+	if current_data == null:
+		return
+	# Find matching POIData
+	var poi: POIData = null
+	for pd: POIData in current_data.custom_pois:
+		if pd.label == poi_label:
+			poi = pd
+			break
+	if poi == null:
+		return
+	_build_poi_panel(poi, current_data)
+
+func _build_poi_panel(poi: POIData, planet: PlanetData) -> void:
+	var panel_content := $RightPanel/PanelContent
+	var old := panel_content.get_node_or_null("POIBuildPanel")
+	if old:
+		old.free()
+
+	var pp   := GameState.get_planet(planet.seed)
+	var root := VBoxContainer.new()
+	root.name = "POIBuildPanel"
+	root.add_theme_constant_override("separation", 8)
+	root.add_child(HSeparator.new())
+
+	var header := HBoxContainer.new()
+	var poi_title := Label.new()
+	poi_title.text = poi.label + "  ·  " + poi.type_label()
+	_apply_orbitron(poi_title, 11)
+	poi_title.add_theme_color_override("font_color", Color(1.0, 0.92, 0.55))
+	poi_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(poi_title)
+
+	var slots_lbl := Label.new()
+	var slots_used := pp.slots_used_in_poi(poi.label)
+	slots_lbl.text = "%d/%d slots" % [slots_used, poi.max_building_slots()]
+	_apply_orbitron(slots_lbl, 9)
+	slots_lbl.add_theme_color_override("font_color", Color(0.5, 0.6, 0.8))
+	header.add_child(slots_lbl)
+	root.add_child(header)
+
+	# ── Installed buildings ───────────────────────────────────────────────────
+	var installed := pp.buildings_in_poi(poi.label)
+	if installed.is_empty():
+		var empty_lbl := Label.new()
+		empty_lbl.text = "No buildings yet."
+		_apply_orbitron(empty_lbl, 9)
+		empty_lbl.add_theme_color_override("font_color", Color(0.45, 0.5, 0.65))
+		root.add_child(empty_lbl)
+	else:
+		for entry: Dictionary in installed:
+			var def := BuildingDef.find(entry.get("building_id", ""))
+			if def == null:
+				continue
+			var row := HBoxContainer.new()
+			var name_lbl := Label.new()
+			name_lbl.text = def.display_name
+			name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			_apply_orbitron(name_lbl, 10)
+			name_lbl.add_theme_color_override("font_color", Color(0.8, 0.88, 1.0))
+			var energy_lbl := Label.new()
+			var sign := "+" if def.energy_delta > 0 else ""
+			energy_lbl.text = sign + "%.0f⚡" % def.energy_delta
+			_apply_orbitron(energy_lbl, 9)
+			energy_lbl.add_theme_color_override("font_color",
+				Color(0.4, 1.0, 0.6) if def.energy_delta > 0 else Color(0.9, 0.6, 0.3))
+			row.add_child(name_lbl)
+			row.add_child(energy_lbl)
+			root.add_child(row)
+
+	# ── Buildable list ────────────────────────────────────────────────────────
+	var buildable := BuildingDef.for_poi_type(poi.poi_type)
+	if not buildable.is_empty():
+		var build_title := Label.new()
+		build_title.text = "BUILD"
+		_apply_orbitron(build_title, 8)
+		build_title.add_theme_color_override("font_color", Color(0.4, 0.45, 0.65))
+		root.add_child(build_title)
+
+	for def: BuildingDef in buildable:
+		if def.min_planet_lv > pp.level:
+			continue
+		var slots_free := poi.max_building_slots() - pp.slots_used_in_poi(poi.label)
+		var can_afford := GameState.credits >= def.base_cost
+		var has_slots  := slots_free >= def.slot_cost
+
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+
+		var info := VBoxContainer.new()
+		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var def_name := Label.new()
+		def_name.text = def.display_name
+		_apply_orbitron(def_name, 10)
+		def_name.add_theme_color_override("font_color",
+			Color(0.75, 0.82, 1.0) if (can_afford and has_slots) else Color(0.4, 0.43, 0.55))
+		var def_cost := Label.new()
+		def_cost.text = "%.0f cr  ·  %d slot" % [def.base_cost, def.slot_cost]
+		_apply_orbitron(def_cost, 8)
+		def_cost.add_theme_color_override("font_color",
+			Color(0.5, 0.75, 0.45) if can_afford else Color(0.7, 0.35, 0.3))
+		info.add_child(def_name)
+		info.add_child(def_cost)
+
+		var btn := Button.new()
+		btn.text     = "▶"
+		btn.flat     = false
+		btn.disabled = not (can_afford and has_slots)
+		_apply_orbitron(btn, 10)
+		btn.custom_minimum_size = Vector2(28, 28)
+		btn.add_theme_color_override("font_color", Color(0.9, 0.82, 0.45))
+		btn.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
+		btn.mouse_exited.connect(func()  -> void: CursorManager.set_state(CursorManager.State.NORMAL))
+		var cap_poi := poi
+		var cap_def := def
+		var cap_planet := planet
+		btn.pressed.connect(func() -> void:
+			if GameState.spend_credits(cap_def.base_cost):
+				pp.build_in_poi(cap_poi, cap_def.building_id)
+				GameState.planet_progress_changed.emit(cap_planet.seed)
+				_build_poi_panel(cap_poi, cap_planet))
+
+		row.add_child(info)
+		row.add_child(btn)
+		root.add_child(row)
+
+	panel_content.add_child(root)
 
 func _on_seed_clicked(event: InputEvent, s: int) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:

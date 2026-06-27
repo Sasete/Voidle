@@ -19,6 +19,7 @@ config/icon="res://icon.svg"
 
 SceneTransition="*res://scripts/ui/SceneTransition.gd"
 GameState="*res://scripts/game/GameState.gd"
+CursorManager="*res://scripts/system/CursorManager.gd"
 
 [display]
 

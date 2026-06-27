@@ -24,8 +24,6 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_aaaa")
-random_on_start = null
-debug_seed = null
 
 [node name="Background" type="ColorRect" parent="." unique_id=505283722]
 layout_mode = 1
@@ -87,6 +85,9 @@ text = "Terran"
 
 [node name="GameState Debugger" type="Node" parent="Debuggers" unique_id=408177813]
 script = ExtResource("7_5jl86")
+solar_unlocked = true
+galaxy_unlocked = true
+unlock_home_moons = true
 
 [node name="ResourceGen Debugger" type="Node" parent="Debuggers" unique_id=943477178]
 script = ExtResource("8_o0343")

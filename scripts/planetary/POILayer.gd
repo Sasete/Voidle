@@ -146,9 +146,9 @@ func _input(event: InputEvent) -> void:
 		if _hovered_index != prev:
 			queue_redraw()
 			if _hovered_index >= 0:
-				Input.set_default_cursor_shape(Input.CURSOR_POINTING_HAND)
+				CursorManager.set_state(CursorManager.State.POINTER)
 			else:
-				Input.set_default_cursor_shape(Input.CURSOR_ARROW)
+				CursorManager.set_state(CursorManager.State.NORMAL)
 
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		var idx := _get_poi_at(event.global_position)

@@ -85,8 +85,13 @@ func _process(delta: float) -> void:
 		if _entry_target != _hovered:
 			_entry_charge = 0
 			_entry_target = -1
-		Input.set_default_cursor_shape(
-			Input.CURSOR_POINTING_HAND if _hovered >= 0 else Input.CURSOR_ARROW)
+	# Always update cursor every frame
+	if _dragging or _tilt_dragging:
+		CursorManager.set_state(CursorManager.State.GRAB)
+	elif _hovered >= 0:
+		CursorManager.set_state(CursorManager.State.POINTER)
+	else:
+		CursorManager.set_state(CursorManager.State.NORMAL)
 	queue_redraw()
 
 func _star_screen_pos(i: int) -> Vector2:

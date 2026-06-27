@@ -175,6 +175,7 @@ func _on_hover_start() -> void:
 	_hover = true
 	_hover_label.visible = true
 	hover_start.emit(planet_data)
+	CursorManager.set_state(CursorManager.State.POINTER)
 	await get_tree().process_frame
 	_update_label_position()
 	queue_redraw()
@@ -191,6 +192,7 @@ func _on_hover_start() -> void:
 
 func _on_hover_end() -> void:
 	_hover = false
+	CursorManager.set_state(CursorManager.State.NORMAL)
 	hover_end.emit()
 	queue_redraw()
 	if _hover_tween:

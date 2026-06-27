@@ -85,10 +85,15 @@ func _build_home_solar() -> SolarData:
 	home_pd.moons.append(moon)
 	home_pd.set_meta("__is_home", true)
 
+	# Home planet starts colonized
+	var home_pp := get_planet(home_planet_seed)
+	home_pp.is_colonized = true
+
 	# Attach starting Capital POI only once (first time world is built)
 	if home_pd.custom_pois.is_empty():
 		var poi       := POIData.new()
 		poi.label      = "Capital"
+		poi.poi_type   = POIData.POIType.CITY
 		poi.type_tag   = "city"
 		poi.placement  = LocationFinder.Placement.LAND
 		poi.light_intensity = 2.0
@@ -163,6 +168,15 @@ func spend_credits(amount: float) -> bool:
 
 func earn_credits(amount: float) -> void:
 	credits += amount
+
+## Stub colonize — no ship requirement yet. Returns false if can't afford.
+func colonize_planet(planet_seed: int, cost: float = 1000.0) -> bool:
+	if not spend_credits(cost):
+		return false
+	var pp := get_planet(planet_seed)
+	pp.is_colonized = true
+	planet_progress_changed.emit(planet_seed)
+	return true
 
 # ── Save / Load ───────────────────────────────────────────────────────────────
 const SAVE_PATH := "user://voidle_save.dat"
