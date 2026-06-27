@@ -101,7 +101,7 @@ static func _build_registry() -> void:
 			LocationFinder.Placement.LAND,
 			300.0,
 			[],   # available on all planet types
-			["solar_array", "fusion_reactor", "geothermal_tap"],
+			["solar_panel", "generator", "power_plant"],
 			["Prometheus Array", "Grid Station Alpha", "Helios Platform",
 			 "Solara Base", "Arc Station", "Photon Plant", "Voltex Hub",
 			 "Enerion Core", "Tesla Relay", "Surge Complex", "Dawn Array"]
@@ -116,7 +116,7 @@ static func _build_registry() -> void:
 			[PlanetData.Type.TERRAN, PlanetData.Type.ARID, PlanetData.Type.ICE,
 			 PlanetData.Type.VOLCANIC, PlanetData.Type.BARREN,
 			 PlanetData.Type.MOON, PlanetData.Type.ASTEROID],
-			["mining_drill", "deep_drill", "ore_processor"],
+			["mine", "deep_drill", "refinery"],
 			["Deepvein Complex", "Stratum Site Alpha", "Iron Reach",
 			 "Core Station", "Bedrock Post", "Shaft Prime", "Mineral Yard",
 			 "Excavation Base", "Ironfall", "Quarry One", "Veindepth"]

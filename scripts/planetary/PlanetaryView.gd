@@ -23,6 +23,9 @@ var _ring_angle:   float  = 0.0
 var _ring_particles: Array[Dictionary] = []
 var _light_angle:  float  = 0.8
 const LIGHT_SPEED: float = 0.04   # radians per second
+## Tracks which district POI is currently shown in the district panel.
+## Used by _on_building_constructed to refresh panel without DOM traversal.
+var _active_district_poi: POIData = null
 
 func _make_system(root: PlanetData) -> Array[PlanetData]:
 	var arr: Array[PlanetData] = [root]
@@ -133,6 +136,7 @@ func _input(event: InputEvent) -> void:
 
 func load_planet(data: PlanetData) -> void:
 	current_data = data
+	_active_district_poi = null   # clear stale reference on planet switch
 	GameState.active_planet_seed = data.seed
 	GameState.cache_planet_data(data)
 	_setup_material(data)
@@ -1044,7 +1048,8 @@ func _build_planet_overview(data: PlanetData) -> void:
 	var panel_content := $RightPanel/PanelContent
 	var old := panel_content.get_node_or_null("DistrictBuildPanel")
 	if old:
-		old.free()
+		old.name = "__freeing_district__"   # free name slot before queue_free
+		old.queue_free()
 		_bar_meta.clear()
 		_active_slot_dropdown = null
 	poi_layer.deselect_all()
@@ -1409,20 +1414,9 @@ func _on_building_constructed(planet_seed: int, _key: String) -> void:
 	# Refresh the district panel to swap construction bar → production bar
 	if current_data == null or current_data.seed != planet_seed:
 		return
-	var panel_content := $RightPanel/PanelContent
-	var build_panel := panel_content.get_node_or_null("DistrictBuildPanel")
-	if build_panel == null:
+	if _active_district_poi == null:
 		return
-	# Find which POI is currently shown by reading the panel header label
-	for child in build_panel.get_children():
-		if child is HBoxContainer:
-			for hchild in child.get_children():
-				if hchild is Label:
-					var txt: String = (hchild as Label).text
-					for poi: POIData in current_data.custom_pois:
-						if txt.begins_with(poi.label):
-							_build_district_panel(poi, current_data)
-							return
+	_build_district_panel(_active_district_poi, current_data)
 
 func _card_panel_style() -> StyleBoxFlat:
 	var s := StyleBoxFlat.new()
@@ -1760,10 +1754,10 @@ func _toggle_slot_dropdown(card: PanelContainer, poi: POIData, planet: PlanetDat
 	# Toggle off if already open for this slot
 	if _active_slot_dropdown != null and is_instance_valid(_active_slot_dropdown):
 		if _active_slot_dropdown.get_meta("slot_card", null) == card:
-			_active_slot_dropdown.free()
+			_active_slot_dropdown.queue_free()
 			_active_slot_dropdown = null
 			return
-		_active_slot_dropdown.free()
+		_active_slot_dropdown.queue_free()
 		_active_slot_dropdown = null
 
 	var buildable := BuildingDef.for_poi_type(poi.poi_type)
@@ -1868,10 +1862,12 @@ func _toggle_slot_dropdown(card: PanelContainer, poi: POIData, planet: PlanetDat
 	_active_slot_dropdown = outer
 
 func _build_district_panel(poi: POIData, planet: PlanetData) -> void:
+	_active_district_poi = poi   # remember for _on_building_constructed
 	var panel_content := $RightPanel/PanelContent
 	var old := panel_content.get_node_or_null("DistrictBuildPanel")
 	if old:
-		old.free()
+		old.name = "__freeing_district__"   # free name slot before queue_free
+		old.queue_free()
 		_bar_meta.clear()
 		_active_slot_dropdown = null
 
