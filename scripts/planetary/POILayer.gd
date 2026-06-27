@@ -7,6 +7,8 @@ const DOT_HOVER_RADIUS := 8.0
 const LINE_DIAG_LEN    := 28.0
 const LINE_HORIZ_LEN   := 52.0
 const FONT_SIZE        := 15
+const NIGHT_GLOW_MAX   := 5.0   # max glow radius in pixels
+const NIGHT_GLOW_MIN   := 0.8   # glow radius for a single active building
 
 var _planet: ColorRect
 var _pois: Array[Dictionary] = []
@@ -92,6 +94,42 @@ func _draw() -> void:
 
 	for i in _pois.size():
 		var poi: Dictionary = _pois[i]
+
+		# ── Night-side glow ──────────────────────────────────────────────────────
+		# Draw on the dark side (sz < 0) regardless of visibility flag
+		var poi_sp: Vector2 = poi["screen"] - global_position
+		var data_dict: Dictionary = poi.get("data", {}) as Dictionary
+		var night_size: int = data_dict.get("night_size", 0)
+		if night_size > 0 and not poi["visible"]:
+			# sz value: negative = dark side; derive night alpha from it
+			# We compute approximate sz from alpha and visible: !visible + alpha≈0
+			# Re-derive: store sz directly or infer from screen overlap with planet center
+			# alpha is 0 when exactly at terminator (sz=0). On night side sz<0, alpha stays 0.
+			# Use a fading alpha based on distance from terminator — stored alpha is 0 on night.
+			# Instead, compute night_alpha from the stored alpha (which is clamped sz*4 on day side)
+			# On the night side we infer it via screen position relative to planet center.
+			var p2 := _get_planet_params()
+			if not p2.is_empty():
+				var center2: Vector2 = p2["center"]
+				var r_px2: float     = p2["r_px"]
+				var rot2: float      = _get_rotation()
+				var lon2: float = poi["lon"] - rot2
+				var lat2: float = poi["lat"]
+				var sx2  := sin(lon2) * cos(lat2)
+				var sy2  := -sin(lat2)
+				var sz2  := cos(lon2) * cos(lat2)
+				if sz2 < 0.0:
+					var night_a: float = clampf(-sz2 * 3.0, 0.0, 1.0)
+					var glow_r: float  = clampf(
+						NIGHT_GLOW_MIN + float(night_size - 1) * 0.8,
+						NIGHT_GLOW_MIN, NIGHT_GLOW_MAX)
+					var sp2: Vector2 = center2 + Vector2(sx2 * r_px2, sy2 * r_px2) - global_position
+					draw_circle(sp2, glow_r + 2.5, Color(1.0, 0.72, 0.28, night_a * 0.07))
+					draw_circle(sp2, glow_r + 1.2, Color(1.0, 0.85, 0.45, night_a * 0.18))
+					draw_circle(sp2, glow_r,        Color(1.0, 0.95, 0.65, night_a * 0.38))
+					draw_circle(sp2, maxf(glow_r * 0.5, 0.5),
+						Color(1.0, 1.0, 0.92, night_a * 0.65))
+
 		if not poi["visible"]:
 			continue
 

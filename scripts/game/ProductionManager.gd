@@ -4,13 +4,19 @@ extends Node
 
 signal building_ticked(planet_seed: int, key: String)
 signal building_progress_changed(planet_seed: int, key: String, progress: float)
+signal building_constructed(planet_seed: int, key: String)
+signal building_toggled(key: String, paused: bool)
 
-## { "planet_seed:poi_label:idx" -> float 0.0-1.0 }
-var _progress:  Dictionary = {}
-## { "planet_seed:poi_label:idx" -> bool } true = waiting for resources
-var _paused:    Dictionary = {}
-## planet energy balance cache, rebuilt each frame { planet_seed -> float }
-var _energy:    Dictionary = {}
+## { pm_key -> float 0.0-1.0 }
+var _progress:    Dictionary = {}
+## { pm_key -> bool } true = auto-paused (resource/energy shortage)
+var _paused:      Dictionary = {}
+## { pm_key -> bool } true = user manually toggled off
+var _user_paused: Dictionary = {}
+## planet energy balance cache { planet_seed -> float }
+var _energy:      Dictionary = {}
+## { "construct:pm_key" -> float 0.0-1.0 }
+var _construct:   Dictionary = {}
 
 func _process(delta: float) -> void:
 	_energy.clear()
@@ -22,6 +28,19 @@ func get_progress(key: String) -> float:
 func is_paused(key: String) -> bool:
 	return _paused.get(key, false)
 
+func get_construct_progress(key: String) -> float:
+	return _construct.get("construct:" + key, 0.0)
+
+func is_constructing(key: String) -> bool:
+	return _construct.has("construct:" + key)
+
+func toggle_user_pause(key: String) -> void:
+	_user_paused[key] = not _user_paused.get(key, false)
+	building_toggled.emit(key, _user_paused[key])
+
+func is_user_paused(key: String) -> bool:
+	return _user_paused.get(key, false)
+
 ## Called by PlanetaryView after building is placed so UI can refresh immediately.
 func invalidate(planet_seed: int) -> void:
 	building_ticked.emit(planet_seed, "")
@@ -32,6 +51,18 @@ func _tick_all(delta: float) -> void:
 	for pp: PlanetProgress in _all_colonies():
 		var planet_seed: int = pp.planet_seed
 		var energy_avail: float = _planet_energy(pp)
+
+		# Compute energy ratio for throttling: how much of demand is covered.
+		# < 1.0 means deficit → energy-consumers slow down proportionally.
+		var total_demand: float = 0.0
+		for eb: Dictionary in pp.buildings:
+			if eb.get("constructing", false): continue
+			var edef := BuildingDef.find(eb.get("building_id", ""))
+			if edef != null and edef.energy_per_tick < 0.0:
+				total_demand += abs(edef.energy_per_tick) * eb.get("amount", 1)
+		var energy_ratio: float = 1.0
+		if total_demand > 0.0:
+			energy_ratio = clampf(energy_avail / total_demand, 0.0, 1.0)
 
 		var mods := PlanetModifier.for_planet(_planet_type(planet_seed))
 
@@ -45,39 +76,57 @@ func _tick_all(delta: float) -> void:
 			if def == null or def.tick_duration <= 0.0:
 				continue
 
-			# Energy consumed scales with amount
-			var energy_needed: float = abs(def.energy_per_tick) * amount
-			var needs_energy: bool   = def.energy_per_tick < 0.0
-			var energy_mult := PlanetModifier.combined(mods, PlanetModifier.Effect.ENERGY_COST_MULT)
-			energy_needed *= energy_mult
-
-			if needs_energy and energy_avail < energy_needed and energy_avail > 0.0:
-				_paused[key] = true
-				_emit_progress(planet_seed, key)
+			# ── Construction phase ────────────────────────────────────────────
+			if entry.get("constructing", false):
+				var ck: String = "construct:" + key
+				var cp: float  = _construct.get(ck, 0.0) + delta / def.tick_duration
+				if cp >= 1.0:
+					_construct.erase(ck)
+					entry["constructing"] = false
+					building_constructed.emit(planet_seed, key)
+					building_ticked.emit(planet_seed, key)
+				else:
+					_construct[ck] = cp
+					building_progress_changed.emit(planet_seed, key, cp)
 				continue
 
-			# Check input resources (scaled by amount)
-			if def.input_type != BuildingDef.OutputType.NONE:
-				var rid := _resource_key(def.input_type, pp.planet_seed)
-				var have: float = pp.stored_resources.get(rid, 0.0)
-				if have < def.input_amount * amount and _progress.get(key, 0.0) == 0.0:
+			# ── User-toggled off ──────────────────────────────────────────────
+			if _user_paused.get(key, false):
+				continue
+
+			# Energy: consumers are throttled by energy_ratio; no hard pause
+			var needs_energy: bool = def.energy_per_tick < 0.0
+			var energy_speed: float = 1.0
+			if needs_energy:
+				if energy_ratio <= 0.0:
 					_paused[key] = true
 					_emit_progress(planet_seed, key)
 					continue
+				energy_speed = energy_ratio  # slow to match available energy
+
+			# Check & consume input resources at START of cycle
+			var prev: float = _progress.get(key, 0.0)
+			if def.input_type != BuildingDef.OutputType.NONE and prev == 0.0:
+				var rid := _resource_key(def.input_type, pp.planet_seed)
+				var have: float = pp.stored_resources.get(rid, 0.0)
+				if have < def.input_amount * amount:
+					_paused[key] = true
+					_emit_progress(planet_seed, key)
+					continue
+				# Energy producers consume fuel at START (also at END via _on_tick_complete)
+				if def.output_type == BuildingDef.OutputType.ENERGY:
+					pp.stored_resources[rid] = maxf(0.0, have - def.input_amount * amount)
 
 			_paused[key] = false
 
-			# Speed — mines also use PlanetModifier mine speed
-			var speed_mult: float = _deposit_speed(def, planet_seed, mods)
+			# Speed — mines also use PlanetModifier mine speed; energy deficit throttles consumers
+			var speed_mult: float = _deposit_speed(def, planet_seed, mods) * energy_speed
 			var rate: float = delta / (def.tick_duration / speed_mult)
-			var prev: float = _progress.get(key, 0.0)
 			var next: float = prev + rate
 
 			if next >= 1.0:
 				_on_tick_complete(pp, def, key, energy_avail, amount)
 				_progress[key] = 0.0
-				if needs_energy:
-					energy_avail -= energy_needed
 				building_ticked.emit(planet_seed, key)
 			else:
 				_progress[key] = next
@@ -109,9 +158,18 @@ func _planet_energy(pp: PlanetProgress) -> float:
 		return _energy[pp.planet_seed]
 	var total: float = 0.0
 	for entry: Dictionary in pp.buildings:
+		if entry.get("constructing", false):
+			continue
 		var def := BuildingDef.find(entry.get("building_id", ""))
-		if def != null and def.energy_per_tick > 0.0:
-			total += def.energy_per_tick
+		if def == null:
+			continue
+		var amt: int = entry.get("amount", 1)
+		# Direct energy flow (e.g. heat vents etc. with positive energy_per_tick)
+		if def.energy_per_tick > 0.0:
+			total += def.energy_per_tick * amt
+		# Energy-output buildings (solar, generators, power plants)
+		if def.output_type == BuildingDef.OutputType.ENERGY:
+			total += def.output_amount * amt
 	_energy[pp.planet_seed] = total
 	return total
 

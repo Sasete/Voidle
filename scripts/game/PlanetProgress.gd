@@ -75,7 +75,7 @@ func build_in_district(district: POIData, building_id: String) -> bool:
 		return false
 	if slots_used_in_district(district.label) + def.slot_cost > district_slots(district.label):
 		return false
-	buildings.append({ "district_id": district.label, "building_id": building_id, "amount": 1 })
+	buildings.append({ "district_id": district.label, "building_id": building_id, "amount": 1, "constructing": true })
 	if building_id == "spaceport":
 		has_spaceport = true
 	return true

@@ -165,7 +165,11 @@ func load_planet(data: PlanetData) -> void:
 			pois.append({
 				"lon_deg": rad_to_deg(lon), "lat_deg": rad_to_deg(lat),
 				"label": pd.label,
-				"data": {"type": pd.type_tag, "light_intensity": pd.light_intensity}
+				"data": {
+					"type": pd.type_tag,
+					"light_intensity": pd.light_intensity,
+					"night_size": _district_night_size(data, pd.label),
+				}
 			})
 	# no auto-generated POIs — only custom_pois are shown
 
@@ -177,6 +181,9 @@ func load_planet(data: PlanetData) -> void:
 		poi_layer.add_poi(poi["lon_deg"], poi["lat_deg"], poi["label"], poi["data"])
 
 	_upload_poi_lights(pois, data)
+	# After POIs are loaded, sync night sizes so shader glow starts correctly
+	_update_poi_night_sizes(data)
+	_refresh_poi_lights(data)
 	_build_planet_overview(data)
 
 func redraw() -> void:
@@ -253,13 +260,32 @@ func _upload_poi_lights(pois: Array[Dictionary], data: PlanetData) -> void:
 		if i < count:
 			var lon: float = deg_to_rad(float(pois[i].get("lon_deg", 0.0)))
 			var lat: float = deg_to_rad(float(pois[i].get("lat_deg", 0.0)))
-			var intensity: float = float(pois[i].get("data", {}).get("light_intensity", 1.0))
+			# Scale intensity by active building count: 0 bldgs = 0, 1 = tiny, max ~10 = ~0.35
+			var ns: int     = int(pois[i].get("data", {}).get("night_size", 0))
+			var intensity: float = clampf(float(ns) * 0.035, 0.0, 0.35)
 			var nx: float = sin(lon) * cos(lat)
 			var ny: float = -sin(lat)
 			var nz: float = cos(lon) * cos(lat)
 			mat.set_shader_parameter(names[i], Vector4(nx, ny, nz, intensity))
 		else:
 			mat.set_shader_parameter(names[i], Vector4(0,0,0,0))
+
+func _refresh_poi_lights(data: PlanetData) -> void:
+	if current_data == null or current_data.seed != data.seed:
+		return
+	var pp := GameState.get_planet(data.seed)
+	var pois_fresh: Array[Dictionary] = []
+	for pd: POIData in data.custom_pois:
+		pois_fresh.append({
+			"lon_deg": pd.lon_deg, "lat_deg": pd.lat_deg,
+			"label":   pd.label,
+			"data":    {
+				"type": pd.type_tag,
+				"light_intensity": pd.light_intensity,
+				"night_size": _district_night_size(data, pd.label),
+			}
+		})
+	_upload_poi_lights(pois_fresh, data)
 
 func _update_panel(data: PlanetData) -> void:
 	var name_label  := $RightPanel/PanelContent/PlanetName as Label
@@ -487,7 +513,7 @@ func _make_hud_style(col: Color, radius: int) -> StyleBoxFlat:
 	return s
 
 func _details_row(parent: VBoxContainer, label: String, value: String,
-		val_color: Color = Color(0.85, 0.90, 1.0)) -> void:
+		val_color: Color = Color(0.85, 0.90, 1.0)) -> HBoxContainer:
 	var hbox := HBoxContainer.new()
 	var lbl := Label.new()
 	lbl.text = label
@@ -501,6 +527,7 @@ func _details_row(parent: VBoxContainer, label: String, value: String,
 	hbox.add_child(lbl)
 	hbox.add_child(val)
 	parent.add_child(hbox)
+	return hbox
 
 ## Styled icon cell for a resource — bordered panel with pixel art icon.
 ## show_count=false → icon only (availability). show_count=true → icon + amount label.
@@ -620,12 +647,6 @@ func _fill_colonized_details(vbox: VBoxContainer, data: PlanetData, pp: PlanetPr
 	_details_row(vbox, "Level",     "Lv %d" % pp.level, Color(1.0, 0.88, 0.4))
 	_details_row(vbox, "Districts", "%d / %d" % [data.custom_pois.size(), pp.max_districts])
 
-	# Energy balance
-	var energy_bal: float = _planet_energy_balance(pp)
-	var e_sign := "+" if energy_bal >= 0 else ""
-	_details_row(vbox, "Energy", e_sign + "%.0f ⚡" % energy_bal,
-		Color(0.9, 0.82, 0.25) if energy_bal >= 0 else Color(0.9, 0.40, 0.28))
-
 	_details_section(vbox, "DEPOSITS")
 	var br := GameState.get_body_resources(data.seed, 1, 3)
 	for rd: ResourceData in br.as_array():
@@ -638,13 +659,61 @@ func _fill_colonized_details(vbox: VBoxContainer, data: PlanetData, pp: PlanetPr
 	var size_str := "Small" if data.planet_size < 0.8 else ("Large" if data.planet_size > 1.3 else "Medium")
 	_details_row(vbox, "Size", size_str)
 
-func _planet_energy_balance(pp: PlanetProgress) -> float:
-	var bal: float = 0.0
+## Active building count for a district (for night-light glow size).
+## Excludes constructing and user-paused buildings.
+func _district_night_size(data: PlanetData, district_label: String) -> int:
+	var pp := GameState.get_planet(data.seed)
+	var total: int = 0
+	var entries := pp.buildings_in_district(district_label)
+	for i in entries.size():
+		var b: Dictionary = entries[i]
+		if b.get("constructing", false):
+			continue
+		var global_idx: int = pp.buildings.find(b)
+		var pm_key: String  = "%d:%s:%d" % [data.seed, district_label, global_idx]
+		if ProductionManager.is_user_paused(pm_key):
+			continue
+		total += b.get("amount", 1)
+	return total
+
+func _update_poi_night_sizes(data: PlanetData) -> void:
+	for i in poi_layer._pois.size():
+		var label: String = poi_layer._pois[i]["label"]
+		poi_layer._pois[i]["data"]["night_size"] = _district_night_size(data, label)
+
+## Returns total energy balance (positive = surplus) and per-district breakdown dict.
+func _planet_energy_breakdown(pp: PlanetProgress, data: PlanetData) -> Dictionary:
+	var total: float = 0.0
+	var by_district: Dictionary = {}  # label -> float
 	for b: Dictionary in pp.buildings:
+		if b.get("constructing", false) or ProductionManager.is_user_paused(
+				"%d:%s:%d" % [pp.planet_seed, b.get("district_id",""), pp.buildings.find(b)]):
+			continue
 		var def := BuildingDef.find(b.get("building_id", ""))
 		if def == null:
 			continue
-		bal -= def.energy_per_tick * b.get("amount", 1)
+		var amt: int  = b.get("amount", 1)
+		var label: String = b.get("district_id", "")
+		var contrib: float = def.energy_per_tick * amt
+		if def.output_type == BuildingDef.OutputType.ENERGY:
+			contrib += def.output_amount * amt
+		total += contrib
+		by_district[label] = by_district.get(label, 0.0) + contrib
+	var result: Dictionary = { "total": total }
+	for poi: POIData in data.custom_pois:
+		if by_district.has(poi.label):
+			result[poi.label] = by_district[poi.label]
+	return result
+
+func _planet_energy_balance(pp: PlanetProgress) -> float:
+	var bal: float = 0.0
+	for b: Dictionary in pp.buildings:
+		if b.get("constructing", false):
+			continue
+		var def := BuildingDef.find(b.get("building_id", ""))
+		if def == null:
+			continue
+		bal += def.energy_per_tick * b.get("amount", 1)
 		if def.output_type == BuildingDef.OutputType.ENERGY:
 			bal += def.output_amount * b.get("amount", 1)
 	return bal
@@ -1022,8 +1091,9 @@ func _build_planet_overview(data: PlanetData) -> void:
 	dist_row.add_child(dr_lbl); dist_row.add_child(dr_val)
 	root.add_child(dist_row)
 
-	# Energy balance row (always visible)
-	var energy_bal: float = _planet_energy_balance(pp)
+	# Energy balance row with per-district tooltip
+	var e_breakdown := _planet_energy_breakdown(pp, data)
+	var energy_bal: float = e_breakdown.get("total", 0.0)
 	var e_sign := "+" if energy_bal >= 0.0 else ""
 	var e_row := HBoxContainer.new()
 	var e_lbl := Label.new()
@@ -1038,6 +1108,26 @@ func _build_planet_overview(data: PlanetData) -> void:
 		Color(0.9, 0.82, 0.25) if energy_bal >= 0.0 else Color(0.9, 0.40, 0.28))
 	e_row.add_child(e_lbl); e_row.add_child(e_val)
 	root.add_child(e_row)
+	# Tooltip with per-district breakdown — show all districts (producers + consumers)
+	var tip_producers: Array[String] = []
+	var tip_consumers: Array[String] = []
+	for poi_t: POIData in data.custom_pois:
+		var d_val: float = e_breakdown.get(poi_t.label, 0.0) as float
+		if d_val == 0.0:
+			continue
+		var d_sign := "+" if d_val >= 0.0 else ""
+		var line := "%s  %s%.0f ⚡" % [poi_t.label, d_sign, d_val]
+		if d_val >= 0.0:
+			tip_producers.append(line)
+		else:
+			tip_consumers.append(line)
+	var all_tip_lines: Array[String] = tip_producers + tip_consumers
+	if not all_tip_lines.is_empty():
+		var tip_body: String = "\n".join(all_tip_lines)
+		e_row.mouse_entered.connect(func() -> void:
+			TooltipManager.show_tip("Energy by District", tip_body))
+		e_row.mouse_exited.connect(func() -> void:
+			TooltipManager.hide_tip())
 
 	# POI list
 	if not data.custom_pois.is_empty():
@@ -1105,36 +1195,25 @@ func _build_district_overview_card(poi: POIData, planet: PlanetData, pp: PlanetP
 	info.add_child(n_lbl); info.add_child(t_lbl)
 	hbox.add_child(info)
 
-	# Select arrow button
-	var sel_btn := Button.new()
-	sel_btn.text = "▶"
-	sel_btn.flat = true
-	_apply_orbitron(sel_btn, 11)
-	sel_btn.custom_minimum_size = Vector2(24, 24)
-	sel_btn.add_theme_color_override("font_color", Color(0.9, 0.82, 0.45))
-	sel_btn.mouse_entered.connect(func() -> void:
-		if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER))
-	sel_btn.mouse_exited.connect(func() -> void:
-		CursorManager.set_state(CursorManager.State.NORMAL))
+	# Whole card clickable — no separate arrow button
 	var cap_poi    := poi
 	var cap_planet := planet
-	sel_btn.pressed.connect(func() -> void:
-		_select_district_on_planet(cap_poi.label)
-		_rotate_to_lon(cap_poi.lon_deg)
-		_build_district_panel(cap_poi, cap_planet))
-	hbox.add_child(sel_btn)
-
-	# Whole card clickable too
+	var cap_card   := card
+	var norm_s2 := card.get_theme_stylebox("panel") as StyleBoxFlat
+	var hov_s2  := norm_s2.duplicate() as StyleBoxFlat
+	hov_s2.bg_color = Color(0.10, 0.14, 0.28, 0.92)
 	card.mouse_entered.connect(func() -> void:
+		cap_card.add_theme_stylebox_override("panel", hov_s2)
 		if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER))
 	card.mouse_exited.connect(func() -> void:
+		cap_card.add_theme_stylebox_override("panel", norm_s2)
 		CursorManager.set_state(CursorManager.State.NORMAL))
 	card.gui_input.connect(func(e: InputEvent) -> void:
 		if e is InputEventMouseButton and (e as InputEventMouseButton).pressed \
 				and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
-			_select_district_on_planet(poi.label)
-			_rotate_to_lon(poi.lon_deg)
-			_build_district_panel(poi, planet))
+			_select_district_on_planet(cap_poi.label)
+			_rotate_to_lon(cap_poi.lon_deg)
+			_build_district_panel(cap_poi, cap_planet))
 	return card
 
 func _select_district_on_planet(label: String) -> void:
@@ -1303,6 +1382,47 @@ func _on_production_update(_planet_seed: int, key: String, progress: float) -> v
 	var fc: Control = m["fill"]
 	if is_instance_valid(fc):
 		fc.queue_redraw()
+	# Update percent label on construction bars
+	if m.get("construction", false) and m.has("pct"):
+		var pct: Label = m["pct"]
+		if is_instance_valid(pct):
+			pct.text = "%d%%" % int(progress * 100)
+
+func _on_building_ticked_night(planet_seed: int, key: String) -> void:
+	if current_data != null and current_data.seed == planet_seed:
+		_update_poi_night_sizes(current_data)
+		_refresh_poi_lights(current_data)
+	# Also refresh fill if this bar is currently visible
+	if _bar_meta.has(key):
+		var fc: Control = _bar_meta[key]["fill"]
+		if is_instance_valid(fc):
+			fc.queue_redraw()
+
+func _on_building_toggled(key: String, _paused: bool) -> void:
+	if not _bar_meta.has(key):
+		return
+	var fc: Control = _bar_meta[key]["fill"]
+	if is_instance_valid(fc):
+		fc.queue_redraw()
+
+func _on_building_constructed(planet_seed: int, _key: String) -> void:
+	# Refresh the district panel to swap construction bar → production bar
+	if current_data == null or current_data.seed != planet_seed:
+		return
+	var panel_content := $RightPanel/PanelContent
+	var build_panel := panel_content.get_node_or_null("DistrictBuildPanel")
+	if build_panel == null:
+		return
+	# Find which POI is currently shown by reading the panel header label
+	for child in build_panel.get_children():
+		if child is HBoxContainer:
+			for hchild in child.get_children():
+				if hchild is Label:
+					var txt: String = (hchild as Label).text
+					for poi: POIData in current_data.custom_pois:
+						if txt.begins_with(poi.label):
+							_build_district_panel(poi, current_data)
+							return
 
 func _card_panel_style() -> StyleBoxFlat:
 	var s := StyleBoxFlat.new()
@@ -1319,8 +1439,78 @@ func _card_panel_style() -> StyleBoxFlat:
 ## Orb-of-Creation style: card whose background fills left→right as production ticks.
 ## count = number of this building type in this POI (for ×N badge)
 ## poi/planet/pp needed for "+" stacking button
+func _build_construction_bar(def: BuildingDef, pm_key: String) -> PanelContainer:
+	var card := PanelContainer.new()
+	card.add_theme_stylebox_override("panel", _card_panel_style())
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var body := Control.new()
+	body.custom_minimum_size   = Vector2(0, 50)
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body.size_flags_vertical   = Control.SIZE_EXPAND_FILL
+	card.add_child(body)
+
+	var fill_ctrl := Control.new()
+	fill_ctrl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	fill_ctrl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var prog_ref: Array = [ProductionManager.get_construct_progress(pm_key)]
+	fill_ctrl.draw.connect(func() -> void:
+		var p: float = (prog_ref as Array)[0]
+		var w: float = fill_ctrl.size.x * p
+		if w > 0.5:
+			fill_ctrl.draw_rect(Rect2(0, 0, w, fill_ctrl.size.y), Color(0.72, 0.52, 0.12, 0.22))
+			fill_ctrl.draw_rect(Rect2(w - 2.0, 0, 2.0, fill_ctrl.size.y), Color(0.95, 0.75, 0.25, 0.65)))
+	body.add_child(fill_ctrl)
+
+	var margin := MarginContainer.new()
+	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	margin.add_theme_constant_override("margin_left",  10)
+	margin.add_theme_constant_override("margin_right",  8)
+	margin.add_theme_constant_override("margin_top",    7)
+	margin.add_theme_constant_override("margin_bottom", 7)
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	body.add_child(margin)
+
+	var hbox := HBoxContainer.new()
+	hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	margin.add_child(hbox)
+
+	var name_col := VBoxContainer.new()
+	name_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_col.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var name_lbl := Label.new()
+	name_lbl.text = def.display_name
+	_apply_orbitron(name_lbl, 10)
+	name_lbl.add_theme_color_override("font_color", Color(0.85, 0.72, 0.35))
+	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var status_lbl := Label.new()
+	status_lbl.text = "CONSTRUCTING..."
+	_apply_orbitron(status_lbl, 8)
+	status_lbl.add_theme_color_override("font_color", Color(0.65, 0.50, 0.20))
+	status_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	name_col.add_child(name_lbl)
+	name_col.add_child(status_lbl)
+	hbox.add_child(name_col)
+
+	# Percent label on right
+	var pct_lbl := Label.new()
+	pct_lbl.text = "0%"
+	_apply_orbitron(pct_lbl, 9)
+	pct_lbl.add_theme_color_override("font_color", Color(0.70, 0.58, 0.25))
+	pct_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hbox.add_child(pct_lbl)
+
+	# Wire live updates via _bar_meta
+	_bar_meta[pm_key] = {"fill": fill_ctrl, "prog": prog_ref, "pct": pct_lbl, "construction": true}
+
+	return card
+
 func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
-		count: int, poi: POIData, planet: PlanetData, pp: PlanetProgress) -> PanelContainer:
+		count: int, poi: POIData, planet: PlanetData, pp: PlanetProgress,
+		entry: Dictionary = {}) -> PanelContainer:
 	var paused := ProductionManager.is_paused(pm_key)
 	var prog   := ProductionManager.get_progress(pm_key)
 	var fc     := def.output_color()
@@ -1342,10 +1532,22 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 	fill_ctrl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	fill_ctrl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var prog_ref: Array = [prog]
+	var cap_fill_key := pm_key
 	fill_ctrl.draw.connect(func() -> void:
 		var p: float = (prog_ref as Array)[0]
+		var user_off: bool  = ProductionManager.is_user_paused(cap_fill_key)
+		var auto_off: bool  = ProductionManager.is_paused(cap_fill_key)
 		var w: float = fill_ctrl.size.x * p
-		if paused:
+		if user_off:
+			fill_ctrl.draw_rect(Rect2(0, 0, fill_ctrl.size.x, fill_ctrl.size.y),
+				Color(0.08, 0.08, 0.14, 0.72))
+			# Diagonal hatch
+			for xi: int in range(0, int(fill_ctrl.size.x) + int(fill_ctrl.size.y), 14):
+				var x0: float = float(xi)
+				fill_ctrl.draw_line(Vector2(x0, 0),
+					Vector2(x0 - fill_ctrl.size.y, fill_ctrl.size.y),
+					Color(0.25, 0.28, 0.42, 0.30), 1.0)
+		elif auto_off:
 			fill_ctrl.draw_rect(Rect2(0, 0, w, fill_ctrl.size.y),
 				Color(0.35, 0.38, 0.55, 0.22))
 		elif w > 0.5:
@@ -1419,41 +1621,98 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 		info_row.add_child(e_lbl)
 	vbox.add_child(info_row)
 
-	# Right: "+" stacking button
-	var slots_free: int = pp.district_slots(poi.label) - pp.slots_used_in_district(poi.label)
-	var can_add: bool   = slots_free >= def.slot_cost and GameState.credits >= def.base_cost
-	var add_btn := Button.new()
-	add_btn.text    = "+"
-	add_btn.flat    = true
-	add_btn.disabled = not can_add
-	_apply_orbitron(add_btn, 14)
-	add_btn.custom_minimum_size = Vector2(26, 26)
-	add_btn.add_theme_color_override("font_color",
-		Color(0.55, 0.80, 0.55) if can_add else Color(0.30, 0.33, 0.45))
-	var tip_body: String
-	if not can_add and slots_free < def.slot_cost:
-		tip_body = "No slots · Upgrade district"
-	elif not can_add:
-		tip_body = "Need %.0f cr" % def.base_cost
-	else:
-		tip_body = "%.0f cr · %d slot\n%s / %.0fs" % [
-			def.base_cost, def.slot_cost, def.output_label(), def.tick_duration]
-	var cap_tip := tip_body
-	add_btn.mouse_entered.connect(func() -> void:
-		if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER)
-		TooltipManager.show_tip("+ " + def.display_name, cap_tip))
-	add_btn.mouse_exited.connect(func()  -> void:
-		CursorManager.set_state(CursorManager.State.NORMAL)
-		TooltipManager.hide_tip())
+	# Right: "+" stacking and "−" demolish buttons
+	var slots_free: int  = pp.district_slots(poi.label) - pp.slots_used_in_district(poi.label)
+	var can_add: bool    = slots_free >= def.slot_cost and GameState.credits >= def.base_cost
 	var cap_poi    := poi
 	var cap_def    := def
 	var cap_planet := planet
+	var cap_entry  := entry  # dict reference for demolish
+
+	var btn_vbox := VBoxContainer.new()
+	btn_vbox.add_theme_constant_override("separation", 2)
+
+	var add_btn := Button.new()
+	add_btn.text     = "＋"
+	add_btn.flat     = false
+	add_btn.disabled = not can_add
+	_apply_orbitron(add_btn, 10)
+	add_btn.custom_minimum_size = Vector2(30, 22)
+	var add_s := StyleBoxFlat.new()
+	add_s.bg_color    = Color(0.12, 0.30, 0.15, 0.80) if can_add else Color(0.10, 0.10, 0.16, 0.60)
+	add_s.border_color = Color(0.35, 0.75, 0.40, 0.65) if can_add else Color(0.22, 0.25, 0.38, 0.40)
+	add_s.border_width_left = 1; add_s.border_width_right  = 1
+	add_s.border_width_top  = 1; add_s.border_width_bottom = 1
+	add_s.corner_radius_top_left     = 3; add_s.corner_radius_top_right    = 3
+	add_s.corner_radius_bottom_left  = 3; add_s.corner_radius_bottom_right = 3
+	add_s.content_margin_left = 3; add_s.content_margin_right = 3
+	add_btn.add_theme_stylebox_override("normal",   add_s)
+	add_btn.add_theme_stylebox_override("disabled", add_s)
+	add_btn.add_theme_stylebox_override("focus",    StyleBoxEmpty.new())
+	add_btn.add_theme_color_override("font_color",
+		Color(0.60, 0.95, 0.65) if can_add else Color(0.30, 0.33, 0.45))
+	var tip_add: String
+	if not can_add and slots_free < def.slot_cost:
+		tip_add = "No slots · Upgrade district"
+	elif not can_add:
+		tip_add = "Need %.0f cr" % def.base_cost
+	else:
+		tip_add = "Stack one more %s\n%.0f cr · %d slot" % [def.display_name, def.base_cost, def.slot_cost]
+	add_btn.mouse_entered.connect(func() -> void:
+		if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER)
+		TooltipManager.show_tip("＋ " + def.display_name, tip_add))
+	add_btn.mouse_exited.connect(func() -> void:
+		CursorManager.set_state(CursorManager.State.NORMAL)
+		TooltipManager.hide_tip())
 	add_btn.pressed.connect(func() -> void:
 		if GameState.spend_credits(cap_def.base_cost):
 			pp.stack_building_unchecked(cap_poi.label, cap_def.building_id)
 			GameState.planet_progress_changed.emit(cap_planet.seed)
 			_build_district_panel(cap_poi, cap_planet))
-	hbox.add_child(add_btn)
+
+	var rem_btn := Button.new()
+	rem_btn.text = "−"
+	rem_btn.flat = false
+	_apply_orbitron(rem_btn, 10)
+	rem_btn.custom_minimum_size = Vector2(30, 22)
+	var rem_s := StyleBoxFlat.new()
+	rem_s.bg_color     = Color(0.28, 0.10, 0.10, 0.80)
+	rem_s.border_color  = Color(0.65, 0.28, 0.28, 0.60)
+	rem_s.border_width_left = 1; rem_s.border_width_right  = 1
+	rem_s.border_width_top  = 1; rem_s.border_width_bottom = 1
+	rem_s.corner_radius_top_left     = 3; rem_s.corner_radius_top_right    = 3
+	rem_s.corner_radius_bottom_left  = 3; rem_s.corner_radius_bottom_right = 3
+	rem_s.content_margin_left = 3; rem_s.content_margin_right = 3
+	rem_btn.add_theme_stylebox_override("normal", rem_s)
+	rem_btn.add_theme_stylebox_override("focus",  StyleBoxEmpty.new())
+	rem_btn.add_theme_color_override("font_color", Color(0.90, 0.45, 0.45))
+	var tip_rem := "Remove one %s" % def.display_name if count > 1 else "Demolish %s" % def.display_name
+	rem_btn.mouse_entered.connect(func() -> void:
+		if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER)
+		TooltipManager.show_tip("−", tip_rem))
+	rem_btn.mouse_exited.connect(func() -> void:
+		CursorManager.set_state(CursorManager.State.NORMAL)
+		TooltipManager.hide_tip())
+	rem_btn.pressed.connect(func() -> void:
+		var amt: int = cap_entry.get("amount", 1)
+		if amt <= 1:
+			pp.buildings.erase(cap_entry)
+		else:
+			cap_entry["amount"] = amt - 1
+		GameState.planet_progress_changed.emit(cap_planet.seed)
+		_build_district_panel(cap_poi, cap_planet))
+
+	btn_vbox.add_child(add_btn)
+	btn_vbox.add_child(rem_btn)
+	hbox.add_child(btn_vbox)
+
+	# Click card body (not the "+" button) to toggle building on/off
+	var cap_toggle_key := pm_key
+	body.gui_input.connect(func(e: InputEvent) -> void:
+		if e is InputEventMouseButton:
+			var mb := e as InputEventMouseButton
+			if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+				ProductionManager.toggle_user_pause(cap_toggle_key))
 
 	_bar_meta[pm_key] = { "fill": fill_ctrl, "prog": prog_ref }
 	return card
@@ -1498,7 +1757,7 @@ func _build_slot_card(poi: POIData, planet: PlanetData, pp: PlanetProgress,
 
 func _toggle_slot_dropdown(card: PanelContainer, poi: POIData, planet: PlanetData,
 		pp: PlanetProgress, root: VBoxContainer, _slot_idx: int) -> void:
-	# If an open dropdown belongs to this slot, close it (toggle off)
+	# Toggle off if already open for this slot
 	if _active_slot_dropdown != null and is_instance_valid(_active_slot_dropdown):
 		if _active_slot_dropdown.get_meta("slot_card", null) == card:
 			_active_slot_dropdown.free()
@@ -1511,69 +1770,102 @@ func _toggle_slot_dropdown(card: PanelContainer, poi: POIData, planet: PlanetDat
 	if buildable.is_empty():
 		return
 
-	var dropdown := VBoxContainer.new()
-	dropdown.set_meta("slot_card", card)
-	dropdown.add_theme_constant_override("separation", 4)
-
-	var sep := HSeparator.new()
-	var sep_s := StyleBoxFlat.new()
-	sep_s.bg_color = Color(0.22, 0.28, 0.50, 0.3)
-	sep.add_theme_stylebox_override("separator", sep_s)
-	dropdown.add_child(sep)
-
 	var slots_free: int = pp.district_slots(poi.label) - pp.slots_used_in_district(poi.label)
+
+	var outer := PanelContainer.new()
+	outer.set_meta("slot_card", card)
+	outer.add_theme_stylebox_override("panel",
+		_make_hud_style(Color(0.05, 0.07, 0.14, 0.97), 6))
+	outer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var list := VBoxContainer.new()
+	list.add_theme_constant_override("separation", 2)
+	outer.add_child(list)
 
 	for def: BuildingDef in buildable:
 		if def.min_planet_lv > pp.level:
 			continue
 		var can_afford: bool = GameState.credits >= def.base_cost
 		var has_slots:  bool = slots_free >= def.slot_cost
+		var enabled: bool    = can_afford and has_slots
 
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 6)
+		var row_panel := PanelContainer.new()
+		var norm_s := StyleBoxFlat.new()
+		norm_s.bg_color = Color(0, 0, 0, 0)
+		norm_s.content_margin_left = 10; norm_s.content_margin_right  = 10
+		norm_s.content_margin_top  = 7;  norm_s.content_margin_bottom = 7
+		var hov_s := norm_s.duplicate() as StyleBoxFlat
+		hov_s.bg_color = Color(0.12, 0.18, 0.35, 0.60)
+		row_panel.add_theme_stylebox_override("panel", norm_s)
+		row_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
-		var info := VBoxContainer.new()
-		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var vbox := VBoxContainer.new()
+		vbox.add_theme_constant_override("separation", 2)
+		vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
 		var n_lbl := Label.new()
 		n_lbl.text = def.display_name
+		n_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_apply_orbitron(n_lbl, 10)
 		n_lbl.add_theme_color_override("font_color",
-			Color(0.78, 0.86, 1.0) if (can_afford and has_slots) else Color(0.38, 0.40, 0.55))
+			Color(0.80, 0.88, 1.0) if enabled else Color(0.38, 0.40, 0.55))
+
+		var reason := ""
+		if not has_slots: reason = "No free slots"
+		elif not can_afford: reason = "Need %.0f cr" % def.base_cost
+
+		var sub_parts: Array[String] = []
+		sub_parts.append("%.0f cr" % def.base_cost)
+		sub_parts.append("%d slot%s" % [def.slot_cost, "s" if def.slot_cost > 1 else ""])
+		sub_parts.append("%.0fs" % def.tick_duration)
+		if def.output_label() != "":
+			sub_parts.append(def.output_label())
 		var c_lbl := Label.new()
-		c_lbl.text = "%.0f cr · %d slot · %s" % [def.base_cost, def.slot_cost, def.output_label()]
+		c_lbl.text = " · ".join(sub_parts)
+		c_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_apply_orbitron(c_lbl, 8)
 		c_lbl.add_theme_color_override("font_color",
-			Color(0.45, 0.72, 0.40) if can_afford else Color(0.65, 0.30, 0.28))
-		info.add_child(n_lbl)
-		info.add_child(c_lbl)
+			Color(0.45, 0.72, 0.40) if (can_afford and has_slots) else Color(0.60, 0.30, 0.28))
 
-		var btn := Button.new()
-		btn.text     = "▶"
-		btn.flat     = true
-		btn.disabled = not (can_afford and has_slots)
-		_apply_orbitron(btn, 11)
-		btn.custom_minimum_size = Vector2(26, 26)
-		btn.add_theme_color_override("font_color", Color(0.9, 0.82, 0.45))
-		btn.mouse_entered.connect(func() -> void:
-			if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER))
-		btn.mouse_exited.connect(func()  -> void:
-			CursorManager.set_state(CursorManager.State.NORMAL))
+		vbox.add_child(n_lbl); vbox.add_child(c_lbl)
+		row_panel.add_child(vbox)
+		list.add_child(row_panel)
+
 		var cap_poi    := poi
 		var cap_def    := def
 		var cap_planet := planet
-		btn.pressed.connect(func() -> void:
-			if GameState.spend_credits(cap_def.base_cost):
-				pp.build_in_district(cap_poi, cap_def.building_id)
-				GameState.planet_progress_changed.emit(cap_planet.seed)
-				_build_district_panel(cap_poi, cap_planet))
+		var cap_row    := row_panel
+		var cap_norm   := norm_s
+		var cap_hov    := hov_s
+		var tip_title  := def.display_name
+		var tip_body   := "%s\n\nCost: %.0f cr · %d slot%s · %.0fs build time%s" % [
+			def.description,
+			def.base_cost, def.slot_cost, "s" if def.slot_cost > 1 else "",
+			def.tick_duration,
+			("\n\n[b]" + reason + "[/b]") if reason != "" else ""]
 
-		row.add_child(info)
-		row.add_child(btn)
-		dropdown.add_child(row)
+		row_panel.mouse_entered.connect(func() -> void:
+			cap_row.add_theme_stylebox_override("panel", cap_hov)
+			if enabled and not _is_at_edge():
+				CursorManager.set_state(CursorManager.State.POINTER)
+			TooltipManager.show_tip(tip_title, tip_body))
+		row_panel.mouse_exited.connect(func() -> void:
+			cap_row.add_theme_stylebox_override("panel", cap_norm)
+			CursorManager.set_state(CursorManager.State.NORMAL)
+			TooltipManager.hide_tip())
 
-	root.add_child(dropdown)
-	root.move_child(dropdown, card.get_index() + 1)
-	_active_slot_dropdown = dropdown
+		if enabled:
+			row_panel.gui_input.connect(func(e: InputEvent) -> void:
+				if e is InputEventMouseButton and (e as InputEventMouseButton).pressed \
+						and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+					if GameState.spend_credits(cap_def.base_cost):
+						pp.build_in_district(cap_poi, cap_def.building_id)
+						GameState.planet_progress_changed.emit(cap_planet.seed)
+						_build_district_panel(cap_poi, cap_planet))
+
+	root.add_child(outer)
+	root.move_child(outer, card.get_index() + 1)
+	_active_slot_dropdown = outer
 
 func _build_district_panel(poi: POIData, planet: PlanetData) -> void:
 	var panel_content := $RightPanel/PanelContent
@@ -1634,9 +1926,40 @@ func _build_district_panel(poi: POIData, planet: PlanetData) -> void:
 	header.add_child(upg_btn)
 	root.add_child(header)
 
+	# District energy balance row
+	var d_energy: float = 0.0
+	for b: Dictionary in pp.buildings_in_district(poi.label):
+		if b.get("constructing", false): continue
+		var bdef := BuildingDef.find(b.get("building_id", ""))
+		if bdef == null: continue
+		var bamt: int = b.get("amount", 1)
+		d_energy += bdef.energy_per_tick * bamt
+		if bdef.output_type == BuildingDef.OutputType.ENERGY:
+			d_energy += bdef.output_amount * bamt
+	var de_row := HBoxContainer.new()
+	var de_lbl := Label.new()
+	de_lbl.text = "District Energy"
+	de_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_orbitron(de_lbl, 8)
+	de_lbl.add_theme_color_override("font_color", Color(0.45, 0.50, 0.65))
+	var de_val := Label.new()
+	var de_sign := "+" if d_energy >= 0.0 else ""
+	de_val.text = de_sign + "%.0f ⚡" % d_energy
+	_apply_orbitron(de_val, 8)
+	de_val.add_theme_color_override("font_color",
+		Color(0.85, 0.78, 0.22) if d_energy >= 0.0 else Color(0.85, 0.38, 0.25))
+	de_row.add_child(de_lbl); de_row.add_child(de_val)
+	root.add_child(de_row)
+
 	# Connect production updates to refresh bar fills live
 	if not ProductionManager.building_progress_changed.is_connected(_on_production_update):
 		ProductionManager.building_progress_changed.connect(_on_production_update)
+	if not ProductionManager.building_constructed.is_connected(_on_building_constructed):
+		ProductionManager.building_constructed.connect(_on_building_constructed)
+	if not ProductionManager.building_toggled.is_connected(_on_building_toggled):
+		ProductionManager.building_toggled.connect(_on_building_toggled)
+	if not ProductionManager.building_ticked.is_connected(_on_building_ticked_night):
+		ProductionManager.building_ticked.connect(_on_building_ticked_night)
 
 	# ── Installed buildings as full-bleed production cards ────────────────────
 	# One card per building entry; amount field drives ×N display and output scaling
@@ -1649,7 +1972,10 @@ func _build_district_panel(poi: POIData, planet: PlanetData) -> void:
 		var idx: int       = pp.buildings.find(entry)
 		var pm_key: String = "%d:%s:%d" % [planet.seed, poi.label, idx]
 		var amount: int    = entry.get("amount", 1)
-		root.add_child(_build_production_bar(def, pm_key, planet.seed, amount, poi, planet, pp))
+		if entry.get("constructing", false):
+			root.add_child(_build_construction_bar(def, pm_key))
+		else:
+			root.add_child(_build_production_bar(def, pm_key, planet.seed, amount, poi, planet, pp, entry))
 
 	# ── Empty slot "+" cards ──────────────────────────────────────────────────
 	var total_slots := pp.district_slots(poi.label)

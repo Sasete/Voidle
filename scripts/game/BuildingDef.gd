@@ -39,49 +39,64 @@ func output_label() -> String:
 
 static func all() -> Array[BuildingDef]:
 	return [
-		_make_b("solar_panel",  "Solar Panel",   "Basic energy from sunlight.",
-			POIData.POIType.ENERGY,  80.0, 1, 1,
-			45.0, 0.0, OutputType.ENERGY, 2.0, OutputType.NONE, 0.0),
+		# ── Energy ──────────────────────────────────────────────────────────────
+		# Solar: free energy, no fuel
+		_make_b("solar_panel",    "Solar Panel",      "Free energy from sunlight; no fuel needed.",
+			POIData.POIType.ENERGY,   80.0, 1, 1,
+			20.0, 0.0, OutputType.ENERGY,  2.0, OutputType.NONE, 0.0),
 
-		_make_b("generator",    "Generator",     "Reliable mid-tier energy.",
-			POIData.POIType.ENERGY, 350.0, 1, 1,
-			30.0, 0.0, OutputType.ENERGY, 8.0, OutputType.NONE, 0.0),
+		# Generator: burns minerals at cycle START + END; slow speed = more fuel-efficient
+		_make_b("generator",      "Generator",        "Burns minerals for reliable mid-tier energy.",
+			POIData.POIType.ENERGY,  350.0, 1, 1,
+			14.0, 0.0, OutputType.ENERGY,  8.0, OutputType.RAW_MINERAL, 3.0),
 
-		_make_b("power_plant",  "Power Plant",   "High-output energy.",
+		_make_b("power_plant",    "Power Plant",      "High-output plant; consumes more fuel per cycle.",
 			POIData.POIType.ENERGY, 1200.0, 2, 2,
-			25.0, 0.0, OutputType.ENERGY, 25.0, OutputType.NONE, 0.0),
+			12.0, 0.0, OutputType.ENERGY, 25.0, OutputType.RAW_MINERAL, 8.0),
 
-		_make_b("mine",         "Mine",          "Extracts raw minerals.",
-			POIData.POIType.MINING, 150.0, 1, 1,
-			40.0, -2.0, OutputType.RAW_MINERAL, 10.0, OutputType.NONE, 0.0),
+		# ── Mining ──────────────────────────────────────────────────────────────
+		_make_b("mine",           "Mine",             "Extracts raw minerals from local deposits.",
+			POIData.POIType.MINING,  150.0, 1, 1,
+			18.0, -2.0, OutputType.RAW_MINERAL, 10.0, OutputType.NONE, 0.0),
 
-		_make_b("deep_drill",   "Deep Drill",    "High-yield extraction.",
-			POIData.POIType.MINING, 600.0, 2, 2,
-			35.0, -5.0, OutputType.RAW_MINERAL, 28.0, OutputType.NONE, 0.0),
+		_make_b("deep_drill",     "Deep Drill",       "High-yield extraction at higher energy cost.",
+			POIData.POIType.MINING,  600.0, 2, 2,
+			15.0, -5.0, OutputType.RAW_MINERAL, 28.0, OutputType.NONE, 0.0),
 
-		_make_b("refinery",     "Refinery",      "Converts ore to refined goods.",
-			POIData.POIType.MINING, 800.0, 2, 2,
-			50.0, -8.0, OutputType.REFINED_MINERAL, 5.0, OutputType.RAW_MINERAL, 10.0),
+		_make_b("refinery",       "Refinery",         "Converts raw ore to refined minerals.",
+			POIData.POIType.MINING,  800.0, 2, 2,
+			24.0, -8.0, OutputType.REFINED_MINERAL, 5.0, OutputType.RAW_MINERAL, 10.0),
 
-		_make_b("hab_block",    "Hab Block",     "Houses colonists, generates income.",
-			POIData.POIType.CITY, 200.0, 1, 1,
-			60.0, -3.0, OutputType.CREDITS, 15.0, OutputType.NONE, 0.0),
+		# ── City — tiered income buildings ──────────────────────────────────────
+		_make_b("residential",    "Residential Block","Basic housing; fast cycles, light income.",
+			POIData.POIType.CITY,    100.0, 1, 1,
+			22.0, -2.0, OutputType.CREDITS, 15.0, OutputType.NONE, 0.0),
 
-		_make_b("market",       "Market",        "Boosts credit income.",
-			POIData.POIType.CITY, 500.0, 1, 1,
-			90.0, -4.0, OutputType.CREDITS, 40.0, OutputType.NONE, 0.0),
+		_make_b("apartments",     "Apartments",       "Denser housing; higher income per slot.",
+			POIData.POIType.CITY,    250.0, 1, 1,
+			20.0, -4.0, OutputType.CREDITS, 30.0, OutputType.NONE, 0.0),
 
-		_make_b("spaceport",    "SpacePort",     "Enables ship construction.",
+		_make_b("commercial",     "Commercial Center","Trade hub with good mid-tier returns.",
+			POIData.POIType.CITY,    500.0, 1, 1,
+			40.0, -6.0, OutputType.CREDITS, 65.0, OutputType.NONE, 0.0),
+
+		_make_b("luxury_complex", "Luxury Complex",   "Premium residency; slow cycle, large payout.",
+			POIData.POIType.CITY,   1200.0, 2, 2,
+			80.0, -12.0, OutputType.CREDITS, 160.0, OutputType.NONE, 0.0),
+
+		# ── Outpost ─────────────────────────────────────────────────────────────
+		_make_b("spaceport",      "SpacePort",        "Enables ship construction and trade routes.",
 			POIData.POIType.OUTPOST, 2000.0, 2, 2,
 			0.0, -12.0, OutputType.NONE, 0.0, OutputType.NONE, 0.0),
 
-		_make_b("lab",          "Research Lab",  "Generates science over time.",
-			POIData.POIType.SCIENCE, 700.0, 2, 1,
-			80.0, -6.0, OutputType.CREDITS, 25.0, OutputType.NONE, 0.0),
+		# ── Science ─────────────────────────────────────────────────────────────
+		_make_b("lab",            "Research Lab",     "Generates research and bonus credits.",
+			POIData.POIType.SCIENCE,  700.0, 2, 1,
+			35.0, -6.0, OutputType.CREDITS, 25.0, OutputType.NONE, 0.0),
 
-		_make_b("scanner",      "Deep Scanner",  "Reveals hidden deposits.",
-			POIData.POIType.SCIENCE, 400.0, 1, 1,
-			120.0, -3.0, OutputType.CREDITS, 10.0, OutputType.NONE, 0.0),
+		_make_b("scanner",        "Deep Scanner",     "Reveals hidden deposits across the system.",
+			POIData.POIType.SCIENCE,  400.0, 1, 1,
+			55.0, -3.0, OutputType.CREDITS, 10.0, OutputType.NONE, 0.0),
 	]
 
 static func find(bid: String) -> BuildingDef:

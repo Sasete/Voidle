@@ -88,7 +88,7 @@ static func _build_registry() -> void:
 			500.0,
 			[PlanetData.Type.TERRAN, PlanetData.Type.ARID, PlanetData.Type.ICE,
 			 PlanetData.Type.MOON],
-			["market", "housing", "spaceport"],
+			["residential", "apartments", "commercial", "luxury_complex", "spaceport"],
 			["New Carthage", "Iron Shore", "Veylan", "Kelast", "Dusk Harbor",
 			 "Aelstrom", "Fort Virion", "Mirelith", "Sunfall", "Coldmere",
 			 "Outpost Hera", "New Delos", "Vanta Port", "Ashfield", "Creston"]
