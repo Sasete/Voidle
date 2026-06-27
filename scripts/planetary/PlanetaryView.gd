@@ -35,7 +35,7 @@ func _ready() -> void:
 	CursorManager.set_state(CursorManager.State.NORMAL)
 	_orbitron = load("res://Fonts/Orbitron-VariableFont_wght.ttf")
 	planet_renderer.planet_clicked.connect(_on_planet_clicked)
-	poi_layer.poi_clicked.connect(_on_poi_clicked)
+	poi_layer.poi_clicked.connect(_on_district_clicked)
 	get_tree().root.size_changed.connect(_on_resize)
 	pass  # cursor handled per-element, not per-panel
 	# back button removed — navigation handled via system dock / unlock flow
@@ -128,6 +128,7 @@ func _input(event: InputEvent) -> void:
 
 func load_planet(data: PlanetData) -> void:
 	current_data = data
+	GameState.cache_planet_data(data)
 	_setup_material(data)
 	_update_panel(data)
 	_build_companion_moons(data)
@@ -151,6 +152,10 @@ func load_planet(data: PlanetData) -> void:
 				var pos: Vector2 = lf.find(pd.placement)
 				lon = pos.x
 				lat = pos.y
+				# Store resolved position back so rotation and overview card can use it
+				pd.lon_deg = rad_to_deg(lon)
+				pd.lat_deg = rad_to_deg(lat)
+				pd.manual_position = true
 			pois.append({
 				"lon_deg": rad_to_deg(lon), "lat_deg": rad_to_deg(lat),
 				"label": pd.label,
@@ -166,6 +171,7 @@ func load_planet(data: PlanetData) -> void:
 		poi_layer.add_poi(poi["lon_deg"], poi["lat_deg"], poi["label"], poi["data"])
 
 	_upload_poi_lights(pois, data)
+	_build_planet_overview(data)
 
 func redraw() -> void:
 	var pd := PlanetData.from_seed(randi() % 99999)
@@ -258,25 +264,25 @@ func _update_panel(data: PlanetData) -> void:
 	if type_label: type_label.visible = true
 	_build_system_panel()
 
-func _build_poi_form(data: PlanetData) -> void:
+func _build_district_form(data: PlanetData) -> void:
 	var panel_content := $RightPanel/PanelContent
-	var old := panel_content.get_node_or_null("POIForm")
+	var old := panel_content.get_node_or_null("DistrictForm")
 	if old: old.free()
 
 	var form := VBoxContainer.new()
-	form.name = "POIForm"
+	form.name = "DistrictForm"
 	form.add_theme_constant_override("separation", 6)
 	form.add_child(HSeparator.new())
 
 	var title := Label.new()
-	title.text = "ADD POI"
+	title.text = "ADD DISTRICT"
 	_apply_orbitron(title, 10)
 	title.modulate = Color(0.65, 0.65, 0.65)
 	form.add_child(title)
 
 	# label input
 	var name_edit := LineEdit.new()
-	name_edit.placeholder_text = "POI name..."
+	name_edit.placeholder_text = "District name..."
 	name_edit.custom_minimum_size = Vector2(0, 28)
 	_apply_orbitron(name_edit, 10)
 	form.add_child(name_edit)
@@ -313,7 +319,7 @@ func _build_poi_form(data: PlanetData) -> void:
 
 	# confirm button
 	var confirm := Button.new()
-	confirm.text = "▶  PLACE POI"
+	confirm.text = "▶  PLACE DISTRICT"
 	confirm.flat = false
 	_apply_orbitron(confirm, 10)
 	confirm.add_theme_color_override("font_color",        Color(0.90, 0.82, 0.45))
@@ -321,14 +327,14 @@ func _build_poi_form(data: PlanetData) -> void:
 	confirm.pressed.connect(func() -> void:
 		var lbl: String = name_edit.text.strip_edges()
 		if lbl.is_empty(): lbl = "Site"
-		_spawn_poi(data, lbl, selected_placement[0]))
+		_spawn_district(data, lbl, selected_placement[0]))
 	form.add_child(confirm)
 
 	# insert before BackButton (last child)
 	panel_content.add_child(form)
 	panel_content.move_child(form, panel_content.get_child_count() - 2)
 
-func _spawn_poi(data: PlanetData, lbl: String, placement: String) -> void:
+func _spawn_district(data: PlanetData, lbl: String, placement: String) -> void:
 	var poi       := POIData.new()
 	poi.label     = lbl
 	poi.type_tag  = placement.to_lower()
@@ -422,7 +428,8 @@ func _build_details_panel(data: PlanetData) -> void:
 		_details_open = not _details_open
 		panel.visible = _details_open)
 
-	toggle_btn.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
+	toggle_btn.mouse_entered.connect(func() -> void:
+		if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER))
 	toggle_btn.mouse_exited.connect(func()  -> void: CursorManager.set_state(CursorManager.State.NORMAL))
 
 func _make_hud_style(col: Color, radius: int) -> StyleBoxFlat:
@@ -459,6 +466,73 @@ func _details_row(parent: VBoxContainer, label: String, value: String,
 	hbox.add_child(val)
 	parent.add_child(hbox)
 
+## Styled icon cell for a resource — bordered panel with pixel art icon.
+## show_count=false → icon only (availability). show_count=true → icon + amount label.
+func _mineral_icon_cell(rd: ResourceData, show_count: bool, stored: float = 0.0) -> PanelContainer:
+	var cell := PanelContainer.new()
+	var s := StyleBoxFlat.new()
+	var border_col := rd.display_color.darkened(0.15)
+	border_col.a = 0.70
+	s.bg_color    = rd.display_color.darkened(0.60)
+	s.bg_color.a  = 0.45
+	s.border_color = border_col
+	s.border_width_left = 1; s.border_width_right  = 1
+	s.border_width_top  = 1; s.border_width_bottom = 1
+	s.corner_radius_top_left     = 3; s.corner_radius_top_right    = 3
+	s.corner_radius_bottom_left  = 3; s.corner_radius_bottom_right = 3
+	s.content_margin_left   = 4; s.content_margin_right  = 4
+	s.content_margin_top    = 3; s.content_margin_bottom = 3
+	cell.add_theme_stylebox_override("panel", s)
+	cell.mouse_filter = Control.MOUSE_FILTER_STOP
+
+	var inner := HBoxContainer.new()
+	inner.add_theme_constant_override("separation", 3)
+	inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cell.add_child(inner)
+
+	var tex := MineralIcon.make(rd.tier, rd.display_color)
+	var icon_rect := TextureRect.new()
+	icon_rect.texture = tex
+	icon_rect.custom_minimum_size = Vector2(12, 12)
+	icon_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	inner.add_child(icon_rect)
+
+	if show_count:
+		var count_lbl := Label.new()
+		count_lbl.text = "%.0f" % stored if stored > 0.0 else "0"
+		_apply_orbitron(count_lbl, 8)
+		count_lbl.add_theme_color_override("font_color", Color(0.92, 0.95, 1.0))
+		count_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		inner.add_child(count_lbl)
+
+	# Tooltip
+	var tier_names: Array[String] = ["", "Raw", "Refined", "Exotic"]
+	var tier_label: String = tier_names[clampi(rd.tier, 0, 3)] if rd.tier <= 3 else ("T%d" % rd.tier)
+	var tip_body := "%s mineral · Tier %d" % [tier_label, rd.tier]
+	if show_count:
+		tip_body += "\nStored: %.0f" % stored
+	cell.mouse_entered.connect(func() -> void:
+		TooltipManager.show_tip(rd.unique_name, tip_body))
+	cell.mouse_exited.connect(func() -> void:
+		TooltipManager.hide_tip())
+
+	return cell
+
+func _mineral_row(parent: VBoxContainer, rd: ResourceData, stored: float) -> void:
+	var hbox := HBoxContainer.new()
+	hbox.add_theme_constant_override("separation", 6)
+	hbox.add_child(_mineral_icon_cell(rd, true, stored))
+	# Name label
+	var lbl := Label.new()
+	lbl.text = rd.unique_name
+	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_orbitron(lbl, 9)
+	lbl.add_theme_color_override("font_color", rd.display_color.lightened(0.15))
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hbox.add_child(lbl)
+	parent.add_child(hbox)
+
 func _details_section(parent: VBoxContainer, title: String) -> void:
 	var lbl := Label.new()
 	lbl.text = title
@@ -474,6 +548,7 @@ func _details_section(parent: VBoxContainer, title: String) -> void:
 	parent.add_child(sep)
 
 func _fill_uncolonized_details(vbox: VBoxContainer, data: PlanetData) -> void:
+	_fill_modifiers_section(vbox, data)
 	_details_section(vbox, "PLANET INFO")
 	_details_row(vbox, "Type",  PlanetData.Type.keys()[data.planet_type].capitalize())
 	var size_str := "Small" if data.planet_size < 0.8 else ("Large" if data.planet_size > 1.3 else "Medium")
@@ -483,37 +558,114 @@ func _fill_uncolonized_details(vbox: VBoxContainer, data: PlanetData) -> void:
 		_details_row(vbox, "Atm.", atm)
 	else:
 		_details_row(vbox, "Atm.",  "None", Color(0.6, 0.4, 0.4))
-	_details_row(vbox, "Sea",  "%.0f%%" % (data.sea_level * 100.0) if data.has_atmosphere else "—")
 
 	_details_section(vbox, "RESOURCES")
-	var br := GameState.get_body_resources(data.seed, 1, 3)
-	for rd: ResourceData in br.as_array():
-		_details_row(vbox, "T%d" % rd.tier, rd.unique_name, Color(rd.display_color.r, rd.display_color.g, rd.display_color.b))
+	var br_unc := GameState.get_body_resources(data.seed, 1, 3)
+	var icon_row_unc := HFlowContainer.new()
+	icon_row_unc.add_theme_constant_override("h_separation", 4)
+	icon_row_unc.add_theme_constant_override("v_separation", 4)
+	for rd: ResourceData in br_unc.as_array():
+		icon_row_unc.add_child(_mineral_icon_cell(rd, false))
+	vbox.add_child(icon_row_unc)
 
 	_details_section(vbox, "STATUS")
 	_details_row(vbox, "Colony", "Not established", Color(0.65, 0.45, 0.35))
 
 func _fill_colonized_details(vbox: VBoxContainer, data: PlanetData, pp: PlanetProgress) -> void:
-	# Header: name + level
 	var name_lbl := Label.new()
 	name_lbl.text = data.planet_name
 	_apply_orbitron(name_lbl, 13)
 	name_lbl.add_theme_color_override("font_color", Color(1.0, 0.92, 0.55))
 	vbox.add_child(name_lbl)
 
+	_fill_modifiers_section(vbox, data)
+
 	_details_section(vbox, "COLONY")
 	_details_row(vbox, "Level",     "Lv %d" % pp.level, Color(1.0, 0.88, 0.4))
-	_details_row(vbox, "Districts", "%d / %d" % [pp.districts_used, pp.max_districts])
+	_details_row(vbox, "Districts", "%d / %d" % [data.custom_pois.size(), pp.max_districts])
 
-	_details_section(vbox, "RESOURCES")
+	# Energy balance
+	var energy_bal: float = _planet_energy_balance(pp)
+	var e_sign := "+" if energy_bal >= 0 else ""
+	_details_row(vbox, "Energy", e_sign + "%.0f ⚡" % energy_bal,
+		Color(0.9, 0.82, 0.25) if energy_bal >= 0 else Color(0.9, 0.40, 0.28))
+
+	_details_section(vbox, "DEPOSITS")
 	var br := GameState.get_body_resources(data.seed, 1, 3)
 	for rd: ResourceData in br.as_array():
-		_details_row(vbox, "T%d  %s" % [rd.tier, rd.unique_name], "Available", Color(rd.display_color.r, rd.display_color.g, rd.display_color.b))
+		var key: String = rd.resource_id()
+		var stored: float = pp.stored_resources.get(key, 0.0)
+		_mineral_row(vbox, rd, stored)
 
 	_details_section(vbox, "PLANET INFO")
 	_details_row(vbox, "Type", PlanetData.Type.keys()[data.planet_type].capitalize())
 	var size_str := "Small" if data.planet_size < 0.8 else ("Large" if data.planet_size > 1.3 else "Medium")
 	_details_row(vbox, "Size", size_str)
+
+func _planet_energy_balance(pp: PlanetProgress) -> float:
+	var bal: float = 0.0
+	for b: Dictionary in pp.buildings:
+		var def := BuildingDef.find(b.get("building_id", ""))
+		if def == null:
+			continue
+		bal -= def.energy_per_tick * b.get("amount", 1)
+		if def.output_type == BuildingDef.OutputType.ENERGY:
+			bal += def.output_amount * b.get("amount", 1)
+	return bal
+
+func _fill_modifiers_section(vbox: VBoxContainer, data: PlanetData) -> void:
+	var mods := PlanetModifier.for_planet(data.planet_type)
+	if mods.is_empty():
+		return
+	var tag_row := HFlowContainer.new()
+	tag_row.add_theme_constant_override("h_separation", 4)
+	tag_row.add_theme_constant_override("v_separation", 5)
+	tag_row.size_flags_horizontal = Control.SIZE_FILL
+	for m: PlanetModifier in mods:
+		var positive := m.is_positive()
+		var tag := Button.new()
+		tag.text = "%s %s" % [m.display_name, m.value_label()]
+		tag.flat = true
+		_apply_orbitron(tag, 8)
+		# Outer glow/outline wrapper — dark stroke around the pill
+		var outer := PanelContainer.new()
+		var os := StyleBoxFlat.new()
+		os.bg_color    = Color(0.0, 0.0, 0.0, 0.55)
+		os.border_color = Color(0.0, 0.0, 0.0, 0.45)
+		os.border_width_left = 1; os.border_width_right  = 1
+		os.border_width_top  = 1; os.border_width_bottom = 1
+		os.corner_radius_top_left     = 5; os.corner_radius_top_right    = 5
+		os.corner_radius_bottom_left  = 5; os.corner_radius_bottom_right = 5
+		os.content_margin_left   = 1; os.content_margin_right  = 1
+		os.content_margin_top    = 1; os.content_margin_bottom = 1
+		outer.add_theme_stylebox_override("panel", os)
+		outer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+		var border_col := Color(0.35, 0.85, 0.48, 0.90) if positive else Color(0.88, 0.32, 0.32, 0.90)
+		var bg_col     := Color(0.07, 0.18, 0.10, 0.88) if positive else Color(0.18, 0.06, 0.06, 0.88)
+		var s := StyleBoxFlat.new()
+		s.bg_color = bg_col
+		s.border_color = border_col
+		s.border_width_left = 1; s.border_width_right  = 1
+		s.border_width_top  = 1; s.border_width_bottom = 1
+		s.corner_radius_top_left     = 4; s.corner_radius_top_right    = 4
+		s.corner_radius_bottom_left  = 4; s.corner_radius_bottom_right = 4
+		s.content_margin_left = 6; s.content_margin_right  = 6
+		s.content_margin_top  = 2; s.content_margin_bottom = 2
+		tag.add_theme_stylebox_override("normal",  s)
+		tag.add_theme_stylebox_override("hover",   s)
+		tag.add_theme_stylebox_override("pressed", s)
+		tag.add_theme_stylebox_override("focus",   StyleBoxEmpty.new())
+		tag.add_theme_color_override("font_color",
+			Color(0.55, 0.96, 0.62) if positive else Color(1.0, 0.58, 0.58))
+		outer.add_child(tag)
+		var cap_m := m
+		tag.mouse_entered.connect(func() -> void:
+			TooltipManager.show_tip(cap_m.display_name, cap_m.description))
+		tag.mouse_exited.connect(func() -> void:
+			TooltipManager.hide_tip())
+		tag_row.add_child(outer)
+	vbox.add_child(tag_row)
 
 func _build_system_panel() -> void:
 	if _system_dock and is_instance_valid(_system_dock):
@@ -631,7 +783,7 @@ func _build_system_panel() -> void:
 		var cap_callout := callout
 		var cap_active  := is_active
 		rect.mouse_entered.connect(func() -> void:
-			CursorManager.set_state(CursorManager.State.POINTER)
+			if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER)
 			var tw := rect.create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 			tw.tween_property(rect, "scale", Vector2(1.22, 1.22), 0.12)
 			cap_lbl.modulate = Color(1.0, 1.0, 1.0)
@@ -758,12 +910,6 @@ func _update_cursor() -> void:
 	if poi_layer._hovered_index >= 0:
 		CursorManager.set_state(CursorManager.State.POINTER)
 		return
-	# Screen edge → EXIT
-	const EDGE := 40.0
-	if mouse.x < EDGE or mouse.y < EDGE or mouse.x > vp.x - EDGE or mouse.y > vp.y - EDGE:
-		CursorManager.set_state(CursorManager.State.EXIT)
-		return
-	# Everything else → NORMAL (panel bg, planet surface, empty space)
 	CursorManager.set_state(CursorManager.State.NORMAL)
 
 func _apply_light_angle() -> void:
@@ -774,10 +920,240 @@ func _apply_light_angle() -> void:
 	var ld := Vector3(lx, -0.45, lz).normalized()
 	(planet_renderer.material as ShaderMaterial).set_shader_parameter("light_direction", ld)
 
-func _on_planet_clicked(_screen_pos: Vector2) -> void:
-	pass
+func _rotate_to_lon(lon_deg: float, duration: float = 0.45) -> void:
+	var target  := fposmod(deg_to_rad(lon_deg), TAU)
+	var current := fposmod(planet_renderer.get_rotation_offset(), TAU)
+	var diff    := fposmod(target - current + PI, TAU) - PI
+	var tween   := create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN_OUT)
+	tween.tween_method(
+		func(v: float) -> void: planet_renderer.set_rotation_offset(v),
+		current, current + diff, duration)
 
-func _on_poi_clicked(index: int, _data: Dictionary) -> void:
+func _on_planet_clicked(_screen_pos: Vector2) -> void:
+	poi_layer.deselect_all()
+	_build_planet_overview(current_data)
+
+func _build_planet_overview(data: PlanetData) -> void:
+	if data == null:
+		return
+	var panel_content := $RightPanel/PanelContent
+	var old := panel_content.get_node_or_null("DistrictBuildPanel")
+	if old:
+		old.free()
+		_bar_meta.clear()
+		_active_slot_dropdown = null
+	poi_layer.deselect_all()
+
+	var pp := GameState.get_planet(data.seed)
+	if not pp.is_colonized:
+		return   # uncolonized: details panel already shows info
+
+	var root := VBoxContainer.new()
+	root.name = "DistrictBuildPanel"
+	root.add_theme_constant_override("separation", 8)
+	root.add_child(HSeparator.new())
+
+	# Planet name + level
+	var name_lbl := Label.new()
+	name_lbl.text = data.planet_name
+	_apply_orbitron(name_lbl, 13)
+	name_lbl.add_theme_color_override("font_color", Color(1.0, 0.92, 0.55))
+	root.add_child(name_lbl)
+
+	var level_row := HBoxContainer.new()
+	var lv_lbl := Label.new()
+	lv_lbl.text = "Level"
+	lv_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_orbitron(lv_lbl, 9)
+	lv_lbl.add_theme_color_override("font_color", Color(0.50, 0.55, 0.70))
+	var lv_val := Label.new()
+	lv_val.text = "Lv %d" % pp.level
+	_apply_orbitron(lv_val, 9)
+	lv_val.add_theme_color_override("font_color", Color(1.0, 0.88, 0.4))
+	level_row.add_child(lv_lbl); level_row.add_child(lv_val)
+	root.add_child(level_row)
+
+	var dist_row := HBoxContainer.new()
+	var dr_lbl := Label.new()
+	dr_lbl.text = "Districts"
+	dr_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_orbitron(dr_lbl, 9)
+	dr_lbl.add_theme_color_override("font_color", Color(0.50, 0.55, 0.70))
+	var dr_val := Label.new()
+	dr_val.text = "%d / %d" % [data.custom_pois.size(), pp.max_districts]
+	_apply_orbitron(dr_val, 9)
+	dr_val.add_theme_color_override("font_color", Color(0.85, 0.90, 1.0))
+	dist_row.add_child(dr_lbl); dist_row.add_child(dr_val)
+	root.add_child(dist_row)
+
+	# Energy balance row (always visible)
+	var energy_bal: float = _planet_energy_balance(pp)
+	var e_sign := "+" if energy_bal >= 0.0 else ""
+	var e_row := HBoxContainer.new()
+	var e_lbl := Label.new()
+	e_lbl.text = "Energy"
+	e_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_orbitron(e_lbl, 9)
+	e_lbl.add_theme_color_override("font_color", Color(0.50, 0.55, 0.70))
+	var e_val := Label.new()
+	e_val.text = e_sign + "%.0f ⚡" % energy_bal
+	_apply_orbitron(e_val, 9)
+	e_val.add_theme_color_override("font_color",
+		Color(0.9, 0.82, 0.25) if energy_bal >= 0.0 else Color(0.9, 0.40, 0.28))
+	e_row.add_child(e_lbl); e_row.add_child(e_val)
+	root.add_child(e_row)
+
+	# POI list
+	if not data.custom_pois.is_empty():
+		var sep := HSeparator.new()
+		var sep_s := StyleBoxFlat.new()
+		sep_s.bg_color = Color(0.2, 0.25, 0.4, 0.35)
+		sep.add_theme_stylebox_override("separator", sep_s)
+		root.add_child(sep)
+		var poi_title := Label.new()
+		poi_title.text = "DISTRICTS"
+		_apply_orbitron(poi_title, 8)
+		poi_title.add_theme_color_override("font_color", Color(0.40, 0.45, 0.65))
+		root.add_child(poi_title)
+
+		for poi: POIData in data.custom_pois:
+			var poi_card := _build_district_overview_card(poi, data, pp, panel_content, root)
+			root.add_child(poi_card)
+
+	# ADD DISTRICT card (always shown when slots remain)
+	var can_add_district := data.custom_pois.size() < pp.max_districts
+	var add_dist_card := _build_add_district_card(data, can_add_district)
+	root.add_child(add_dist_card)
+
+	panel_content.add_child(root)
+
+func _build_district_overview_card(poi: POIData, planet: PlanetData, pp: PlanetProgress,
+		_panel_content: VBoxContainer, _root: VBoxContainer) -> PanelContainer:
+	var card := PanelContainer.new()
+	var s := _card_panel_style()
+	s.bg_color = Color(0.07, 0.09, 0.17, 0.80)
+	card.add_theme_stylebox_override("panel", s)
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.custom_minimum_size   = Vector2(0, 40)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left",   10)
+	margin.add_theme_constant_override("margin_right",   8)
+	margin.add_theme_constant_override("margin_top",     6)
+	margin.add_theme_constant_override("margin_bottom",  6)
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_child(margin)
+
+	var hbox := HBoxContainer.new()
+	hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	margin.add_child(hbox)
+
+	var info := VBoxContainer.new()
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	info.add_theme_constant_override("separation", 1)
+
+	var n_lbl := Label.new()
+	n_lbl.text = poi.label
+	n_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_apply_orbitron(n_lbl, 10)
+	n_lbl.add_theme_color_override("font_color", Color(0.82, 0.88, 1.0))
+
+	var t_lbl := Label.new()
+	var bld_count: int = pp.buildings_in_district(poi.label).size()
+	t_lbl.text = poi.type_label() + "  ·  %d bldg" % bld_count
+	t_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_apply_orbitron(t_lbl, 8)
+	t_lbl.add_theme_color_override("font_color", Color(0.42, 0.48, 0.68))
+
+	info.add_child(n_lbl); info.add_child(t_lbl)
+	hbox.add_child(info)
+
+	# Select arrow button
+	var sel_btn := Button.new()
+	sel_btn.text = "▶"
+	sel_btn.flat = true
+	_apply_orbitron(sel_btn, 11)
+	sel_btn.custom_minimum_size = Vector2(24, 24)
+	sel_btn.add_theme_color_override("font_color", Color(0.9, 0.82, 0.45))
+	sel_btn.mouse_entered.connect(func() -> void:
+		if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER))
+	sel_btn.mouse_exited.connect(func() -> void:
+		CursorManager.set_state(CursorManager.State.NORMAL))
+	var cap_poi    := poi
+	var cap_planet := planet
+	sel_btn.pressed.connect(func() -> void:
+		_rotate_to_lon(cap_poi.lon_deg)
+		_build_district_panel(cap_poi, cap_planet))
+	hbox.add_child(sel_btn)
+
+	# Whole card clickable too
+	card.mouse_entered.connect(func() -> void:
+		if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER))
+	card.mouse_exited.connect(func() -> void:
+		CursorManager.set_state(CursorManager.State.NORMAL))
+	card.gui_input.connect(func(e: InputEvent) -> void:
+		if e is InputEventMouseButton and (e as InputEventMouseButton).pressed \
+				and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+			_rotate_to_lon(poi.lon_deg)
+			_build_district_panel(poi, planet))
+	return card
+
+func _build_add_district_card(data: PlanetData, enabled: bool) -> PanelContainer:
+	var card := PanelContainer.new()
+	var s := StyleBoxFlat.new()
+	s.bg_color = Color(0.08, 0.12, 0.22, 0.55) if enabled else Color(0.05, 0.06, 0.10, 0.35)
+	s.border_color = Color(0.28, 0.40, 0.75, 0.45) if enabled else Color(0.18, 0.22, 0.35, 0.30)
+	s.border_width_left = 1; s.border_width_right  = 1
+	s.border_width_top  = 1; s.border_width_bottom = 1
+	s.corner_radius_top_left     = 5; s.corner_radius_top_right    = 5
+	s.corner_radius_bottom_left  = 5; s.corner_radius_bottom_right = 5
+	s.content_margin_left   = 10; s.content_margin_right  = 10
+	s.content_margin_top    = 8;  s.content_margin_bottom = 8
+	card.add_theme_stylebox_override("panel", s)
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var hbox := HBoxContainer.new()
+	card.add_child(hbox)
+
+	var plus_lbl := Label.new()
+	plus_lbl.text = "+"
+	_apply_orbitron(plus_lbl, 14)
+	plus_lbl.add_theme_color_override("font_color",
+		Color(0.45, 0.60, 1.0, 0.9) if enabled else Color(0.30, 0.35, 0.50, 0.5))
+	plus_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hbox.add_child(plus_lbl)
+
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hbox.add_child(spacer)
+
+	var txt := Label.new()
+	txt.text = "ADD DISTRICT" if enabled else "DISTRICT SLOTS FULL"
+	_apply_orbitron(txt, 8)
+	txt.add_theme_color_override("font_color",
+		Color(0.55, 0.70, 1.0, 0.75) if enabled else Color(0.35, 0.38, 0.52, 0.6))
+	txt.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hbox.add_child(txt)
+
+	if enabled:
+		card.mouse_entered.connect(func() -> void:
+			if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER)
+			TooltipManager.show_tip("Add District",
+				"Place a new district on the planet surface."))
+		card.mouse_exited.connect(func() -> void:
+			CursorManager.set_state(CursorManager.State.NORMAL)
+			TooltipManager.hide_tip())
+		var cap_data := data
+		card.gui_input.connect(func(e: InputEvent) -> void:
+			if e is InputEventMouseButton and (e as InputEventMouseButton).pressed \
+					and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+				_build_district_form(cap_data))
+
+	return card
+
+func _on_district_clicked(index: int, _data: Dictionary) -> void:
 	if index >= poi_layer._pois.size():
 		return
 	var poi_dict: Dictionary = poi_layer._pois[index]
@@ -792,17 +1168,309 @@ func _on_poi_clicked(index: int, _data: Dictionary) -> void:
 			break
 	if poi == null:
 		return
-	_build_poi_panel(poi, current_data)
+	_build_district_panel(poi, current_data)
 
-func _build_poi_panel(poi: POIData, planet: PlanetData) -> void:
+## pm_key -> { "fill": Control, "prog": Array[float] }
+var _bar_meta: Dictionary = {}
+var _active_slot_dropdown: Control = null
+
+func _is_at_edge() -> bool:
+	var mouse := get_viewport().get_mouse_position()
+	var vp    := get_viewport().get_visible_rect().size
+	const EDGE := 40.0
+	return mouse.x < EDGE or mouse.y < EDGE or mouse.x > vp.x - EDGE or mouse.y > vp.y - EDGE
+
+func _on_production_update(_planet_seed: int, key: String, progress: float) -> void:
+	if not _bar_meta.has(key):
+		return
+	var m: Dictionary = _bar_meta[key]
+	(m["prog"] as Array)[0] = progress
+	var fc: Control = m["fill"]
+	if is_instance_valid(fc):
+		fc.queue_redraw()
+
+func _card_panel_style() -> StyleBoxFlat:
+	var s := StyleBoxFlat.new()
+	s.bg_color           = Color(0.07, 0.09, 0.16, 0.92)
+	s.border_width_left  = 1; s.border_width_right  = 1
+	s.border_width_top   = 1; s.border_width_bottom = 1
+	s.border_color       = Color(0.22, 0.28, 0.50, 0.45)
+	s.corner_radius_top_left     = 5
+	s.corner_radius_top_right    = 5
+	s.corner_radius_bottom_left  = 5
+	s.corner_radius_bottom_right = 5
+	return s
+
+## Orb-of-Creation style: card whose background fills left→right as production ticks.
+## count = number of this building type in this POI (for ×N badge)
+## poi/planet/pp needed for "+" stacking button
+func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
+		count: int, poi: POIData, planet: PlanetData, pp: PlanetProgress) -> PanelContainer:
+	var paused := ProductionManager.is_paused(pm_key)
+	var prog   := ProductionManager.get_progress(pm_key)
+	var fc     := def.output_color()
+
+	# Outer card
+	var card := PanelContainer.new()
+	card.add_theme_stylebox_override("panel", _card_panel_style())
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	# Inner layer control — fill draws here, content sits on top
+	var body := Control.new()
+	body.custom_minimum_size   = Vector2(0, 50)
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body.size_flags_vertical   = Control.SIZE_EXPAND_FILL
+	card.add_child(body)
+
+	# Fill control — redraws each production tick
+	var fill_ctrl := Control.new()
+	fill_ctrl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	fill_ctrl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var prog_ref: Array = [prog]
+	fill_ctrl.draw.connect(func() -> void:
+		var p: float = (prog_ref as Array)[0]
+		var w: float = fill_ctrl.size.x * p
+		if paused:
+			fill_ctrl.draw_rect(Rect2(0, 0, w, fill_ctrl.size.y),
+				Color(0.35, 0.38, 0.55, 0.22))
+		elif w > 0.5:
+			fill_ctrl.draw_rect(Rect2(0, 0, w, fill_ctrl.size.y),
+				Color(fc.r, fc.g, fc.b, 0.20))
+			fill_ctrl.draw_rect(Rect2(w - 2.0, 0, 2.0, fill_ctrl.size.y),
+				Color(fc.r, fc.g, fc.b, 0.55)))
+	body.add_child(fill_ctrl)
+
+	# Content layout on top of fill
+	var margin := MarginContainer.new()
+	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	margin.add_theme_constant_override("margin_left",   10)
+	margin.add_theme_constant_override("margin_right",   8)
+	margin.add_theme_constant_override("margin_top",     7)
+	margin.add_theme_constant_override("margin_bottom",  7)
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	body.add_child(margin)
+
+	var hbox := HBoxContainer.new()
+	hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hbox.add_theme_constant_override("separation", 6)
+	margin.add_child(hbox)
+
+	# Left: name column
+	var vbox := VBoxContainer.new()
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vbox.add_theme_constant_override("separation", 2)
+	hbox.add_child(vbox)
+
+	# Name row: "Hab Block" + "×2" count badge
+	var name_row := HBoxContainer.new()
+	name_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	name_row.add_theme_constant_override("separation", 5)
+	var name_lbl := Label.new()
+	name_lbl.text = def.display_name
+	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_apply_orbitron(name_lbl, 10)
+	name_lbl.add_theme_color_override("font_color", Color(0.85, 0.92, 1.0))
+	name_row.add_child(name_lbl)
+	if count > 1:
+		var cnt_lbl := Label.new()
+		cnt_lbl.text = "×%d" % count
+		cnt_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_apply_orbitron(cnt_lbl, 8)
+		cnt_lbl.add_theme_color_override("font_color", Color(0.55, 0.65, 1.0, 0.8))
+		name_row.add_child(cnt_lbl)
+	vbox.add_child(name_row)
+
+	# Energy + output info row
+	var info_row := HBoxContainer.new()
+	info_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	info_row.add_theme_constant_override("separation", 8)
+	var out_text := "⏸ waiting" if paused else def.output_label()
+	var out_lbl := Label.new()
+	out_lbl.text = out_text
+	out_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_apply_orbitron(out_lbl, 8)
+	out_lbl.add_theme_color_override("font_color",
+		Color(0.45, 0.48, 0.60) if paused else fc)
+	info_row.add_child(out_lbl)
+	if def.energy_per_tick != 0.0:
+		var e_lbl := Label.new()
+		var sign := "+" if def.energy_per_tick > 0.0 else ""
+		e_lbl.text = sign + "%.0f ⚡" % def.energy_per_tick
+		e_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_apply_orbitron(e_lbl, 8)
+		e_lbl.add_theme_color_override("font_color",
+			Color(0.9, 0.82, 0.25, 0.55) if def.energy_per_tick > 0 else Color(0.75, 0.48, 0.28, 0.55))
+		info_row.add_child(e_lbl)
+	vbox.add_child(info_row)
+
+	# Right: "+" stacking button
+	var slots_free: int = pp.district_slots(poi.label) - pp.slots_used_in_district(poi.label)
+	var can_add: bool   = slots_free >= def.slot_cost and GameState.credits >= def.base_cost
+	var add_btn := Button.new()
+	add_btn.text    = "+"
+	add_btn.flat    = true
+	add_btn.disabled = not can_add
+	_apply_orbitron(add_btn, 14)
+	add_btn.custom_minimum_size = Vector2(26, 26)
+	add_btn.add_theme_color_override("font_color",
+		Color(0.55, 0.80, 0.55) if can_add else Color(0.30, 0.33, 0.45))
+	var tip_body: String
+	if not can_add and slots_free < def.slot_cost:
+		tip_body = "No slots · Upgrade district"
+	elif not can_add:
+		tip_body = "Need %.0f cr" % def.base_cost
+	else:
+		tip_body = "%.0f cr · %d slot\n%s / %.0fs" % [
+			def.base_cost, def.slot_cost, def.output_label(), def.tick_duration]
+	var cap_tip := tip_body
+	add_btn.mouse_entered.connect(func() -> void:
+		if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER)
+		TooltipManager.show_tip("+ " + def.display_name, cap_tip))
+	add_btn.mouse_exited.connect(func()  -> void:
+		CursorManager.set_state(CursorManager.State.NORMAL)
+		TooltipManager.hide_tip())
+	var cap_poi    := poi
+	var cap_def    := def
+	var cap_planet := planet
+	add_btn.pressed.connect(func() -> void:
+		if GameState.spend_credits(cap_def.base_cost):
+			pp.stack_building_unchecked(cap_poi.label, cap_def.building_id)
+			GameState.planet_progress_changed.emit(cap_planet.seed)
+			_build_district_panel(cap_poi, cap_planet))
+	hbox.add_child(add_btn)
+
+	_bar_meta[pm_key] = { "fill": fill_ctrl, "prog": prog_ref }
+	return card
+
+## Empty slot card — shows "+" and opens a build dropdown on click.
+func _build_slot_card(poi: POIData, planet: PlanetData, pp: PlanetProgress,
+		root: VBoxContainer, slot_idx: int) -> PanelContainer:
+	var card := PanelContainer.new()
+	var s := StyleBoxFlat.new()
+	s.bg_color      = Color(0.06, 0.08, 0.14, 0.70)
+	s.border_width_left  = 1; s.border_width_right  = 1
+	s.border_width_top   = 1; s.border_width_bottom = 1
+	s.border_color  = Color(0.28, 0.35, 0.60, 0.35)
+	s.corner_radius_top_left     = 5
+	s.corner_radius_top_right    = 5
+	s.corner_radius_bottom_left  = 5
+	s.corner_radius_bottom_right = 5
+	card.add_theme_stylebox_override("panel", s)
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.custom_minimum_size   = Vector2(0, 38)
+
+	var plus := Label.new()
+	plus.text = "＋  Empty Slot"
+	plus.set_anchors_and_offsets_preset(Control.PRESET_CENTER_LEFT)
+	plus.offset_left = 10
+	plus.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_apply_orbitron(plus, 10)
+	plus.add_theme_color_override("font_color", Color(0.30, 0.38, 0.65, 0.70))
+	card.add_child(plus)
+
+	card.mouse_entered.connect(func() -> void:
+		if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER)
+		plus.add_theme_color_override("font_color", Color(0.55, 0.65, 1.0, 0.9)))
+	card.mouse_exited.connect(func() -> void:
+		CursorManager.set_state(CursorManager.State.NORMAL)
+		plus.add_theme_color_override("font_color", Color(0.30, 0.38, 0.65, 0.70)))
+	card.gui_input.connect(func(e: InputEvent) -> void:
+		if e is InputEventMouseButton and (e as InputEventMouseButton).pressed \
+				and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+			_toggle_slot_dropdown(card, poi, planet, pp, root, slot_idx))
+	return card
+
+func _toggle_slot_dropdown(card: PanelContainer, poi: POIData, planet: PlanetData,
+		pp: PlanetProgress, root: VBoxContainer, _slot_idx: int) -> void:
+	# If an open dropdown belongs to this slot, close it (toggle off)
+	if _active_slot_dropdown != null and is_instance_valid(_active_slot_dropdown):
+		if _active_slot_dropdown.get_meta("slot_card", null) == card:
+			_active_slot_dropdown.free()
+			_active_slot_dropdown = null
+			return
+		_active_slot_dropdown.free()
+		_active_slot_dropdown = null
+
+	var buildable := BuildingDef.for_poi_type(poi.poi_type)
+	if buildable.is_empty():
+		return
+
+	var dropdown := VBoxContainer.new()
+	dropdown.set_meta("slot_card", card)
+	dropdown.add_theme_constant_override("separation", 4)
+
+	var sep := HSeparator.new()
+	var sep_s := StyleBoxFlat.new()
+	sep_s.bg_color = Color(0.22, 0.28, 0.50, 0.3)
+	sep.add_theme_stylebox_override("separator", sep_s)
+	dropdown.add_child(sep)
+
+	var slots_free: int = pp.district_slots(poi.label) - pp.slots_used_in_district(poi.label)
+
+	for def: BuildingDef in buildable:
+		if def.min_planet_lv > pp.level:
+			continue
+		var can_afford: bool = GameState.credits >= def.base_cost
+		var has_slots:  bool = slots_free >= def.slot_cost
+
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+
+		var info := VBoxContainer.new()
+		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var n_lbl := Label.new()
+		n_lbl.text = def.display_name
+		_apply_orbitron(n_lbl, 10)
+		n_lbl.add_theme_color_override("font_color",
+			Color(0.78, 0.86, 1.0) if (can_afford and has_slots) else Color(0.38, 0.40, 0.55))
+		var c_lbl := Label.new()
+		c_lbl.text = "%.0f cr · %d slot · %s" % [def.base_cost, def.slot_cost, def.output_label()]
+		_apply_orbitron(c_lbl, 8)
+		c_lbl.add_theme_color_override("font_color",
+			Color(0.45, 0.72, 0.40) if can_afford else Color(0.65, 0.30, 0.28))
+		info.add_child(n_lbl)
+		info.add_child(c_lbl)
+
+		var btn := Button.new()
+		btn.text     = "▶"
+		btn.flat     = true
+		btn.disabled = not (can_afford and has_slots)
+		_apply_orbitron(btn, 11)
+		btn.custom_minimum_size = Vector2(26, 26)
+		btn.add_theme_color_override("font_color", Color(0.9, 0.82, 0.45))
+		btn.mouse_entered.connect(func() -> void:
+			if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER))
+		btn.mouse_exited.connect(func()  -> void:
+			CursorManager.set_state(CursorManager.State.NORMAL))
+		var cap_poi    := poi
+		var cap_def    := def
+		var cap_planet := planet
+		btn.pressed.connect(func() -> void:
+			if GameState.spend_credits(cap_def.base_cost):
+				pp.build_in_district(cap_poi, cap_def.building_id)
+				GameState.planet_progress_changed.emit(cap_planet.seed)
+				_build_district_panel(cap_poi, cap_planet))
+
+		row.add_child(info)
+		row.add_child(btn)
+		dropdown.add_child(row)
+
+	root.add_child(dropdown)
+	root.move_child(dropdown, card.get_index() + 1)
+	_active_slot_dropdown = dropdown
+
+func _build_district_panel(poi: POIData, planet: PlanetData) -> void:
 	var panel_content := $RightPanel/PanelContent
-	var old := panel_content.get_node_or_null("POIBuildPanel")
+	var old := panel_content.get_node_or_null("DistrictBuildPanel")
 	if old:
 		old.free()
+		_bar_meta.clear()
+		_active_slot_dropdown = null
 
 	var pp   := GameState.get_planet(planet.seed)
 	var root := VBoxContainer.new()
-	root.name = "POIBuildPanel"
+	root.name = "DistrictBuildPanel"
 	root.add_theme_constant_override("separation", 8)
 	root.add_child(HSeparator.new())
 
@@ -814,98 +1482,65 @@ func _build_poi_panel(poi: POIData, planet: PlanetData) -> void:
 	poi_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(poi_title)
 
+	var slots_used  := pp.slots_used_in_district(poi.label)
+	var slots_total := pp.district_slots(poi.label)
+	var dist_lv: int = pp.district_levels.get(poi.label, 1)
 	var slots_lbl := Label.new()
-	var slots_used := pp.slots_used_in_poi(poi.label)
-	slots_lbl.text = "%d/%d slots" % [slots_used, poi.max_building_slots()]
+	slots_lbl.text = "%d/%d  Lv%d" % [slots_used, slots_total, dist_lv]
 	_apply_orbitron(slots_lbl, 9)
-	slots_lbl.add_theme_color_override("font_color", Color(0.5, 0.6, 0.8))
+	slots_lbl.add_theme_color_override("font_color",
+		Color(0.85, 0.55, 0.35) if slots_used >= slots_total else Color(0.5, 0.6, 0.8))
 	header.add_child(slots_lbl)
+
+	# District upgrade button
+	var upg_cost := 500 * dist_lv
+	var upg_btn  := Button.new()
+	upg_btn.text    = "⬆"
+	upg_btn.flat    = true
+	upg_btn.disabled = GameState.credits < upg_cost
+	_apply_orbitron(upg_btn, 10)
+	upg_btn.custom_minimum_size = Vector2(22, 22)
+	upg_btn.add_theme_color_override("font_color",
+		Color(0.9, 0.82, 0.45) if GameState.credits >= upg_cost else Color(0.35, 0.38, 0.50))
+	upg_btn.mouse_entered.connect(func() -> void:
+		if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER)
+		TooltipManager.show_tip("Upgrade District",
+			"Increases slot capacity by 2.\nCost: %d cr" % upg_cost))
+	upg_btn.mouse_exited.connect(func() -> void:
+		CursorManager.set_state(CursorManager.State.NORMAL)
+		TooltipManager.hide_tip())
+	var cap_poi_upg    := poi
+	var cap_planet_upg := planet
+	upg_btn.pressed.connect(func() -> void:
+		if GameState.spend_credits(upg_cost):
+			pp.upgrade_district(cap_poi_upg.label)
+			GameState.planet_progress_changed.emit(cap_planet_upg.seed)
+			_build_district_panel(cap_poi_upg, cap_planet_upg))
+	header.add_child(upg_btn)
 	root.add_child(header)
 
-	# ── Installed buildings ───────────────────────────────────────────────────
-	var installed := pp.buildings_in_poi(poi.label)
-	if installed.is_empty():
-		var empty_lbl := Label.new()
-		empty_lbl.text = "No buildings yet."
-		_apply_orbitron(empty_lbl, 9)
-		empty_lbl.add_theme_color_override("font_color", Color(0.45, 0.5, 0.65))
-		root.add_child(empty_lbl)
-	else:
-		for entry: Dictionary in installed:
-			var def := BuildingDef.find(entry.get("building_id", ""))
-			if def == null:
-				continue
-			var row := HBoxContainer.new()
-			var name_lbl := Label.new()
-			name_lbl.text = def.display_name
-			name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			_apply_orbitron(name_lbl, 10)
-			name_lbl.add_theme_color_override("font_color", Color(0.8, 0.88, 1.0))
-			var energy_lbl := Label.new()
-			var sign := "+" if def.energy_delta > 0 else ""
-			energy_lbl.text = sign + "%.0f⚡" % def.energy_delta
-			_apply_orbitron(energy_lbl, 9)
-			energy_lbl.add_theme_color_override("font_color",
-				Color(0.4, 1.0, 0.6) if def.energy_delta > 0 else Color(0.9, 0.6, 0.3))
-			row.add_child(name_lbl)
-			row.add_child(energy_lbl)
-			root.add_child(row)
+	# Connect production updates to refresh bar fills live
+	if not ProductionManager.building_progress_changed.is_connected(_on_production_update):
+		ProductionManager.building_progress_changed.connect(_on_production_update)
 
-	# ── Buildable list ────────────────────────────────────────────────────────
-	var buildable := BuildingDef.for_poi_type(poi.poi_type)
-	if not buildable.is_empty():
-		var build_title := Label.new()
-		build_title.text = "BUILD"
-		_apply_orbitron(build_title, 8)
-		build_title.add_theme_color_override("font_color", Color(0.4, 0.45, 0.65))
-		root.add_child(build_title)
-
-	for def: BuildingDef in buildable:
-		if def.min_planet_lv > pp.level:
+	# ── Installed buildings as full-bleed production cards ────────────────────
+	# One card per building entry; amount field drives ×N display and output scaling
+	var installed := pp.buildings_in_district(poi.label)
+	for entry: Dictionary in installed:
+		var bid: String = entry.get("building_id", "")
+		var def := BuildingDef.find(bid)
+		if def == null:
 			continue
-		var slots_free := poi.max_building_slots() - pp.slots_used_in_poi(poi.label)
-		var can_afford := GameState.credits >= def.base_cost
-		var has_slots  := slots_free >= def.slot_cost
+		var idx: int       = pp.buildings.find(entry)
+		var pm_key: String = "%d:%s:%d" % [planet.seed, poi.label, idx]
+		var amount: int    = entry.get("amount", 1)
+		root.add_child(_build_production_bar(def, pm_key, planet.seed, amount, poi, planet, pp))
 
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 6)
-
-		var info := VBoxContainer.new()
-		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		var def_name := Label.new()
-		def_name.text = def.display_name
-		_apply_orbitron(def_name, 10)
-		def_name.add_theme_color_override("font_color",
-			Color(0.75, 0.82, 1.0) if (can_afford and has_slots) else Color(0.4, 0.43, 0.55))
-		var def_cost := Label.new()
-		def_cost.text = "%.0f cr  ·  %d slot" % [def.base_cost, def.slot_cost]
-		_apply_orbitron(def_cost, 8)
-		def_cost.add_theme_color_override("font_color",
-			Color(0.5, 0.75, 0.45) if can_afford else Color(0.7, 0.35, 0.3))
-		info.add_child(def_name)
-		info.add_child(def_cost)
-
-		var btn := Button.new()
-		btn.text     = "▶"
-		btn.flat     = false
-		btn.disabled = not (can_afford and has_slots)
-		_apply_orbitron(btn, 10)
-		btn.custom_minimum_size = Vector2(28, 28)
-		btn.add_theme_color_override("font_color", Color(0.9, 0.82, 0.45))
-		btn.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
-		btn.mouse_exited.connect(func()  -> void: CursorManager.set_state(CursorManager.State.NORMAL))
-		var cap_poi := poi
-		var cap_def := def
-		var cap_planet := planet
-		btn.pressed.connect(func() -> void:
-			if GameState.spend_credits(cap_def.base_cost):
-				pp.build_in_poi(cap_poi, cap_def.building_id)
-				GameState.planet_progress_changed.emit(cap_planet.seed)
-				_build_poi_panel(cap_poi, cap_planet))
-
-		row.add_child(info)
-		row.add_child(btn)
-		root.add_child(row)
+	# ── Empty slot "+" cards ──────────────────────────────────────────────────
+	var total_slots := pp.district_slots(poi.label)
+	var used_slots  := pp.slots_used_in_district(poi.label)
+	for si in (total_slots - used_slots):
+		root.add_child(_build_slot_card(poi, planet, pp, root, si))
 
 	panel_content.add_child(root)
 

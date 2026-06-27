@@ -7,27 +7,29 @@ extends Resource
 # ── Level & Limits ──────────────────────────────────────────────────────────
 @export var level: int = 1
 
-## Computed limits — call recalculate_limits() after level change.
 @export var max_districts:   int = 4
 @export var max_mining_lv:   int = 1
 @export var max_generators:  int = 2
-@export var max_spaceports:  int = 0   # 0 = locked until researched
+@export var max_spaceports:  int = 0
 
 # ── Districts ────────────────────────────────────────────────────────────────
 @export var districts_used: int = 0
 
 # ── Buildings ────────────────────────────────────────────────────────────────
-## Each entry: { "poi_id": String, "type": String, "level": int }
+## Each entry: { "district_id": String, "building_id": String, "amount": int }
 @export var buildings: Array[Dictionary] = []
 
 # ── Resources ────────────────────────────────────────────────────────────────
-## { resource_id: String -> amount: float }
 @export var stored_resources: Dictionary = {}
 
 # ── Unlock flags ─────────────────────────────────────────────────────────────
-@export var is_colonized:     bool = false
-@export var has_spaceport:    bool = false
-@export var moons_unlocked:   bool = false
+@export var is_colonized:   bool = false
+@export var has_spaceport:  bool = false
+@export var moons_unlocked: bool = false
+
+# ── District upgrade levels ──────────────────────────────────────────────────
+## { district_label -> upgrade_level: int }, default 1
+@export var district_levels: Dictionary = {}
 
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -45,34 +47,45 @@ func can_build(building_type: String) -> bool:
 		"SpacePort": return districts_free() >= 2 and max_spaceports > 0 and not has_spaceport
 		_:           return districts_free() >= 1
 
-## Returns buildings installed in a specific POI (by poi label used as id).
-func buildings_in_poi(poi_label: String) -> Array[Dictionary]:
+func buildings_in_district(district_label: String) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	for b: Dictionary in buildings:
-		if b.get("poi_id", "") == poi_label:
+		if b.get("district_id", "") == district_label:
 			result.append(b)
 	return result
 
-## Slots used in a POI.
-func slots_used_in_poi(poi_label: String) -> int:
+func district_slots(district_label: String) -> int:
+	var lv: int = district_levels.get(district_label, 1)
+	return lv * 2
+
+func upgrade_district(district_label: String) -> void:
+	district_levels[district_label] = district_levels.get(district_label, 1) + 1
+
+func slots_used_in_district(district_label: String) -> int:
 	var total: int = 0
-	for b: Dictionary in buildings_in_poi(poi_label):
+	for b: Dictionary in buildings_in_district(district_label):
 		var def := BuildingDef.find(b.get("building_id", ""))
 		if def != null:
-			total += def.slot_cost
+			total += def.slot_cost * b.get("amount", 1)
 	return total
 
-## Install a building into a POI. Returns false if not enough slots.
-func build_in_poi(poi: POIData, building_id: String) -> bool:
+func build_in_district(district: POIData, building_id: String) -> bool:
 	var def := BuildingDef.find(building_id)
 	if def == null:
 		return false
-	if slots_used_in_poi(poi.label) + def.slot_cost > poi.max_building_slots():
+	if slots_used_in_district(district.label) + def.slot_cost > district_slots(district.label):
 		return false
-	buildings.append({ "poi_id": poi.label, "building_id": building_id })
+	buildings.append({ "district_id": district.label, "building_id": building_id, "amount": 1 })
 	if building_id == "spaceport":
 		has_spaceport = true
 	return true
+
+func stack_building_unchecked(district_label: String, building_id: String) -> bool:
+	for b: Dictionary in buildings:
+		if b.get("district_id") == district_label and b.get("building_id") == building_id:
+			b["amount"] = b.get("amount", 1) + 1
+			return true
+	return false
 
 func add_resource(resource_id: String, amount: float) -> void:
 	stored_resources[resource_id] = stored_resources.get(resource_id, 0.0) + amount

@@ -127,6 +127,13 @@ func get_planet(seed_val: int) -> PlanetProgress:
 		_planet_progress[seed_val] = PlanetProgress.make(seed_val)
 	return _planet_progress[seed_val]
 
+## Returns cached PlanetData for a given seed (set by PlanetaryView when visiting).
+var _planet_data_cache: Dictionary = {}   # seed -> PlanetData
+func cache_planet_data(pd: PlanetData) -> void:
+	_planet_data_cache[pd.seed] = pd
+func get_planet_data(seed_val: int) -> PlanetData:
+	return _planet_data_cache.get(seed_val, null)
+
 func get_body_resources(body_seed: int, tier_min: int = 1, tier_max: int = 1) -> BodyResources:
 	if not _body_resources.has(body_seed):
 		var br := BodyResources.generate(body_seed, tier_min, tier_max)

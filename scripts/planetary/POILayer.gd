@@ -10,7 +10,8 @@ const FONT_SIZE        := 15
 
 var _planet: ColorRect
 var _pois: Array[Dictionary] = []
-var _hovered_index: int = -1
+var _hovered_index:  int = -1
+var _selected_index: int = -1
 
 func setup(renderer: ColorRect) -> void:
 	_planet = renderer
@@ -18,7 +19,17 @@ func setup(renderer: ColorRect) -> void:
 
 func clear_pois() -> void:
 	_pois.clear()
-	_hovered_index = -1
+	_hovered_index  = -1
+	_selected_index = -1
+
+func deselect_all() -> void:
+	_hovered_index  = -1
+	_selected_index = -1
+	queue_redraw()
+
+func select_poi(index: int) -> void:
+	_selected_index = index
+	queue_redraw()
 
 func add_poi(lon_deg: float, lat_deg: float, label: String, data: Dictionary = {}) -> void:
 	_pois.append({
@@ -102,12 +113,24 @@ func _draw() -> void:
 		var horiz_end := diag_end + Vector2(horiz_dir * LINE_HORIZ_LEN, 0.0)
 
 		var col := Color(0.85, 0.85, 0.85, alpha * 0.9)
-		var dot_col := Color(1.0, 0.82, 0.25, alpha) if not hovered else Color(1.0, 0.95, 0.5, alpha)
-		var dot_r   := DOT_HOVER_RADIUS if hovered else DOT_RADIUS
+		var selected: bool = (i == _selected_index)
+		var active: bool   = hovered or selected
+		var dot_col := Color(1.0, 0.95, 0.5, alpha) if active else Color(1.0, 0.82, 0.25, alpha)
+		var dot_r   := DOT_HOVER_RADIUS if active else DOT_RADIUS
 
-		# dot
-		draw_circle(sp, dot_r + 1.5, Color(0, 0, 0, alpha * 0.5))
-		draw_circle(sp, dot_r, dot_col)
+		# dot — circle normally, filled square when hovered or selected
+		if active:
+			var half := dot_r
+			draw_rect(Rect2(sp - Vector2(half + 1.5, half + 1.5), Vector2((half + 1.5) * 2, (half + 1.5) * 2)),
+				Color(0, 0, 0, alpha * 0.55))
+			draw_rect(Rect2(sp - Vector2(half, half), Vector2(half * 2, half * 2)), dot_col)
+			var ring := half + 3.5
+			var ring_col := Color(1.0, 0.95, 0.5, alpha * 0.80) if selected else Color(1.0, 0.95, 0.5, alpha * 0.55)
+			draw_rect(Rect2(sp - Vector2(ring, ring), Vector2(ring * 2, ring * 2)),
+				ring_col, false, 1.2 if hovered else 1.5)
+		else:
+			draw_circle(sp, dot_r + 1.5, Color(0, 0, 0, alpha * 0.5))
+			draw_circle(sp, dot_r, dot_col)
 
 		# leader lines
 		draw_line(sp, diag_end, col, 1.0, true)
@@ -132,10 +155,6 @@ func _draw() -> void:
 		var fc := Color(1.0, 0.95, 0.5, alpha) if hovered else Color(1.0, 1.0, 1.0, alpha)
 		draw_string(font, label_pos, label, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE, fc)
 
-		# hover ring
-		if hovered:
-			draw_arc(sp, dot_r + 3.0, 0, TAU, 20, Color(1, 0.95, 0.5, alpha * 0.6), 1.0)
-
 func _input(event: InputEvent) -> void:
 	if not _planet:
 		return
@@ -153,6 +172,8 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		var idx := _get_poi_at(event.global_position)
 		if idx >= 0:
+			_selected_index = idx
+			queue_redraw()
 			poi_clicked.emit(idx, _pois[idx]["data"])
 			get_viewport().set_input_as_handled()
 
