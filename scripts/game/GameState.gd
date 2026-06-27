@@ -71,7 +71,23 @@ func _bootstrap_world() -> void:
 	if _home_solar == null:
 		_home_solar = _build_home_solar()
 
+	_seed_starting_resources()
 	world_ready.emit()
+
+func _seed_starting_resources() -> void:
+	var home_pp := get_planet(home_planet_seed)
+	# Give the player R1T1, R1T2, R2T1 to start with
+	var r1t1 := ResourceData.generate(home_planet_seed, ResourceData.Tag.RAW_MINERAL, 1, 1)
+	var r1t2 := ResourceData.generate(home_planet_seed, ResourceData.Tag.RAW_MINERAL, 1, 2)
+	var r2t1 := ResourceData.generate(home_planet_seed, ResourceData.Tag.RAW_MINERAL, 2, 1)
+	home_pp.stored_resources[r1t1.resource_id()] = 50.0
+	home_pp.stored_resources[r1t2.resource_id()] = 10.0
+	home_pp.stored_resources[r2t1.resource_id()] = 10.0
+	# Register them so the global known_resources dict is populated
+	for rd: ResourceData in [r1t1, r1t2, r2t1]:
+		var key := rd.resource_id()
+		if not known_resources.has(key):
+			known_resources[key] = rd
 
 func _build_home_solar() -> SolarData:
 	# Use the galaxy star's own seed so the system matches what the galaxy would generate
@@ -152,12 +168,17 @@ func cache_planet_data(pd: PlanetData) -> void:
 func get_planet_data(seed_val: int) -> PlanetData:
 	return _planet_data_cache.get(seed_val, null)
 
-func get_body_resources(body_seed: int, tier_min: int = 1, tier_max: int = 1) -> BodyResources:
+func get_body_resources(body_seed: int,
+		rarity_min: int = 1, rarity_max: int = 1) -> BodyResources:
 	if not _body_resources.has(body_seed):
-		var br := BodyResources.generate(body_seed, tier_min, tier_max)
+		var br := BodyResources.generate(body_seed, rarity_min, rarity_max)
 		_body_resources[body_seed] = br
 		_register_resources(br)
 	return _body_resources[body_seed] as BodyResources
+
+func get_body_resources_for(pd: PlanetData) -> BodyResources:
+	var range := BodyResources.rarity_range_for(pd.planet_type)
+	return get_body_resources(pd.seed, range.x, range.y)
 
 func _register_resources(br: BodyResources) -> void:
 	for rd: ResourceData in br.as_array():

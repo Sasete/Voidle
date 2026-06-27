@@ -28,6 +28,9 @@ const LIGHT_SPEED: float = 0.04   # radians per second
 var _active_district_poi: POIData = null
 ## Toast log container — created lazily, anchored bottom-left.
 var _toast_container: VBoxContainer = null
+## Maps building pm_key -> bool indicating if its mineral switcher tray is expanded
+var _open_mineral_switchers: Dictionary = {}
+
 
 func _make_system(root: PlanetData) -> Array[PlanetData]:
 	var arr: Array[PlanetData] = [root]
@@ -139,6 +142,7 @@ func _input(event: InputEvent) -> void:
 func load_planet(data: PlanetData) -> void:
 	current_data = data
 	_active_district_poi = null   # clear stale reference on planet switch
+	_open_mineral_switchers.clear()
 	GameState.active_planet_seed = data.seed
 	GameState.cache_planet_data(data)
 	_setup_material(data)
@@ -539,52 +543,80 @@ func _details_row(parent: VBoxContainer, label: String, value: String,
 	parent.add_child(hbox)
 	return hbox
 
-## Styled icon cell for a resource — bordered panel with pixel art icon.
-## show_count=false → icon only (availability). show_count=true → icon + amount label.
+## Vivid rarity-based border color (hue = rarity, always max sat/brightness).
+func _rarity_border_color(rarity: int) -> Color:
+	var r: float = clampf(float(rarity - 1) / 14.0, 0.0, 1.0)
+	var hue: float
+	if r < 0.33:
+		hue = lerp(0.60, 0.35, r / 0.33)
+	elif r < 0.66:
+		hue = lerp(0.35, 0.78, (r - 0.33) / 0.33)
+	else:
+		hue = lerp(0.78, 0.12, (r - 0.66) / 0.34)
+	return Color.from_hsv(hue, 0.88, 1.00)
+
+## Format large numbers with K / M / B suffix.
+func _fmt_amount(n: float) -> String:
+	if n >= 1_000_000_000.0:
+		return "%.1fB" % (n / 1_000_000_000.0)
+	elif n >= 1_000_000.0:
+		return "%.1fM" % (n / 1_000_000.0)
+	elif n >= 1_000.0:
+		return "%.1fK" % (n / 1_000.0)
+	return "%.0f" % n
+
+## Item-style resource card. Rarity = thick left border color. Tier = icon shape.
+## show_count=false → compact square chip (discovery grid, no amount).
+## show_count=true  → full-width card: icon left, formatted count right, no name label.
 func _mineral_icon_cell(rd: ResourceData, show_count: bool, stored: float = 0.0) -> PanelContainer:
+	var rarity_col := _rarity_border_color(rd.rarity)
+
 	var cell := PanelContainer.new()
-	var s := StyleBoxFlat.new()
-	var border_col := rd.display_color.lightened(0.05)
-	border_col.a = 0.80
-	s.bg_color    = rd.display_color.darkened(0.40)
-	s.bg_color.a  = 0.70
-	s.border_color = border_col
-	s.border_width_left = 1; s.border_width_right  = 1
-	s.border_width_top  = 1; s.border_width_bottom = 1
+	var s    := StyleBoxFlat.new()
+	s.bg_color            = Color(0.07, 0.08, 0.13, 0.92)
+	s.border_color        = rarity_col
+	s.border_width_left   = 3
+	s.border_width_right  = 1
+	s.border_width_top    = 1
+	s.border_width_bottom = 1
 	s.corner_radius_top_left     = 4; s.corner_radius_top_right    = 4
 	s.corner_radius_bottom_left  = 4; s.corner_radius_bottom_right = 4
-	s.content_margin_left   = 5; s.content_margin_right  = 5
+	s.content_margin_left   = 5; s.content_margin_right  = 6
 	s.content_margin_top    = 4; s.content_margin_bottom = 4
 	cell.add_theme_stylebox_override("panel", s)
 	cell.mouse_filter = Control.MOUSE_FILTER_STOP
+	if show_count:
+		cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	var inner := HBoxContainer.new()
-	inner.add_theme_constant_override("separation", 4)
+	inner.add_theme_constant_override("separation", 5)
 	inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	cell.add_child(inner)
 
-	var tex := MineralIcon.make(rd.tier, rd.display_color)
+	var tex       := MineralIcon.make(rd.tier, rd.display_color)
 	var icon_rect := TextureRect.new()
-	icon_rect.texture = tex
+	icon_rect.texture             = tex
 	icon_rect.custom_minimum_size = Vector2(18, 18)
-	icon_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	icon_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon_rect.stretch_mode        = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon_rect.mouse_filter        = Control.MOUSE_FILTER_IGNORE
 	inner.add_child(icon_rect)
 
 	if show_count:
+		var spacer := Control.new()
+		spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		inner.add_child(spacer)
+
 		var count_lbl := Label.new()
-		count_lbl.text = "%.0f" % stored if stored > 0.0 else "0"
+		count_lbl.text = _fmt_amount(stored)
 		_apply_orbitron(count_lbl, 9)
-		count_lbl.add_theme_color_override("font_color", Color(0.95, 0.97, 1.0))
+		count_lbl.add_theme_color_override("font_color",
+			Color(0.95, 0.97, 1.0) if stored > 0.0 else Color(0.42, 0.45, 0.55))
 		count_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		inner.add_child(count_lbl)
 
-	# Tooltip
-	var tier_names: Array[String] = ["", "Raw", "Refined", "Exotic"]
-	var tier_label: String = tier_names[clampi(rd.tier, 0, 3)] if rd.tier <= 3 else ("T%d" % rd.tier)
-	var tip_body := "%s mineral · Tier %d" % [tier_label, rd.tier]
-	if show_count:
-		tip_body += "\nStored: %.0f" % stored
+	var tier_suffix := ResourceData.TIER_SUFFIXES[clampi(rd.tier - 1, 0, ResourceData.TIER_SUFFIXES.size() - 1)]
+	var tip_body := "R%d  ·  T%d %s" % [rd.rarity, rd.tier, tier_suffix]
 	cell.mouse_entered.connect(func() -> void:
 		TooltipManager.show_tip(rd.unique_name, tip_body))
 	cell.mouse_exited.connect(func() -> void:
@@ -592,19 +624,80 @@ func _mineral_icon_cell(rd: ResourceData, show_count: bool, stored: float = 0.0)
 
 	return cell
 
-func _mineral_row(parent: VBoxContainer, rd: ResourceData, stored: float) -> void:
-	var hbox := HBoxContainer.new()
-	hbox.add_theme_constant_override("separation", 6)
-	hbox.add_child(_mineral_icon_cell(rd, true, stored))
-	# Name label
-	var lbl := Label.new()
-	lbl.text = rd.unique_name
-	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_apply_orbitron(lbl, 9)
-	lbl.add_theme_color_override("font_color", rd.display_color.lightened(0.15))
-	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	hbox.add_child(lbl)
-	parent.add_child(hbox)
+## Square grid card: icon top, count bottom, fixed width. Used in resource grid.
+func _mineral_grid_card(rd: ResourceData, stored: float, show_count: bool, sub_label: String = "") -> PanelContainer:
+	var rarity_col := _rarity_border_color(rd.rarity)
+
+	var card := PanelContainer.new()
+	var s    := StyleBoxFlat.new()
+	s.bg_color            = Color(0.07, 0.08, 0.13, 0.92)
+	s.border_color        = rarity_col
+	s.border_width_left   = 2
+	s.border_width_right  = 2
+	s.border_width_top    = 2
+	s.border_width_bottom = 2
+	s.corner_radius_top_left     = 5; s.corner_radius_top_right    = 5
+	s.corner_radius_bottom_left  = 5; s.corner_radius_bottom_right = 5
+	s.content_margin_left   = 6; s.content_margin_right  = 6
+	s.content_margin_top    = 6; s.content_margin_bottom = 5
+	card.add_theme_stylebox_override("panel", s)
+	card.custom_minimum_size = Vector2(44, 44) if not show_count else Vector2(52, 0)
+	card.mouse_filter = Control.MOUSE_FILTER_STOP
+
+	var tex       := MineralIcon.make(rd.tier, rd.display_color)
+	var icon_rect := TextureRect.new()
+	icon_rect.texture   = tex
+	icon_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	if show_count:
+		var vbox := VBoxContainer.new()
+		vbox.add_theme_constant_override("separation", 3)
+		vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+		vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		card.add_child(vbox)
+
+		icon_rect.custom_minimum_size   = Vector2(22, 22)
+		icon_rect.stretch_mode          = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon_rect.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		vbox.add_child(icon_rect)
+
+		var count_lbl := Label.new()
+		count_lbl.text = _fmt_amount(stored)
+		count_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_apply_orbitron(count_lbl, 8)
+		count_lbl.add_theme_color_override("font_color",
+			Color(0.95, 0.97, 1.0) if stored > 0.0 else Color(0.42, 0.45, 0.55))
+		count_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		vbox.add_child(count_lbl)
+	else:
+		var vbox2 := VBoxContainer.new()
+		vbox2.add_theme_constant_override("separation", 2)
+		vbox2.alignment = BoxContainer.ALIGNMENT_CENTER
+		vbox2.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		card.add_child(vbox2)
+
+		icon_rect.custom_minimum_size   = Vector2(24, 24)
+		icon_rect.stretch_mode          = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon_rect.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		vbox2.add_child(icon_rect)
+
+		if sub_label != "":
+			var sl := Label.new()
+			sl.text = sub_label
+			sl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			_apply_orbitron(sl, 7)
+			sl.add_theme_color_override("font_color", Color(0.70, 0.75, 0.90))
+			sl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			vbox2.add_child(sl)
+
+	var tier_suffix := ResourceData.TIER_SUFFIXES[clampi(rd.tier - 1, 0, ResourceData.TIER_SUFFIXES.size() - 1)]
+	var tip_body := "R%d  ·  T%d %s" % [rd.rarity, rd.tier, tier_suffix]
+	card.mouse_entered.connect(func() -> void:
+		TooltipManager.show_tip(rd.unique_name, tip_body))
+	card.mouse_exited.connect(func() -> void:
+		TooltipManager.hide_tip())
+
+	return card
 
 func _details_section(parent: VBoxContainer, title: String) -> void:
 	var lbl := Label.new()
@@ -633,6 +726,7 @@ func _fill_uncolonized_details(vbox: VBoxContainer, data: PlanetData) -> void:
 		_details_row(vbox, "Atm.", "None", Color(0.6, 0.4, 0.4))
 	_details_section(vbox, "STATUS")
 	_details_row(vbox, "Colony", "Not established", Color(0.65, 0.45, 0.35))
+	_fill_deposits_section(vbox, data)
 
 func _fill_colonized_details(vbox: VBoxContainer, data: PlanetData, _pp: PlanetProgress) -> void:
 	_fill_modifiers_section(vbox, data)
@@ -645,6 +739,26 @@ func _fill_colonized_details(vbox: VBoxContainer, data: PlanetData, _pp: PlanetP
 		_details_row(vbox, "Atm.", atm)
 	else:
 		_details_row(vbox, "Atm.", "None", Color(0.6, 0.4, 0.4))
+	_fill_deposits_section(vbox, data)
+
+## Left panel "DEPOSITS" — shows which T1 raw minerals can be mined here. No amounts.
+func _fill_deposits_section(vbox: VBoxContainer, data: PlanetData) -> void:
+	var br := GameState.get_body_resources_for(data)
+	if br.as_array().is_empty():
+		return
+
+	_details_section(vbox, "DEPOSITS")
+
+	var rng := RandomNumberGenerator.new()
+	var grid := HFlowContainer.new()
+	grid.add_theme_constant_override("h_separation", 5)
+	grid.add_theme_constant_override("v_separation", 5)
+	for rd: ResourceData in br.as_array():
+		rng.seed = data.seed ^ (rd.rarity * 0x4E3D)
+		var mineral_density: float = data.deposit_density * rng.randf_range(0.75, 1.25)
+		var pct_text := "%d%%" % int(round(mineral_density * 100.0))
+		grid.add_child(_mineral_grid_card(rd, 0.0, false, pct_text))
+	vbox.add_child(grid)
 
 ## Active building count for a district (for night-light glow size).
 ## Excludes constructing and user-paused buildings.
@@ -1162,28 +1276,34 @@ func _build_resources_section(parent: VBoxContainer, data: PlanetData, pp: Plane
 	title.add_theme_color_override("font_color", Color(0.40, 0.45, 0.65))
 	parent.add_child(title)
 
-	var br := GameState.get_body_resources(data.seed, 1, 3)
-	if br.as_array().is_empty():
+	# Collect stored resources with amount > 0, resolved from known_resources
+	var stored_entries: Array[ResourceData] = []
+	for rid: String in pp.stored_resources:
+		var amt: float = pp.stored_resources[rid]
+		if amt <= 0.0:
+			continue
+		var rd: ResourceData = GameState.known_resources.get(rid, null)
+		if rd == null:
+			continue
+		stored_entries.append(rd)
+	stored_entries.sort_custom(func(a: ResourceData, b: ResourceData) -> bool:
+		return a.rarity < b.rarity if a.rarity != b.rarity else a.tier < b.tier)
+
+	if stored_entries.is_empty():
 		var none_lbl := Label.new()
-		none_lbl.text = "No deposits detected"
+		none_lbl.text = "No resources stored"
 		_apply_orbitron(none_lbl, 8)
 		none_lbl.add_theme_color_override("font_color", Color(0.45, 0.45, 0.55))
 		parent.add_child(none_lbl)
 		return
 
-	if pp.is_colonized:
-		# Show name + stored amount per resource
-		for rd: ResourceData in br.as_array():
-			var stored: float = pp.stored_resources.get(rd.resource_id(), 0.0)
-			_mineral_row(parent, rd, stored)
-	else:
-		# Show icon grid — deposits are visible but not yet harvested
-		var icon_flow := HFlowContainer.new()
-		icon_flow.add_theme_constant_override("h_separation", 5)
-		icon_flow.add_theme_constant_override("v_separation", 5)
-		for rd: ResourceData in br.as_array():
-			icon_flow.add_child(_mineral_icon_cell(rd, false))
-		parent.add_child(icon_flow)
+	var grid := HFlowContainer.new()
+	grid.add_theme_constant_override("h_separation", 6)
+	grid.add_theme_constant_override("v_separation", 6)
+	for rd: ResourceData in stored_entries:
+		var stored: float = pp.stored_resources.get(rd.resource_id(), 0.0)
+		grid.add_child(_mineral_grid_card(rd, stored, true))
+	parent.add_child(grid)
 
 func _build_district_overview_card(poi: POIData, planet: PlanetData, pp: PlanetProgress,
 		_panel_content: VBoxContainer, _root: VBoxContainer) -> PanelContainer:
@@ -1419,16 +1539,18 @@ func _on_production_update(_planet_seed: int, key: String, progress: float) -> v
 		var pct: Label = m["pct"]
 		if is_instance_valid(pct):
 			pct.text = "%d%%" % int(progress * 100)
+	else:
+		_refresh_bar_label_status(key)
 
 func _on_building_ticked_night(planet_seed: int, key: String) -> void:
 	if current_data != null and current_data.seed == planet_seed:
 		_update_poi_night_sizes(current_data)
 		_refresh_poi_lights(current_data)
-	# Also refresh fill if this bar is currently visible
 	if _bar_meta.has(key):
 		var fc: Control = _bar_meta[key]["fill"]
 		if is_instance_valid(fc):
 			fc.queue_redraw()
+		_refresh_bar_label_status(key)
 
 func _on_building_toggled(key: String, _paused: bool) -> void:
 	if not _bar_meta.has(key):
@@ -1436,6 +1558,22 @@ func _on_building_toggled(key: String, _paused: bool) -> void:
 	var fc: Control = _bar_meta[key]["fill"]
 	if is_instance_valid(fc):
 		fc.queue_redraw()
+	_refresh_bar_label_status(key)
+
+func _refresh_bar_label_status(key: String) -> void:
+	if not _bar_meta.has(key):
+		return
+	var m: Dictionary = _bar_meta[key]
+	if m.get("construction", false):
+		return
+	var out_lbl: Label = m.get("out_lbl", null)
+	var def: BuildingDef = m.get("def", null)
+	var fc: Color = m.get("fc", Color.WHITE)
+	if is_instance_valid(out_lbl) and def != null:
+		var paused := ProductionManager.is_paused(key)
+		out_lbl.text = "⏸ waiting" if paused else def.output_label()
+		out_lbl.add_theme_color_override("font_color",
+			Color(0.45, 0.48, 0.60) if paused else fc)
 
 func _on_building_constructed(planet_seed: int, key: String) -> void:
 	if current_data == null or current_data.seed != planet_seed:
@@ -1670,7 +1808,7 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 
 	# Inner layer control — fill draws here, content sits on top
 	var body := Control.new()
-	body.custom_minimum_size   = Vector2(0, 50)
+	body.custom_minimum_size   = Vector2(0, 54)
 	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	body.size_flags_vertical   = Control.SIZE_EXPAND_FILL
 	card.add_child(body)
@@ -1767,68 +1905,167 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 		e_lbl.add_theme_color_override("font_color",
 			Color(0.9, 0.82, 0.25, 0.55) if def.energy_per_tick > 0 else Color(0.75, 0.48, 0.28, 0.55))
 		info_row.add_child(e_lbl)
-	vbox.add_child(info_row)
 
-	# ── Mine mineral row: shows target mineral + switch chips ─────────────────
-	if def.output_type == BuildingDef.OutputType.RAW_MINERAL:
-		var br       := GameState.get_body_resources(planet.seed, 1, 3)
+	# ── Dynamic Mineral Selection Tray for Mine / Generator ───────────────────
+	# Mine chooses output RAW_MINERAL. Generator chooses input RAW_MINERAL.
+	var is_mine := def.output_type == BuildingDef.OutputType.RAW_MINERAL
+	var is_generator := def.input_type == BuildingDef.OutputType.RAW_MINERAL
+
+	if is_mine or is_generator:
+		var br := GameState.get_body_resources_for(planet)
 		var raw_list := br.get_by_tag(ResourceData.Tag.RAW_MINERAL)
 		if not raw_list.is_empty():
-			# Ensure target_mineral is assigned
-			var tgt: String = entry.get("target_mineral", "")
+			var target_key := "target_mineral" if is_mine else "input_mineral"
+			var tgt: String = entry.get(target_key, "")
 			if tgt == "":
 				tgt = (raw_list[0] as ResourceData).resource_id()
-				entry["target_mineral"] = tgt
+				entry[target_key] = tgt
 
-			var mineral_row := HBoxContainer.new()
-			mineral_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			mineral_row.add_theme_constant_override("separation", 4)
-			vbox.add_child(mineral_row)
+			var current_rd: ResourceData = null
+			for rd: ResourceData in raw_list:
+				if rd.resource_id() == tgt:
+					current_rd = rd
+					break
+			if current_rd == null:
+				current_rd = raw_list[0]
+				tgt = current_rd.resource_id()
+				entry[target_key] = tgt
 
-			if raw_list.size() == 1:
-				# Only one mineral — just show it
-				var rd := raw_list[0] as ResourceData
-				var m_lbl := Label.new()
-				m_lbl.text = "⛏ " + rd.unique_name
-				m_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-				_apply_orbitron(m_lbl, 7)
-				m_lbl.add_theme_color_override("font_color",
-					rd.display_color.darkened(0.15))
-				mineral_row.add_child(m_lbl)
+			var sep_lbl := Label.new()
+			sep_lbl.text = "·"
+			sep_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			_apply_orbitron(sep_lbl, 8)
+			sep_lbl.add_theme_color_override("font_color", Color(0.35, 0.38, 0.50))
+			info_row.add_child(sep_lbl)
+
+			var chip_btn := Button.new()
+			chip_btn.flat = false
+			chip_btn.focus_mode = Control.FOCUS_NONE
+			chip_btn.custom_minimum_size = Vector2(18, 18)
+			
+			var chip_style := StyleBoxFlat.new()
+			chip_style.bg_color = current_rd.display_color.darkened(0.55)
+			chip_style.border_color = current_rd.display_color
+			chip_style.set_border_width_all(1)
+			chip_style.corner_radius_top_left = 3
+			chip_style.corner_radius_top_right = 3
+			chip_style.corner_radius_bottom_left = 3
+			chip_style.corner_radius_bottom_right = 3
+			chip_btn.add_theme_stylebox_override("normal", chip_style)
+
+			var chip_hover := chip_style.duplicate() as StyleBoxFlat
+			chip_hover.bg_color = current_rd.display_color.darkened(0.4)
+			chip_btn.add_theme_stylebox_override("hover", chip_hover)
+
+			var icon_tex := MineralIcon.make(current_rd.tier, current_rd.display_color)
+			var icon_rect := TextureRect.new()
+			icon_rect.texture = icon_tex
+			icon_rect.stretch_mode = TextureRect.STRETCH_KEEP_CENTERED
+			icon_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			chip_btn.add_child(icon_rect)
+			icon_rect.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+
+			var action_desc := "Digging" if is_mine else "Burning"
+			var tip_str := "%s: %s" % [action_desc, current_rd.unique_name]
+			if raw_list.size() > 1:
+				tip_str += "\n(Click to switch alternative mineral)"
+
+			chip_btn.mouse_entered.connect(func() -> void:
+				if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER)
+				TooltipManager.show_tip(current_rd.unique_name, tip_str))
+			chip_btn.mouse_exited.connect(func() -> void:
+				CursorManager.set_state(CursorManager.State.NORMAL)
+				TooltipManager.hide_tip())
+
+			if raw_list.size() > 1:
+				var is_open: bool = _open_mineral_switchers.get(pm_key, false)
+				chip_btn.pressed.connect(func() -> void:
+					_open_mineral_switchers[pm_key] = not is_open
+					_build_district_panel(poi, planet))
 			else:
-				# Multiple minerals — show switch chips
-				var cap_entry2 := entry
-				var cap_poi2   := poi
-				var cap_planet2 := planet
-				for rd_base: ResourceData in raw_list:
-					var rd: ResourceData = rd_base
-					var chip := Button.new()
-					chip.text = rd.unique_name
-					chip.flat  = true
-					chip.focus_mode = Control.FOCUS_NONE
-					var is_active: bool = tgt == rd.resource_id()
-					var chip_style := StyleBoxFlat.new()
-					chip_style.bg_color    = rd.display_color.darkened(0.45) if is_active \
-						else Color(0.1, 0.12, 0.18, 0.7)
-					chip_style.border_color = rd.display_color if is_active \
-						else Color(0.3, 0.32, 0.42, 0.5)
-					chip_style.set_border_width_all(1)
-					chip_style.corner_radius_top_left     = 4
-					chip_style.corner_radius_top_right    = 4
-					chip_style.corner_radius_bottom_left  = 4
-					chip_style.corner_radius_bottom_right = 4
-					chip.add_theme_stylebox_override("normal", chip_style)
-					chip.add_theme_stylebox_override("hover",  chip_style)
-					chip.add_theme_stylebox_override("pressed", chip_style)
-					chip.add_theme_font_size_override("font_size", 7)
-					chip.add_theme_color_override("font_color",
-						rd.display_color if is_active else Color(0.55, 0.6, 0.75))
-					chip.add_theme_color_override("font_hover_color", rd.display_color)
-					chip.pressed.connect(func() -> void:
-						cap_entry2["target_mineral"] = rd.resource_id()
-						_build_district_panel(cap_poi2, cap_planet2))
-					mineral_row.add_child(chip)
+				chip_btn.disabled = true
+				chip_btn.focus_mode = Control.FOCUS_NONE
 
+			info_row.add_child(chip_btn)
+
+			if _open_mineral_switchers.get(pm_key, false) and raw_list.size() > 1:
+				var tray_container := PanelContainer.new()
+				var tray_style := StyleBoxFlat.new()
+				tray_style.bg_color = Color(0.05, 0.07, 0.12, 0.95)
+				tray_style.border_color = Color(0.2, 0.25, 0.4, 0.7)
+				tray_style.set_border_width_all(1)
+				tray_style.corner_radius_top_left = 4
+				tray_style.corner_radius_top_right = 4
+				tray_style.corner_radius_bottom_left = 4
+				tray_style.corner_radius_bottom_right = 4
+				tray_style.content_margin_left = 6
+				tray_style.content_margin_right = 6
+				tray_style.content_margin_top = 4
+				tray_style.content_margin_bottom = 4
+				tray_container.add_theme_stylebox_override("panel", tray_style)
+				
+				vbox.add_child(info_row)
+
+				var tray_h := HBoxContainer.new()
+				tray_h.add_theme_constant_override("separation", 6)
+				tray_container.add_child(tray_h)
+
+				for alternative: ResourceData in raw_list:
+					if alternative.resource_id() == tgt:
+						continue
+					var alt_btn := Button.new()
+					alt_btn.flat = true
+					alt_btn.focus_mode = Control.FOCUS_NONE
+					alt_btn.custom_minimum_size = Vector2(22, 22)
+					
+					var alt_icon := TextureRect.new()
+					alt_icon.texture = MineralIcon.make(alternative.tier, alternative.display_color)
+					alt_icon.stretch_mode = TextureRect.STRETCH_KEEP_CENTERED
+					alt_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+					alt_btn.add_child(alt_icon)
+					alt_icon.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+
+					var alt_style := StyleBoxFlat.new()
+					alt_style.bg_color = Color(0.1, 0.12, 0.2, 0.8)
+					alt_style.border_color = alternative.display_color.darkened(0.3)
+					alt_style.set_border_width_all(1)
+					alt_style.corner_radius_top_left = 3
+					alt_style.corner_radius_top_right = 3
+					alt_style.corner_radius_bottom_left = 3
+					alt_style.corner_radius_bottom_right = 3
+					alt_btn.add_theme_stylebox_override("normal", alt_style)
+
+					var alt_hover := alt_style.duplicate() as StyleBoxFlat
+					alt_hover.bg_color = Color(0.15, 0.18, 0.3, 0.95)
+					alt_hover.border_color = alternative.display_color
+					alt_btn.add_theme_stylebox_override("hover", alt_hover)
+
+					var cap_target_key := target_key
+					var cap_alternative := alternative
+					var cap_poi2 := poi
+					var cap_planet2 := planet
+					var cap_pm_key := pm_key
+					alt_btn.pressed.connect(func() -> void:
+						entry[cap_target_key] = cap_alternative.resource_id()
+						_open_mineral_switchers[cap_pm_key] = false
+						_build_district_panel(cap_poi2, cap_planet2))
+					
+					alt_btn.mouse_entered.connect(func() -> void:
+						if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER)
+						TooltipManager.show_tip("Switch to:", alternative.unique_name))
+					alt_btn.mouse_exited.connect(func() -> void:
+						CursorManager.set_state(CursorManager.State.NORMAL)
+						TooltipManager.hide_tip())
+
+					tray_h.add_child(alt_btn)
+				
+				vbox.add_child(tray_container)
+			else:
+				vbox.add_child(info_row)
+		else:
+			vbox.add_child(info_row)
+	else:
+		vbox.add_child(info_row)
 
 	# Right: "+" stacking and "−" demolish buttons
 	var slots_free: int  = pp.district_slots(poi.label) - pp.slots_used_in_district(poi.label)
@@ -1840,6 +2077,7 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 
 	var btn_vbox := VBoxContainer.new()
 	btn_vbox.add_theme_constant_override("separation", 2)
+	btn_vbox.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 
 	var add_btn := Button.new()
 	add_btn.text     = "＋"
@@ -1848,8 +2086,8 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 	_apply_orbitron(add_btn, 10)
 	add_btn.custom_minimum_size = Vector2(30, 22)
 	var add_s := StyleBoxFlat.new()
-	add_s.bg_color    = Color(0.12, 0.30, 0.15, 0.80) if can_add else Color(0.10, 0.10, 0.16, 0.60)
-	add_s.border_color = Color(0.35, 0.75, 0.40, 0.65) if can_add else Color(0.22, 0.25, 0.38, 0.40)
+	add_s.bg_color    = Color(0.12, 0.30, 0.15, 1.0) if can_add else Color(0.10, 0.10, 0.16, 1.0)
+	add_s.border_color = Color(0.35, 0.75, 0.40, 1.0) if can_add else Color(0.22, 0.25, 0.38, 1.0)
 	add_s.border_width_left = 1; add_s.border_width_right  = 1
 	add_s.border_width_top  = 1; add_s.border_width_bottom = 1
 	add_s.corner_radius_top_left     = 3; add_s.corner_radius_top_right    = 3
@@ -1885,8 +2123,8 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 	_apply_orbitron(rem_btn, 10)
 	rem_btn.custom_minimum_size = Vector2(30, 22)
 	var rem_s := StyleBoxFlat.new()
-	rem_s.bg_color     = Color(0.28, 0.10, 0.10, 0.80)
-	rem_s.border_color  = Color(0.65, 0.28, 0.28, 0.60)
+	rem_s.bg_color     = Color(0.28, 0.10, 0.10, 1.0)
+	rem_s.border_color  = Color(0.65, 0.28, 0.28, 1.0)
 	rem_s.border_width_left = 1; rem_s.border_width_right  = 1
 	rem_s.border_width_top  = 1; rem_s.border_width_bottom = 1
 	rem_s.corner_radius_top_left     = 3; rem_s.corner_radius_top_right    = 3
@@ -1923,7 +2161,13 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 			if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
 				ProductionManager.toggle_user_pause(cap_toggle_key))
 
-	_bar_meta[pm_key] = { "fill": fill_ctrl, "prog": prog_ref }
+	_bar_meta[pm_key] = {
+		"fill": fill_ctrl,
+		"prog": prog_ref,
+		"out_lbl": out_lbl,
+		"def": def,
+		"fc": fc
+	}
 	return card
 
 ## Empty slot card — shows "+" and opens a build dropdown on click.
@@ -2027,6 +2271,11 @@ func _toggle_slot_dropdown(card: PanelContainer, poi: POIData, planet: PlanetDat
 		sub_parts.append("%.0f cr" % def.base_cost)
 		sub_parts.append("%d slot%s" % [def.slot_cost, "s" if def.slot_cost > 1 else ""])
 		sub_parts.append("%.0fs" % def.tick_duration)
+		if def.energy_per_tick != 0.0:
+			sub_parts.append("%.0f ⚡" % def.energy_per_tick)
+		if def.input_amount > 0.0:
+			var in_name := "ore" if def.input_type == BuildingDef.OutputType.RAW_MINERAL else "input"
+			sub_parts.append("-%.0f %s" % [def.input_amount, in_name])
 		if def.output_label() != "":
 			sub_parts.append(def.output_label())
 		var c_lbl := Label.new()
@@ -2047,11 +2296,25 @@ func _toggle_slot_dropdown(card: PanelContainer, poi: POIData, planet: PlanetDat
 		var cap_norm   := norm_s
 		var cap_hov    := hov_s
 		var tip_title  := def.display_name
-		var tip_body   := "%s\n\nCost: %.0f cr · %d slot%s · %.0fs build time%s" % [
+		
+		# Generate detailed info for tooltip
+		var info_parts: Array[String] = []
+		info_parts.append("Cost: %.0f cr" % def.base_cost)
+		info_parts.append("Slots: %d" % def.slot_cost)
+		info_parts.append("Time: %.0fs" % def.tick_duration)
+		if def.energy_per_tick != 0.0:
+			var sign_str := "+" if def.energy_per_tick > 0 else ""
+			info_parts.append("Energy: %s%.0f ⚡" % [sign_str, def.energy_per_tick])
+		if def.input_amount > 0.0:
+			var in_name := "Raw Mineral" if def.input_type == BuildingDef.OutputType.RAW_MINERAL else "Input"
+			info_parts.append("Consumes: %.0f %s / cycle" % [def.input_amount, in_name])
+		if def.output_label() != "":
+			info_parts.append("Produces: %s / cycle" % def.output_label())
+
+		var tip_body   := "%s\n\n%s%s" % [
 			def.description,
-			def.base_cost, def.slot_cost, "s" if def.slot_cost > 1 else "",
-			def.tick_duration,
-			("\n\n[b]" + reason + "[/b]") if reason != "" else ""]
+			" · ".join(info_parts),
+			("\n\n➡ " + reason) if reason != "" else ""]
 
 		row_panel.mouse_entered.connect(func() -> void:
 			cap_row.add_theme_stylebox_override("panel", cap_hov)

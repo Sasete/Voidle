@@ -7,132 +7,163 @@ enum Tag {
 	REFINED_MINERAL,  # comes from Refinery
 	ENERGY,           # comes from Generator
 	CREDITS,          # comes from City (virtual — tracked separately in GameState)
-	GAS,              # future: harvested from gas giants
-	FOOD,             # future: grown on terran/ice planets
-	EXOTIC,           # future: rare drops, anomalies
+	GAS,              # harvested from gas giants
+	FOOD,             # grown on terran/ice planets
+	EXOTIC,           # rare drops, anomalies
 }
 
 static var TAG_NAMES: Array[String] = [
 	"Raw Mineral", "Refined Mineral", "Energy", "Credits", "Gas", "Food", "Exotic"
 ]
 
-# ── Identity ─────────────────────────────────────────────────────────────────
-@export var unique_name: String = ""   # e.g. "Veltrium Ore", "Ash Crystite"
-@export var tag:         Tag    = Tag.RAW_MINERAL
-@export var tier:        int    = 1    # 1 = basic, 15+ = endgame
+## Fixed suffixes per processing tier.
+const TIER_SUFFIXES: Array[String] = ["Ore", "Ingot", "Alloy", "Component", "Core"]
+
+# ── Identity ──────────────────────────────────────────────────────────────────
+## The mineral's base name — derived from rarity, consistent across all bodies.
+## e.g. "Veltrium"
+@export var mineral_name: String = ""
+
+## Full display name including tier suffix. e.g. "Veltrium Ore", "Veltrium Ingot"
+@export var unique_name:  String = ""
+
+@export var tag:    Tag = Tag.RAW_MINERAL
+
+## Rarity: how rare/deep this mineral is. Higher = found only in asteroid belts,
+## far systems, etc. Consistent universe-wide (R1 is always the same mineral).
+@export var rarity: int = 1
+
+## Tier: processing level. T1 = raw ore, T2 = ingot, T3 = alloy, etc.
+## Increases when the mineral is processed in a Refinery district.
+@export var tier:   int = 1
 
 # ── Economy ───────────────────────────────────────────────────────────────────
-## Credit value per unit — scales exponentially with tier.
+## Effective power of this resource: sqrt(rarity) + sqrt(tier).
+## Used for building inputs, value calculations, and district unlocks.
+@export var power: float = 2.0
+
+## Credit value per unit — derived from power × tag multiplier.
 @export var base_value: float = 1.0
 
-## How much of this resource fits in one ship cargo slot.
+## How much fits in one cargo slot.
 @export var stack_size: float = 100.0
 
 # ── Visuals ───────────────────────────────────────────────────────────────────
-## Tint used in UI icons — derived from tier + tag on generation.
+## Tint used in UI icons — hue from rarity, brightness from tier.
 @export var display_color: Color = Color.WHITE
 
 # ── Source ───────────────────────────────────────────────────────────────────
-## Seed of the body where this resource was first found.
+## Seed of the body where this deposit was first found (used for generation only).
 @export var origin_seed: int = 0
 
-# ── Unique identifier (tag + tier + origin) ──────────────────────────────────
+# ── Unique identifier ─────────────────────────────────────────────────────────
+## Stable key for stored_resources dict: tag + rarity + tier.
+## Origin-independent — same R/T mineral is the same resource regardless of body.
 func resource_id() -> String:
-	return "%s_%d_%d" % [Tag.keys()[tag], tier, origin_seed]
+	return "R%d_T%d_%s" % [rarity, tier, Tag.keys()[tag]]
 
-# ════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
 #  Procedural generation
-# ════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
 
-## Syllable pools for name generation — split by "feel"
+## Syllable pools for mineral name generation
 const _PREFIXES: Array[String] = [
-	"Vel", "Ash", "Crys", "Thal", "Myr", "Ore", "Keth", "Sol",
+	"Vel", "Ash", "Crys", "Thal", "Myr", "Keth", "Sol",
 	"Vex", "Zyn", "Aur", "Phos", "Neb", "Cal", "Drav", "Stel",
-	"Hyx", "Torn", "Umr", "Bril", "Fen", "Gal", "Ith", "Jor",
+	"Hyx", "Torn", "Umr", "Bril", "Fen", "Gal", "Ith", "Jor", "Ryn",
 ]
 const _MIDDLES: Array[String] = [
 	"it", "el", "ar", "on", "um", "ix", "al", "en",
-	"or", "ur", "an", "ys", "eth", "ite", "ium", "ath",
-	"os", "ae", "ri", "lo", "na", "er", "is", "ul",
-]
-const _SUFFIXES_RAW: Array[String] = [
-	"Ore", "Stone", "Dust", "Shard", "Vein", "Rock", "Cluster", "Deposit",
-]
-const _SUFFIXES_REFINED: Array[String] = [
-	"Crystal", "Ingot", "Compound", "Alloy", "Extract", "Plate", "Bar", "Pellet",
+	"or", "ur", "an", "ys", "eth", "ium", "ath",
+	"os", "ri", "lo", "na", "er", "is", "ul", "yn",
 ]
 
-## Generate a ResourceData for a given body seed, tag, and tier.
-static func generate(body_seed: int, res_tag: Tag, res_tier: int) -> ResourceData:
-	var rng := RandomNumberGenerator.new()
-	rng.seed = body_seed ^ (res_tag * 0x1F3A + res_tier * 0x4B71)
+## Generate a ResourceData for a given rarity and tier.
+## Mineral name is seeded by rarity only — consistent across all bodies.
+static func generate(body_seed: int, res_tag: Tag, res_rarity: int, res_tier: int = 1) -> ResourceData:
+	# Name seed: rarity + tag only, so R1 RAW_MINERAL is always the same name everywhere
+	var name_rng := RandomNumberGenerator.new()
+	name_rng.seed = res_rarity * 0x7919 + res_tag * 0x1F3A
 
-	var rd           := ResourceData.new()
-	rd.tag           = res_tag
-	rd.tier          = res_tier
-	rd.origin_seed   = body_seed
-	rd.base_value    = _calc_base_value(res_tag, res_tier)
-	rd.stack_size    = _calc_stack_size(res_tag, res_tier)
-	rd.display_color = _tier_color(res_tag, res_tier)
-	rd.unique_name   = _gen_name(rng, res_tag, res_tier)
+	var rd            := ResourceData.new()
+	rd.tag            = res_tag
+	rd.rarity         = res_rarity
+	rd.tier           = res_tier
+	rd.origin_seed    = body_seed
+	rd.mineral_name   = _gen_mineral_name(name_rng, res_rarity)
+	rd.unique_name    = rd.mineral_name + " " + _tier_suffix(res_tier)
+	rd.power          = _calc_power(res_rarity, res_tier)
+	rd.base_value     = _calc_base_value(res_tag, res_rarity, res_tier)
+	rd.stack_size     = _calc_stack_size(res_rarity, res_tier)
+	rd.display_color  = _resource_color(res_tag, res_rarity, res_tier)
 	return rd
 
-static func _gen_name(rng: RandomNumberGenerator, res_tag: Tag, res_tier: int) -> String:
+## Create a processed (higher-tier) version of this resource.
+func processed() -> ResourceData:
+	return ResourceData.generate(origin_seed, tag, rarity, tier + 1)
+
+static func _tier_suffix(t: int) -> String:
+	const SUFFIXES: Array[String] = ["Ore", "Ingot", "Alloy", "Component", "Core"]
+	return SUFFIXES[clampi(t - 1, 0, SUFFIXES.size() - 1)]
+
+static func _gen_mineral_name(rng: RandomNumberGenerator, res_rarity: int) -> String:
 	var prefix: String = _PREFIXES[rng.randi() % _PREFIXES.size()]
-	var middle: String = _MIDDLES[rng.randi()  % _MIDDLES.size()]
-	var base: String   = prefix + middle
+	var middle: String = _MIDDLES[rng.randi() % _MIDDLES.size()]
+	# High rarity minerals get an extra qualifier prefix
+	var qualifier := ""
+	if res_rarity >= 12:
+		qualifier = ["Void", "Abyss", "Null", "Prime"][rng.randi() % 4] + " "
+	elif res_rarity >= 7:
+		qualifier = ["Deep", "Dark", "High", "Core"][rng.randi() % 4] + " "
+	return qualifier + prefix + middle
 
-	# tier suffix: higher tiers get "Prime", "Void", "Core" etc.
-	var tier_qualifier: String = ""
-	if res_tier >= 10:
-		tier_qualifier = ["Void ", "Abyss ", "Core ", "Null "][rng.randi() % 4]
-	elif res_tier >= 5:
-		tier_qualifier = ["Prime ", "Deep ", "Dark ", "High "][rng.randi() % 4]
+static func _calc_power(res_rarity: int, res_tier: int) -> float:
+	return sqrt(float(res_rarity)) + sqrt(float(res_tier))
 
+static func _calc_base_value(res_tag: Tag, res_rarity: int, res_tier: int) -> float:
+	var p := _calc_power(res_rarity, res_tier)
 	match res_tag:
-		Tag.RAW_MINERAL:
-			var suf := _SUFFIXES_RAW[rng.randi() % _SUFFIXES_RAW.size()]
-			return tier_qualifier + base + " " + suf
-		Tag.REFINED_MINERAL:
-			var suf := _SUFFIXES_REFINED[rng.randi() % _SUFFIXES_REFINED.size()]
-			return tier_qualifier + base + " " + suf
-		Tag.ENERGY:
-			return "Energy"
-		Tag.GAS:
-			return base + " Gas"
-		Tag.FOOD:
-			return base + " Yield"
-		Tag.EXOTIC:
-			return tier_qualifier + base + " Fragment"
-		_:
-			return base
+		Tag.RAW_MINERAL:     return 1.0  * p
+		Tag.REFINED_MINERAL: return 3.5  * p
+		Tag.ENERGY:          return 8.0  * p
+		Tag.GAS:             return 2.0  * p
+		Tag.FOOD:            return 1.5  * p
+		Tag.EXOTIC:          return 25.0 * p
+		_:                   return 1.0  * p
 
-static func _calc_base_value(res_tag: Tag, res_tier: int) -> float:
-	var tier_mult: float = pow(1.6, res_tier - 1)   # exponential: T1=1, T5≈6.6, T10≈68, T15≈700
+static func _calc_stack_size(_res_rarity: int, res_tier: int) -> float:
+	return maxf(20.0, 100.0 - (res_tier - 1) * 15.0)
+
+## Color: hue from rarity (gray-blue → green → purple → gold),
+##        brightness from tier (dark raw → vivid processed).
+static func _resource_color(res_tag: Tag, res_rarity: int, res_tier: int) -> Color:
 	match res_tag:
-		Tag.RAW_MINERAL:     return 1.0  * tier_mult
-		Tag.REFINED_MINERAL: return 3.5  * tier_mult
-		Tag.ENERGY:          return 8.0  * tier_mult
-		Tag.GAS:             return 2.0  * tier_mult
-		Tag.FOOD:            return 1.5  * tier_mult
-		Tag.EXOTIC:          return 25.0 * tier_mult
-		_:                   return 1.0  * tier_mult
+		Tag.ENERGY: return Color(1.0, 0.85, 0.2)
+		Tag.GAS:    return Color(0.4, 0.8, 1.0)
+		Tag.FOOD:   return Color(0.4, 0.9, 0.3)
+		Tag.EXOTIC: return Color(0.9, 0.4, 1.0)
 
-static func _calc_stack_size(_res_tag: Tag, res_tier: int) -> float:
-	# Higher tier = denser/rarer, smaller stack
-	return maxf(20.0, 100.0 - (res_tier - 1) * 6.0)
+	var r: float = clamp(float(res_rarity - 1) / 14.0, 0.0, 1.0)
 
-## HSV colour ramp: T1=grey-blue → T5=green → T10=purple → T15=gold
-static func _tier_color(res_tag: Tag, res_tier: int) -> Color:
-	var t: float = clamp(float(res_tier - 1) / 14.0, 0.0, 1.0)
+	# Hue arc: R1=blue-gray(0.60) → R5=teal(0.48) → R8=green(0.35)
+	#          → R11=purple(0.78) → R15=gold(0.12)
 	var hue: float
-	match res_tag:
-		Tag.ENERGY:          return Color(1.0, 0.85, 0.2)
-		Tag.GAS:             return Color(0.4, 0.8, 1.0)
-		Tag.FOOD:            return Color(0.4, 0.9, 0.3)
-		Tag.EXOTIC:          return Color(0.9, 0.4, 1.0)
-		Tag.REFINED_MINERAL: hue = lerp(0.55, 0.78, t)   # cyan → violet
-		_:                   hue = lerp(0.58, 0.12, t)   # blue-grey → gold
-	var sat: float = lerp(0.25, 0.85, t)
-	var val: float = lerp(0.70, 1.00, t)
+	if r < 0.33:
+		hue = lerp(0.60, 0.35, r / 0.33)
+	elif r < 0.66:
+		hue = lerp(0.35, 0.78, (r - 0.33) / 0.33)
+	else:
+		hue = lerp(0.78, 0.12, (r - 0.66) / 0.34)
+
+	# Saturation: always visible — even R1 has strong color
+	var sat: float = lerp(0.60, 0.92, r)
+
+	# Brightness: tier 1 = darker raw ore, tier 5 = bright processed material
+	var t: float   = clamp(float(res_tier - 1) / 4.0, 0.0, 1.0)
+	var val: float = lerp(0.55, 1.00, t)
+
+	# REFINED_MINERAL gets a slight hue shift to distinguish from raw
+	if res_tag == Tag.REFINED_MINERAL:
+		hue = fmod(hue + 0.08, 1.0)
+
 	return Color.from_hsv(hue, sat, val)

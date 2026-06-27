@@ -44,7 +44,8 @@ func _ready() -> void:
 
 	_body_lbl = Label.new()
 	_body_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	if _orbitron: _body_lbl.add_theme_font_override("font", _orbitron)
+	# Do NOT apply Orbitron font to the body label, as it lacks gliphs for unicode symbols (like ⚡)
+	# which causes baseline offset misalignment / emoji clipping.
 	_body_lbl.add_theme_font_size_override("font_size", 8)
 	_body_lbl.add_theme_color_override("font_color", Color(0.72, 0.78, 0.92))
 	_body_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD

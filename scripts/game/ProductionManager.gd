@@ -204,15 +204,10 @@ func _deposit_speed(def: BuildingDef, planet_seed: int,
 		mods: Array[PlanetModifier]) -> float:
 	if def.output_type != BuildingDef.OutputType.RAW_MINERAL:
 		return 1.0
-	var br := GameState.get_body_resources(planet_seed, 1, 3)
-	var avg_tier: float = 1.0
-	var arr := br.as_array()
-	if not arr.is_empty():
-		var sum: float = 0.0
-		for rd: ResourceData in arr:
-			sum += float(rd.tier)
-		avg_tier = sum / float(arr.size())
-	var base: float = clampf(avg_tier * 0.5, 0.5, 3.0)
+	var pd := GameState.get_planet_data(planet_seed)
+	var br := GameState.get_body_resources_for(pd) if pd != null \
+		else GameState.get_body_resources(planet_seed)
+	var base: float = clampf(br.avg_power() * 0.4, 0.5, 3.0)
 	var planet_mult: float = PlanetModifier.combined(mods, PlanetModifier.Effect.MINE_SPEED_MULT)
 	return base * planet_mult
 
@@ -236,17 +231,21 @@ func _resource_key(out_type: BuildingDef.OutputType, planet_seed: int,
 		entry: Dictionary = {}) -> String:
 	match out_type:
 		BuildingDef.OutputType.RAW_MINERAL:
-			# Use the specific mineral this mine is targeting (if assigned)
-			var tgt: String = entry.get("target_mineral", "")
+			# If this is an input checking situation, check input_mineral first, else target_mineral
+			var tgt: String = entry.get("input_mineral", "")
+			if tgt == "":
+				tgt = entry.get("target_mineral", "")
 			if tgt != "":
 				return tgt
 			# Auto-assign: pick the first raw mineral on this planet and persist it
-			var br := GameState.get_body_resources(planet_seed, 1, 3)
+			var _pd := GameState.get_planet_data(planet_seed)
+			var br := GameState.get_body_resources_for(_pd) if _pd != null \
+				else GameState.get_body_resources(planet_seed)
 			var raw := br.get_by_tag(ResourceData.Tag.RAW_MINERAL)
 			if not raw.is_empty():
 				var rid: String = (raw[0] as ResourceData).resource_id()
 				if not entry.is_empty():
-					entry["target_mineral"] = rid   # persist for next tick
+					entry["target_mineral"] = rid   # persist default for outputs
 				return rid
 			return "raw_%d" % planet_seed   # last-resort generic fallback
 		BuildingDef.OutputType.REFINED_MINERAL:

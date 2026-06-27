@@ -36,6 +36,9 @@ static func get_shader_path(type: Type) -> String:
 @export var specular_strength: float = 1.0    # 0=no ocean glint (barren/arid)
 @export var city_lights: float = 0.6          # night side glow
 @export var irregularity: float = 0.3
+## Deposit richness: multiplier on mine output and speed (0.5 = sparse, 2.0 = very rich).
+@export var deposit_density: float = 1.0
+
 @export var custom_pois: Array[POIData] = []
 @export var moons: Array[PlanetData] = []
 ## Longitude offset (radians) that anchors this planet's "local time".
@@ -210,6 +213,18 @@ static func _apply_type_defaults(data: PlanetData, rng: RandomNumberGenerator) -
 				data.ring_outer = rng.randf_range(1.75, 2.20)
 				var hue := rng.randf_range(0.07, 0.14)   # warm tan/gold
 				data.ring_color = Color.from_hsv(hue, rng.randf_range(0.15, 0.45), rng.randf_range(0.65, 0.90), rng.randf_range(0.50, 0.72))
+
+	# Deposit density: how rich mineral deposits are on this body.
+	# Range varies by type — asteroids are small but dense, terrans are moderate.
+	match data.planet_type:
+		Type.ASTEROID: data.deposit_density = rng.randf_range(1.2, 2.0)
+		Type.MOON:     data.deposit_density = rng.randf_range(0.8, 1.4)
+		Type.VOLCANIC: data.deposit_density = rng.randf_range(1.0, 1.8)
+		Type.BARREN:   data.deposit_density = rng.randf_range(0.6, 1.2)
+		Type.TERRAN:   data.deposit_density = rng.randf_range(0.7, 1.2)
+		Type.ARID:     data.deposit_density = rng.randf_range(0.7, 1.3)
+		Type.ICE:      data.deposit_density = rng.randf_range(0.5, 1.0)
+		_:             data.deposit_density = 1.0
 
 	# Each planet gets a unique "local noon" position so that when you first
 	# arrive, the lit side faces you at a variety of angles — and the terminator

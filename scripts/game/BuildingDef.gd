@@ -23,7 +23,7 @@ func output_color() -> Color:
 	match output_type:
 		OutputType.ENERGY:         return Color(0.95, 0.88, 0.25)
 		OutputType.CREDITS:        return Color(0.35, 0.95, 0.55)
-		OutputType.RAW_MINERAL:    return Color(0.45, 0.70, 1.00)
+		OutputType.RAW_MINERAL:    return Color(0.15, 0.75, 0.50) # Cyan-emerald green for raw mining
 		OutputType.REFINED_MINERAL:return Color(0.75, 0.55, 1.00)
 	return Color(0.5, 0.5, 0.5)
 
