@@ -66,12 +66,13 @@ func _tick_all(delta: float) -> void:
 
 		var mods := PlanetModifier.for_planet(_planet_type(planet_seed))
 
-		for entry: Dictionary in pp.buildings:
+		# Iterate with explicit index so identical-content entries get unique keys
+		for i in pp.buildings.size():
+			var entry: Dictionary = pp.buildings[i]
 			var poi_label: String  = entry.get("district_id", "")
 			var bid: String        = entry.get("building_id", "")
 			var amount: int        = entry.get("amount", 1)
-			var idx: int           = _entry_index(pp, entry)
-			var key: String        = _key(planet_seed, poi_label, idx)
+			var key: String        = _key(planet_seed, poi_label, i)
 			var def := BuildingDef.find(bid)
 			if def == null or def.tick_duration <= 0.0:
 				continue
@@ -94,7 +95,19 @@ func _tick_all(delta: float) -> void:
 			if _user_paused.get(key, false):
 				continue
 
-			# Energy: consumers are throttled by energy_ratio; no hard pause
+			# ── Auto-paused (waiting for resource): check if resource available ──
+			# If the building was paused due to missing input resource, keep waiting
+			# until the resource arrives. Energy-paused buildings fall through to
+			# the energy_ratio check below.
+			if _paused.get(key, false) and def.input_type != BuildingDef.OutputType.NONE:
+				var rid2 := _resource_key(def.input_type, pp.planet_seed)
+				if pp.stored_resources.get(rid2, 0.0) < def.input_amount * amount:
+					_emit_progress(planet_seed, key)
+					continue   # still not enough resource
+				# Resource arrived — clear pause and let bar fill
+				_paused[key] = false
+
+			# ── Energy throttle ───────────────────────────────────────────────
 			var needs_energy: bool = def.energy_per_tick < 0.0
 			var energy_speed: float = 1.0
 			if needs_energy:
@@ -104,28 +117,29 @@ func _tick_all(delta: float) -> void:
 					continue
 				energy_speed = energy_ratio  # slow to match available energy
 
-			# Check & consume input resources at START of cycle
-			var prev: float = _progress.get(key, 0.0)
-			if def.input_type != BuildingDef.OutputType.NONE and prev == 0.0:
-				var rid := _resource_key(def.input_type, pp.planet_seed)
-				var have: float = pp.stored_resources.get(rid, 0.0)
-				if have < def.input_amount * amount:
-					_paused[key] = true
-					_emit_progress(planet_seed, key)
-					continue
-				# Energy producers consume fuel at START (also at END via _on_tick_complete)
-				if def.output_type == BuildingDef.OutputType.ENERGY:
-					pp.stored_resources[rid] = maxf(0.0, have - def.input_amount * amount)
-
 			_paused[key] = false
 
-			# Speed — mines also use PlanetModifier mine speed; energy deficit throttles consumers
+			# ── Tick production bar ───────────────────────────────────────────
+			var prev: float = _progress.get(key, 0.0)
 			var speed_mult: float = _deposit_speed(def, planet_seed, mods) * energy_speed
 			var rate: float = delta / (def.tick_duration / speed_mult)
 			var next: float = prev + rate
 
 			if next >= 1.0:
-				_on_tick_complete(pp, def, key, energy_avail, amount)
+				# ── End-of-cycle resource check ───────────────────────────────
+				# Bar is full. Check if the required input resource is available.
+				# If not: pause the building and reset bar to 0 (waiting state).
+				# Resource is consumed here (once) inside _on_tick_complete.
+				if def.input_type != BuildingDef.OutputType.NONE:
+					var rid := _resource_key(def.input_type, pp.planet_seed, entry)
+					if pp.stored_resources.get(rid, 0.0) < def.input_amount * amount:
+						_paused[key] = true
+						_progress[key] = 0.0
+						building_ticked.emit(planet_seed, key)
+						_emit_progress(planet_seed, key)
+						continue   # can't complete — wait for resource next frame
+				# Resource available (or not needed): complete tick
+				_on_tick_complete(pp, def, key, energy_avail, amount, entry)
 				_progress[key] = 0.0
 				building_ticked.emit(planet_seed, key)
 			else:
@@ -134,10 +148,11 @@ func _tick_all(delta: float) -> void:
 			_emit_progress(planet_seed, key)
 
 func _on_tick_complete(pp: PlanetProgress, def: BuildingDef,
-		_key_str: String, _energy: float, amount: int) -> void:
-	# Consume input (scaled by amount)
+		_key_str: String, _energy: float, amount: int,
+		entry: Dictionary) -> void:
+	# Consume input resource (scaled by amount)
 	if def.input_type != BuildingDef.OutputType.NONE:
-		var rid := _resource_key(def.input_type, pp.planet_seed)
+		var rid := _resource_key(def.input_type, pp.planet_seed, entry)
 		pp.stored_resources[rid] = maxf(0.0,
 			pp.stored_resources.get(rid, 0.0) - def.input_amount * amount)
 
@@ -150,24 +165,30 @@ func _on_tick_complete(pp: PlanetProgress, def: BuildingDef,
 			pass   # energy is a flow
 		BuildingDef.OutputType.RAW_MINERAL, BuildingDef.OutputType.REFINED_MINERAL:
 			var mult := PlanetModifier.combined(mods, PlanetModifier.Effect.MINE_OUTPUT_MULT)
-			var rid  := _resource_key(def.output_type, pp.planet_seed)
+			var rid  := _resource_key(def.output_type, pp.planet_seed, entry)
 			pp.add_resource(rid, def.output_amount * amount * mult)
 
 func _planet_energy(pp: PlanetProgress) -> float:
 	if _energy.has(pp.planet_seed):
 		return _energy[pp.planet_seed]
 	var total: float = 0.0
-	for entry: Dictionary in pp.buildings:
+	for i in pp.buildings.size():
+		var entry: Dictionary = pp.buildings[i]
 		if entry.get("constructing", false):
 			continue
 		var def := BuildingDef.find(entry.get("building_id", ""))
 		if def == null:
 			continue
-		var amt: int = entry.get("amount", 1)
-		# Direct energy flow (e.g. heat vents etc. with positive energy_per_tick)
+		var amt: int        = entry.get("amount", 1)
+		var poi_lbl: String = entry.get("district_id", "")
+		var ekey: String    = _key(pp.planet_seed, poi_lbl, i)
+		# Skip paused (waiting for fuel/resource) and user-paused buildings
+		if _paused.get(ekey, false) or _user_paused.get(ekey, false):
+			continue
+		# Direct energy flow (positive energy_per_tick = passive producer)
 		if def.energy_per_tick > 0.0:
 			total += def.energy_per_tick * amt
-		# Energy-output buildings (solar, generators, power plants)
+		# Energy-output buildings (Solar Panel, Generator, Power Plant)
 		if def.output_type == BuildingDef.OutputType.ENERGY:
 			total += def.output_amount * amt
 	_energy[pp.planet_seed] = total
@@ -211,10 +232,25 @@ func _entry_index(pp: PlanetProgress, entry: Dictionary) -> int:
 func _key(planet_seed: int, poi_label: String, idx: int) -> String:
 	return "%d:%s:%d" % [planet_seed, poi_label, idx]
 
-func _resource_key(out_type: BuildingDef.OutputType, planet_seed: int) -> String:
+func _resource_key(out_type: BuildingDef.OutputType, planet_seed: int,
+		entry: Dictionary = {}) -> String:
 	match out_type:
-		BuildingDef.OutputType.RAW_MINERAL:    return "raw_%d" % planet_seed
-		BuildingDef.OutputType.REFINED_MINERAL: return "ref_%d" % planet_seed
+		BuildingDef.OutputType.RAW_MINERAL:
+			# Use the specific mineral this mine is targeting (if assigned)
+			var tgt: String = entry.get("target_mineral", "")
+			if tgt != "":
+				return tgt
+			# Auto-assign: pick the first raw mineral on this planet and persist it
+			var br := GameState.get_body_resources(planet_seed, 1, 3)
+			var raw := br.get_by_tag(ResourceData.Tag.RAW_MINERAL)
+			if not raw.is_empty():
+				var rid: String = (raw[0] as ResourceData).resource_id()
+				if not entry.is_empty():
+					entry["target_mineral"] = rid   # persist for next tick
+				return rid
+			return "raw_%d" % planet_seed   # last-resort generic fallback
+		BuildingDef.OutputType.REFINED_MINERAL:
+			return "ref_%d" % planet_seed
 	return ""
 
 func _emit_progress(planet_seed: int, key: String) -> void:

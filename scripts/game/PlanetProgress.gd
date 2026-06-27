@@ -69,13 +69,19 @@ func slots_used_in_district(district_label: String) -> int:
 			total += def.slot_cost * b.get("amount", 1)
 	return total
 
-func build_in_district(district: POIData, building_id: String) -> bool:
+func build_in_district(district: POIData, building_id: String,
+		target_mineral: String = "") -> bool:
 	var def := BuildingDef.find(building_id)
 	if def == null:
 		return false
 	if slots_used_in_district(district.label) + def.slot_cost > district_slots(district.label):
 		return false
-	buildings.append({ "district_id": district.label, "building_id": building_id, "amount": 1, "constructing": true })
+	var entry := { "district_id": district.label, "building_id": building_id, "amount": 1, "constructing": true }
+	# Mines target a specific raw mineral — caller may supply one, otherwise left blank
+	# (ProductionManager will auto-pick the first available mineral on first tick)
+	if def.output_type == BuildingDef.OutputType.RAW_MINERAL and target_mineral != "":
+		entry["target_mineral"] = target_mineral
+	buildings.append(entry)
 	if building_id == "spaceport":
 		has_spaceport = true
 	return true
@@ -89,6 +95,15 @@ func stack_building_unchecked(district_label: String, building_id: String) -> bo
 
 func add_resource(resource_id: String, amount: float) -> void:
 	stored_resources[resource_id] = stored_resources.get(resource_id, 0.0) + amount
+
+## Returns the true array index of an entry using reference equality.
+## Avoids the value-equality bug with pp.buildings.find(entry) when two
+## entries have identical content (e.g. two Solar Panels in the same district).
+func building_real_index(entry: Dictionary) -> int:
+	for i in buildings.size():
+		if is_same(buildings[i], entry):
+			return i
+	return -1
 
 func consume_resource(resource_id: String, amount: float) -> bool:
 	var have: float = stored_resources.get(resource_id, 0.0)

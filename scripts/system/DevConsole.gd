@@ -166,6 +166,11 @@ func _exec(line: String) -> void:
 [color=#55cc77]COLONY[/color]
   colonize                       — colonize current home planet
 
+[color=#55cc77]ASTEROID[/color]
+  scan asteroid                  — discover 1 undiscovered asteroid belt
+  scan asteroid all              — discover all asteroid belts in home system
+  asteroids                      — list asteroid belt slots & discovery status
+
 [color=#55cc77]DEBUG[/color]
   state                          — print current game state summary
   clear                          — clear console log""")
@@ -260,6 +265,57 @@ func _exec(line: String) -> void:
 			pp.is_colonized = true
 			GameState.planet_progress_changed.emit(seed)
 			_log_ok("Planet (seed %d) colonized." % seed)
+
+		# ── Asteroid ────────────────────────────────────────────────────────
+		"scan":
+			var target := parts[1].to_lower() if parts.size() > 1 else ""
+			if target != "asteroid":
+				_log_err("Unknown scan target: '%s'. Try: scan asteroid" % target)
+				return
+			var sd := GameState.get_home_solar()
+			if sd.asteroid_belt_slots.is_empty():
+				_log_err("No asteroid belts in the home system.")
+				return
+			var sub := parts[2].to_lower() if parts.size() >= 3 else ""
+			if sub == "all":
+				var total_added := 0
+				for s in sd.asteroid_belt_slots:
+					var cur: int = GameState.asteroid_scan_counts.get(s, 0)
+					for _i in 3 - cur:
+						GameState.discover_asteroid(s)
+						total_added += 1
+				if total_added == 0:
+					_log_info("All asteroids already fully scanned.")
+				else:
+					_log_ok("Revealed %d asteroid(s) across %d belt(s)." % [total_added, sd.asteroid_belt_slots.size()])
+			else:
+				# find first slot that isn't fully scanned (count < 3)
+				var target_slot := -1
+				for s in sd.asteroid_belt_slots:
+					if GameState.asteroid_scan_counts.get(s, 0) < 3:
+						target_slot = s
+						break
+				if target_slot < 0:
+					_log_info("All asteroids already fully scanned. Use [b]scan asteroid all[/b] to reset.")
+					return
+				GameState.discover_asteroid(target_slot)
+				var new_count: int = GameState.asteroid_scan_counts.get(target_slot, 0)
+				_log_ok("Asteroid scanned in belt slot %d — %d/3 revealed." % [target_slot, new_count])
+
+		"asteroids":
+			var sd := GameState.get_home_solar()
+			if sd.asteroid_belt_slots.is_empty():
+				_log_info("No asteroid belts in the home system.")
+				return
+			var lines := "[color=#aabbff]Asteroid Belts — Home System[/color]\n"
+			for s in sd.asteroid_belt_slots:
+				var cnt: int = GameState.asteroid_scan_counts.get(s, 0)
+				var status: String
+				if   cnt == 0: status = "[color=#ee5555]undiscovered[/color]"
+				elif cnt < 3:  status = "[color=#ffcc55]%d/3 scanned[/color]" % cnt
+				else:          status = "[color=#88ddaa]fully scanned (3/3)[/color]"
+				lines += "  Slot %d — %s\n" % [s, status]
+			_log_info(lines)
 
 		# ── State ───────────────────────────────────────────────────────────
 		"state":

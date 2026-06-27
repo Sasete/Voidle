@@ -23,6 +23,7 @@ var _pivot:        Node2D
 var _orbit_lines:  OrbitLines
 var _orbits:       Array[PlanetOrbitNode] = []
 var _belts:        Array[AsteroidBelt]    = []
+var _belt_configs: Array[Dictionary]     = []   # {slot, rx, seed} per belt
 
 var _view_angle:      float     = 0.0
 var _orbit_tilt:      float     = 0.38
@@ -60,6 +61,7 @@ func _ready() -> void:
 	# back button removed — right-click navigates back
 	get_tree().root.size_changed.connect(_on_resize)
 	planet_selected.connect(_on_planet_selected)
+	GameState.asteroid_discovered.connect(_on_asteroid_discovered)
 
 	# wait one frame so Control sizes are computed
 	await get_tree().process_frame
@@ -144,6 +146,7 @@ func _clear() -> void:
 		_pivot = null
 	_orbit_lines = null
 	_belts.clear()
+	_belt_configs.clear()
 	for child in _planet_list.get_children():
 		child.queue_free()
 
@@ -292,13 +295,28 @@ func _build_planets(data: SolarData) -> void:
 		var inner:   float = orbit_radii_arr[slot]
 		var outer:   float = orbit_radii_arr[slot + 1]
 		var belt_rx: float = (inner + outer) * 0.5
+		var belt_seed: int = data.seed ^ (slot * 0x1337)
 		var belt := AsteroidBelt.new()
 		_pivot.add_child(belt)
-		var ast_count: int = 3 if GameState.discovered_asteroids.has(slot) else 0
-		belt.setup(belt_rx, data.seed ^ (slot * 0x1337), ast_count)
+		var ast_count: int = GameState.asteroid_scan_counts.get(slot, 0)
+		belt.setup(belt_rx, belt_seed, ast_count)
 		_belts.append(belt)
+		_belt_configs.append({"slot": slot, "rx": belt_rx, "seed": belt_seed})
 
 	_max_orbit_px = orbit_radii_arr.back() if orbit_radii_arr.size() > 0 else 200.0
+
+func _on_asteroid_discovered(slot: int, count: int) -> void:
+	for i in _belt_configs.size():
+		if _belt_configs[i]["slot"] == slot:
+			_belts[i].queue_free()
+			var cfg := _belt_configs[i]
+			var belt := AsteroidBelt.new()
+			_pivot.add_child(belt)
+			belt.setup(cfg["rx"], cfg["seed"], count)
+			belt.set_view_angle(_view_angle)
+			belt.set_tilt(ORBIT_Y_RATIO)
+			_belts[i] = belt
+			return
 
 func _update_panel(data: SolarData) -> void:
 	_system_name.text = data.system_name

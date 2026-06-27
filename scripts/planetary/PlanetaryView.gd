@@ -26,6 +26,8 @@ const LIGHT_SPEED: float = 0.04   # radians per second
 ## Tracks which district POI is currently shown in the district panel.
 ## Used by _on_building_constructed to refresh panel without DOM traversal.
 var _active_district_poi: POIData = null
+## Toast log container — created lazily, anchored bottom-left.
+var _toast_container: VBoxContainer = null
 
 func _make_system(root: PlanetData) -> Array[PlanetData]:
 	var arr: Array[PlanetData] = [root]
@@ -673,7 +675,7 @@ func _district_night_size(data: PlanetData, district_label: String) -> int:
 		var b: Dictionary = entries[i]
 		if b.get("constructing", false):
 			continue
-		var global_idx: int = pp.buildings.find(b)
+		var global_idx: int = pp.building_real_index(b)
 		var pm_key: String  = "%d:%s:%d" % [data.seed, district_label, global_idx]
 		if ProductionManager.is_user_paused(pm_key):
 			continue
@@ -689,9 +691,10 @@ func _update_poi_night_sizes(data: PlanetData) -> void:
 func _planet_energy_breakdown(pp: PlanetProgress, data: PlanetData) -> Dictionary:
 	var total: float = 0.0
 	var by_district: Dictionary = {}  # label -> float
-	for b: Dictionary in pp.buildings:
+	for i in pp.buildings.size():
+		var b: Dictionary = pp.buildings[i]
 		if b.get("constructing", false) or ProductionManager.is_user_paused(
-				"%d:%s:%d" % [pp.planet_seed, b.get("district_id",""), pp.buildings.find(b)]):
+				"%d:%s:%d" % [pp.planet_seed, b.get("district_id",""), i]):
 			continue
 		var def := BuildingDef.find(b.get("building_id", ""))
 		if def == null:
@@ -1053,6 +1056,7 @@ func _build_planet_overview(data: PlanetData) -> void:
 		_bar_meta.clear()
 		_active_slot_dropdown = null
 	poi_layer.deselect_all()
+	_active_district_poi = null   # overview shown — don’t auto-reopen on construction
 
 	var pp := GameState.get_planet(data.seed)
 	if not pp.is_colonized:
@@ -1410,13 +1414,122 @@ func _on_building_toggled(key: String, _paused: bool) -> void:
 	if is_instance_valid(fc):
 		fc.queue_redraw()
 
-func _on_building_constructed(planet_seed: int, _key: String) -> void:
-	# Refresh the district panel to swap construction bar → production bar
+func _on_building_constructed(planet_seed: int, key: String) -> void:
 	if current_data == null or current_data.seed != planet_seed:
 		return
+
+	# Parse key format: "{seed}:{poi_label}:{idx}"
+	var last_col  := key.rfind(":")
+	var first_col := key.find(":")
+	var building_name := ""
+	var poi_label     := ""
+	if last_col > first_col and first_col >= 0:
+		var idx       := key.substr(last_col + 1).to_int()
+		poi_label      = key.substr(first_col + 1, last_col - first_col - 1)
+		var pp := GameState.get_planet(planet_seed)
+		if pp != null and idx >= 0 and idx < pp.buildings.size():
+			var entry := pp.buildings[idx]
+			var def   := BuildingDef.find(entry.get("building_id", ""))
+			if def != null:
+				building_name = def.display_name
+
+	# Always show a toast — never auto-select / reopen the district.
+	_show_construction_toast(
+		building_name if building_name != "" else "Building",
+		poi_label)
+
+	# Refresh panel only if the player is actively viewing that specific district.
 	if _active_district_poi == null:
 		return
+	if poi_label != "" and _active_district_poi.label != poi_label:
+		return   # completed in a different district — don’t switch view
 	_build_district_panel(_active_district_poi, current_data)
+
+# ── Toast / build-log notification ───────────────────────────────────────────
+
+func _get_toast_container() -> VBoxContainer:
+	if _toast_container != null and is_instance_valid(_toast_container):
+		return _toast_container
+	var tc := VBoxContainer.new()
+	tc.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	tc.grow_vertical   = Control.GROW_DIRECTION_BEGIN   # stack upward
+	tc.grow_horizontal = Control.GROW_DIRECTION_END
+	tc.custom_minimum_size = Vector2(260, 0)
+	tc.offset_left   = 14.0
+	tc.offset_bottom = -14.0
+	tc.add_theme_constant_override("separation", 5)
+	tc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(tc)
+	_toast_container = tc
+	return tc
+
+## Shows a brief construction-complete notification at the bottom-left,
+## then fades it out after a few seconds.
+func _show_construction_toast(building_name: String, district_label: String) -> void:
+	var tc := _get_toast_container()
+
+	# ── Outer panel ─────────────────────────────────────────────────────────
+	var panel := PanelContainer.new()
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var ps := StyleBoxFlat.new()
+	ps.bg_color     = Color(0.07, 0.10, 0.15, 0.90)
+	ps.border_color = Color(0.28, 0.78, 0.48, 0.55)
+	ps.set_border_width_all(1)
+	ps.corner_radius_top_left     = 6
+	ps.corner_radius_top_right    = 6
+	ps.corner_radius_bottom_left  = 6
+	ps.corner_radius_bottom_right = 6
+	ps.content_margin_left   = 10.0
+	ps.content_margin_right  = 12.0
+	ps.content_margin_top    = 7.0
+	ps.content_margin_bottom = 7.0
+	panel.add_theme_stylebox_override("panel", ps)
+
+	# ── Content row ─────────────────────────────────────────────────────────
+	var hbox := HBoxContainer.new()
+	hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hbox.add_theme_constant_override("separation", 8)
+	panel.add_child(hbox)
+
+	# Checkmark icon
+	var icon := Label.new()
+	icon.text = "✓"
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon.add_theme_font_size_override("font_size", 13)
+	icon.add_theme_color_override("font_color", Color(0.28, 0.90, 0.52))
+	icon.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	hbox.add_child(icon)
+
+	# Text column
+	var tvbox := VBoxContainer.new()
+	tvbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tvbox.add_theme_constant_override("separation", 1)
+	hbox.add_child(tvbox)
+
+	var name_lbl := Label.new()
+	name_lbl.text = building_name
+	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_apply_orbitron(name_lbl, 9)
+	name_lbl.add_theme_color_override("font_color", Color(0.88, 0.95, 1.0))
+	tvbox.add_child(name_lbl)
+
+	if district_label != "":
+		var sub := Label.new()
+		sub.text = "Built in " + district_label
+		sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_apply_orbitron(sub, 7)
+		sub.add_theme_color_override("font_color", Color(0.45, 0.58, 0.72))
+		tvbox.add_child(sub)
+
+	tc.add_child(panel)
+
+	# ── Tween: fade-in → hold → fade-out → free ─────────────────────────────
+	panel.modulate.a = 0.0
+	var tw := panel.create_tween()
+	tw.tween_property(panel, "modulate:a", 1.0, 0.25)
+	tw.tween_interval(3.0)
+	tw.tween_property(panel, "modulate:a", 0.0, 0.75)
+	tw.tween_callback(panel.queue_free)
 
 func _card_panel_style() -> StyleBoxFlat:
 	var s := StyleBoxFlat.new()
@@ -1614,6 +1727,67 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 			Color(0.9, 0.82, 0.25, 0.55) if def.energy_per_tick > 0 else Color(0.75, 0.48, 0.28, 0.55))
 		info_row.add_child(e_lbl)
 	vbox.add_child(info_row)
+
+	# ── Mine mineral row: shows target mineral + switch chips ─────────────────
+	if def.output_type == BuildingDef.OutputType.RAW_MINERAL:
+		var br       := GameState.get_body_resources(planet.seed, 1, 3)
+		var raw_list := br.get_by_tag(ResourceData.Tag.RAW_MINERAL)
+		if not raw_list.is_empty():
+			# Ensure target_mineral is assigned
+			var tgt: String = entry.get("target_mineral", "")
+			if tgt == "":
+				tgt = (raw_list[0] as ResourceData).resource_id()
+				entry["target_mineral"] = tgt
+
+			var mineral_row := HBoxContainer.new()
+			mineral_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			mineral_row.add_theme_constant_override("separation", 4)
+			vbox.add_child(mineral_row)
+
+			if raw_list.size() == 1:
+				# Only one mineral — just show it
+				var rd := raw_list[0] as ResourceData
+				var m_lbl := Label.new()
+				m_lbl.text = "⛏ " + rd.unique_name
+				m_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				_apply_orbitron(m_lbl, 7)
+				m_lbl.add_theme_color_override("font_color",
+					rd.display_color.darkened(0.15))
+				mineral_row.add_child(m_lbl)
+			else:
+				# Multiple minerals — show switch chips
+				var cap_entry2 := entry
+				var cap_poi2   := poi
+				var cap_planet2 := planet
+				for rd_base: ResourceData in raw_list:
+					var rd: ResourceData = rd_base
+					var chip := Button.new()
+					chip.text = rd.unique_name
+					chip.flat  = true
+					chip.focus_mode = Control.FOCUS_NONE
+					var is_active: bool = tgt == rd.resource_id()
+					var chip_style := StyleBoxFlat.new()
+					chip_style.bg_color    = rd.display_color.darkened(0.45) if is_active \
+						else Color(0.1, 0.12, 0.18, 0.7)
+					chip_style.border_color = rd.display_color if is_active \
+						else Color(0.3, 0.32, 0.42, 0.5)
+					chip_style.set_border_width_all(1)
+					chip_style.corner_radius_top_left     = 4
+					chip_style.corner_radius_top_right    = 4
+					chip_style.corner_radius_bottom_left  = 4
+					chip_style.corner_radius_bottom_right = 4
+					chip.add_theme_stylebox_override("normal", chip_style)
+					chip.add_theme_stylebox_override("hover",  chip_style)
+					chip.add_theme_stylebox_override("pressed", chip_style)
+					chip.add_theme_font_size_override("font_size", 7)
+					chip.add_theme_color_override("font_color",
+						rd.display_color if is_active else Color(0.55, 0.6, 0.75))
+					chip.add_theme_color_override("font_hover_color", rd.display_color)
+					chip.pressed.connect(func() -> void:
+						cap_entry2["target_mineral"] = rd.resource_id()
+						_build_district_panel(cap_poi2, cap_planet2))
+					mineral_row.add_child(chip)
+
 
 	# Right: "+" stacking and "−" demolish buttons
 	var slots_free: int  = pp.district_slots(poi.label) - pp.slots_used_in_district(poi.label)
@@ -1965,7 +2139,7 @@ func _build_district_panel(poi: POIData, planet: PlanetData) -> void:
 		var def := BuildingDef.find(bid)
 		if def == null:
 			continue
-		var idx: int       = pp.buildings.find(entry)
+		var idx: int       = pp.building_real_index(entry)
 		var pm_key: String = "%d:%s:%d" % [planet.seed, poi.label, idx]
 		var amount: int    = entry.get("amount", 1)
 		if entry.get("constructing", false):

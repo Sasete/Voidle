@@ -76,6 +76,7 @@ func _process(_delta: float) -> void:
 		var sz  := cos(lon) * cos(lat)
 
 		poi["screen"]  = center + Vector2(sx * r_px, sy * r_px)
+		poi["sz"]      = sz            # store raw depth for glow culling
 		poi["alpha"]   = clamp(sz * 4.0, 0.0, 1.0)
 		poi["visible"] = sz > -0.05
 		poi["lat_f"]   = lat   # store for direction
@@ -96,18 +97,14 @@ func _draw() -> void:
 		var poi: Dictionary = _pois[i]
 
 		# ── Night-side glow ──────────────────────────────────────────────────────
-		# Draw on the dark side (sz < 0) regardless of visibility flag
-		var poi_sp: Vector2 = poi["screen"] - global_position
+		# Draw city-light glow only for POIs that face the camera (sz > 0)
+		# but have low alpha (near the terminator / in shadow from the light).
+		# Back-facing POIs (sz ≤ 0) project inside the planet disc and must
+		# NOT draw anything — otherwise they appear as stray 1-px yellow dots.
+		var poi_sz: float = poi.get("sz", 1.0)
 		var data_dict: Dictionary = poi.get("data", {}) as Dictionary
 		var night_size: int = data_dict.get("night_size", 0)
-		if night_size > 0 and not poi["visible"]:
-			# sz value: negative = dark side; derive night alpha from it
-			# We compute approximate sz from alpha and visible: !visible + alpha≈0
-			# Re-derive: store sz directly or infer from screen overlap with planet center
-			# alpha is 0 when exactly at terminator (sz=0). On night side sz<0, alpha stays 0.
-			# Use a fading alpha based on distance from terminator — stored alpha is 0 on night.
-			# Instead, compute night_alpha from the stored alpha (which is clamped sz*4 on day side)
-			# On the night side we infer it via screen position relative to planet center.
+		if night_size > 0 and poi_sz > 0.05 and poi["alpha"] < 0.55:
 			var p2 := _get_planet_params()
 			if not p2.is_empty():
 				var center2: Vector2 = p2["center"]
@@ -117,18 +114,17 @@ func _draw() -> void:
 				var lat2: float = poi["lat"]
 				var sx2  := sin(lon2) * cos(lat2)
 				var sy2  := -sin(lat2)
-				var sz2  := cos(lon2) * cos(lat2)
-				if sz2 < 0.0:
-					var night_a: float = clampf(-sz2 * 3.0, 0.0, 1.0)
-					var glow_r: float  = clampf(
-						NIGHT_GLOW_MIN + float(night_size - 1) * 0.8,
-						NIGHT_GLOW_MIN, NIGHT_GLOW_MAX)
-					var sp2: Vector2 = center2 + Vector2(sx2 * r_px2, sy2 * r_px2) - global_position
-					draw_circle(sp2, glow_r + 2.5, Color(1.0, 0.72, 0.28, night_a * 0.07))
-					draw_circle(sp2, glow_r + 1.2, Color(1.0, 0.85, 0.45, night_a * 0.18))
-					draw_circle(sp2, glow_r,        Color(1.0, 0.95, 0.65, night_a * 0.38))
-					draw_circle(sp2, maxf(glow_r * 0.5, 0.5),
-						Color(1.0, 1.0, 0.92, night_a * 0.65))
+				# Fade glow as POI approaches the terminator (alpha rising toward 0.55)
+				var night_a: float = clampf((0.55 - poi["alpha"]) * 3.0, 0.0, 1.0)
+				var glow_r: float  = clampf(
+					NIGHT_GLOW_MIN + float(night_size - 1) * 0.8,
+					NIGHT_GLOW_MIN, NIGHT_GLOW_MAX)
+				var sp2: Vector2 = center2 + Vector2(sx2 * r_px2, sy2 * r_px2) - global_position
+				draw_circle(sp2, glow_r + 2.5, Color(1.0, 0.72, 0.28, night_a * 0.07))
+				draw_circle(sp2, glow_r + 1.2, Color(1.0, 0.85, 0.45, night_a * 0.18))
+				draw_circle(sp2, glow_r,        Color(1.0, 0.95, 0.65, night_a * 0.38))
+				draw_circle(sp2, maxf(glow_r * 0.5, 0.5),
+					Color(1.0, 1.0, 0.92, night_a * 0.65))
 
 		if not poi["visible"]:
 			continue

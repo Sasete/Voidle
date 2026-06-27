@@ -41,7 +41,7 @@ static func all() -> Array[BuildingDef]:
 	return [
 		# ── Energy ──────────────────────────────────────────────────────────────
 		# Solar: free energy, no fuel
-		_make_b("solar_panel",    "Solar Panel",      "Free energy from sunlight; no fuel needed.",
+		_make_b("solar_panel",    "Solar Array",      "Free energy from sunlight; no fuel needed.",
 			POIData.POIType.ENERGY,   80.0, 1, 1,
 			20.0, 0.0, OutputType.ENERGY,  2.0, OutputType.NONE, 0.0),
 

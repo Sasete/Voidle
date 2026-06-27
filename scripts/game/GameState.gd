@@ -6,6 +6,7 @@ signal credits_changed(new_val: float)
 signal world_ready
 signal unlock_changed(key: String, value: bool)
 signal planet_progress_changed(seed_val: int)
+signal asteroid_discovered(slot: int, count: int)
 
 # ── Starting Config (edit these to change new-game defaults) ─────────────────
 ## Starting credits for a new game.
@@ -29,6 +30,7 @@ var galaxy_unlocked:   bool = false
 ## Seed of the planet currently shown in PlanetaryView. -1 when not in that scene.
 var active_planet_seed: int = -1
 var discovered_asteroids: Array[int] = []
+var asteroid_scan_counts: Dictionary = {}   # slot → int (1-3 asteroids revealed)
 
 # day/night cycle — persists across scene changes, advances in real time
 var light_angle:          float = 0.8
@@ -178,8 +180,20 @@ func set_unlock(key: String, value: bool) -> void:
 	unlock_changed.emit(key, value)
 
 func discover_asteroid(slot_idx: int) -> void:
+	var cur: int = asteroid_scan_counts.get(slot_idx, 0)
+	if cur >= 3:
+		return
+	var new_count := cur + 1
+	asteroid_scan_counts[slot_idx] = new_count
 	if slot_idx not in discovered_asteroids:
 		discovered_asteroids.append(slot_idx)
+	asteroid_discovered.emit(slot_idx, new_count)
+
+func discover_asteroid_all(slot_idx: int) -> void:
+	asteroid_scan_counts[slot_idx] = 3
+	if slot_idx not in discovered_asteroids:
+		discovered_asteroids.append(slot_idx)
+	asteroid_discovered.emit(slot_idx, 3)
 
 # ── Economy ───────────────────────────────────────────────────────────────────
 
@@ -210,6 +224,7 @@ func save() -> void:
 		"solar_unlocked":       solar_unlocked,
 		"galaxy_unlocked":      galaxy_unlocked,
 		"discovered_asteroids": discovered_asteroids,
+		"asteroid_scan_counts": asteroid_scan_counts,
 		"home_planet_seed":     home_planet_seed,
 		"home_star_idx":        home_star_idx,
 		"home_planet_idx":      home_planet_idx,
@@ -243,6 +258,7 @@ func load_save() -> bool:
 	home_star_idx            = data.get("home_star_idx",        -1)
 	home_planet_idx          = data.get("home_planet_idx",      -1)
 	discovered_asteroids     = data.get("discovered_asteroids", [])
+	asteroid_scan_counts     = data.get("asteroid_scan_counts", {})
 	for key in data.get("planet_progress", {}).keys():
 		var seed_val: int    = int(key)
 		var d: Dictionary    = data["planet_progress"][key]
@@ -264,6 +280,7 @@ func delete_save() -> void:
 	solar_unlocked       = false
 	galaxy_unlocked      = false
 	discovered_asteroids = []
+	asteroid_scan_counts = {}
 	home_planet_seed     = randi_range(1000, 99999)
 	home_star_idx        = -1
 	home_planet_idx      = -1
