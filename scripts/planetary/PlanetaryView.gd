@@ -99,9 +99,13 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT:
-			CursorManager.set_state(CursorManager.State.EXIT)
-			_go_back()
-			get_viewport().set_input_as_handled()
+			if poi_layer._selected_index >= 0:
+				poi_layer.deselect_all()
+				get_viewport().set_input_as_handled()
+			else:
+				CursorManager.set_state(CursorManager.State.EXIT)
+				_go_back()
+				get_viewport().set_input_as_handled()
 		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
 			_back_charge += 1
 			if _back_charge >= 4:
@@ -264,97 +268,127 @@ func _update_panel(data: PlanetData) -> void:
 	if type_label: type_label.visible = true
 	_build_system_panel()
 
-func _build_district_form(data: PlanetData) -> void:
+var _name_form_overlay: Control = null
+
+func _show_district_name_form_modal(data: PlanetData, def: DistrictDef) -> void:
+	if _name_form_overlay != null and is_instance_valid(_name_form_overlay):
+		_name_form_overlay.queue_free()
+		_name_form_overlay = null
+
 	var panel_content := $RightPanel/PanelContent
-	var old := panel_content.get_node_or_null("DistrictForm")
-	if old: old.free()
 
-	var form := VBoxContainer.new()
-	form.name = "DistrictForm"
-	form.add_theme_constant_override("separation", 6)
-	form.add_child(HSeparator.new())
+	var overlay := PanelContainer.new()
+	overlay.add_theme_stylebox_override("panel", _make_hud_style(Color(0.06, 0.08, 0.17, 0.98), 8))
+	overlay.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	overlay.z_index = 20
 
-	var title := Label.new()
-	title.text = "ADD DISTRICT"
-	_apply_orbitron(title, 10)
-	title.modulate = Color(0.65, 0.65, 0.65)
-	form.add_child(title)
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	overlay.add_child(vbox)
 
-	# label input
+	# Header row: icon + type name + close
+	var header := HBoxContainer.new()
+	var type_lbl := Label.new()
+	type_lbl.text = "%s  %s" % [def.icon, def.display_name]
+	_apply_orbitron(type_lbl, 10)
+	type_lbl.add_theme_color_override("font_color", Color(0.75, 0.85, 1.0))
+	type_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	type_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	header.add_child(type_lbl)
+	var close_btn := Button.new()
+	close_btn.text = "✕"
+	close_btn.flat = true
+	_apply_orbitron(close_btn, 9)
+	close_btn.add_theme_color_override("font_color", Color(0.6, 0.6, 0.7))
+	close_btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	close_btn.pressed.connect(func() -> void:
+		overlay.queue_free()
+		_name_form_overlay = null)
+	header.add_child(close_btn)
+	vbox.add_child(header)
+
+	var desc_lbl := Label.new()
+	desc_lbl.text = def.description
+	_apply_orbitron(desc_lbl, 8)
+	desc_lbl.add_theme_color_override("font_color", Color(0.50, 0.55, 0.72))
+	desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+	desc_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(desc_lbl)
+
+	# Cost row
+	var cost: float = DistrictDef.placement_cost(def, data)
+	var cost_row := HBoxContainer.new()
+	var cost_icon := Label.new()
+	cost_icon.text = "◈"
+	_apply_orbitron(cost_icon, 9)
+	cost_icon.add_theme_color_override("font_color", Color(0.95, 0.82, 0.35))
+	cost_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cost_row.add_child(cost_icon)
+	var cost_lbl := Label.new()
+	cost_lbl.text = HUDManager.fmt_credits(cost)
+	_apply_orbitron(cost_lbl, 9)
+	cost_lbl.add_theme_color_override("font_color",
+		Color(0.55, 0.70, 0.40) if GameState.credits >= cost else Color(0.85, 0.32, 0.32))
+	cost_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cost_row.add_child(cost_lbl)
+	vbox.add_child(cost_row)
+
 	var name_edit := LineEdit.new()
+	name_edit.text             = def.suggest_name(data)
 	name_edit.placeholder_text = "District name..."
 	name_edit.custom_minimum_size = Vector2(0, 28)
 	_apply_orbitron(name_edit, 10)
-	form.add_child(name_edit)
+	vbox.add_child(name_edit)
 
-	# placement buttons
-	var is_gas   := data.planet_type == PlanetData.Type.GAS_GIANT
-	var has_ring := is_gas and data.has_rings
-	var placements: Array[String] = []
-	if is_gas:
-		placements = ["Any"]
-		if has_ring: placements.append("Ring")
-	else:
-		placements = ["Land", "Sea", "Coast", "Any"]
-
-	var place_box := HBoxContainer.new()
-	place_box.add_theme_constant_override("separation", 4)
-	var selected_placement: Array[String] = [placements[0]]   # mutable reference
-	var place_btns: Array[Button] = []
-	for p in placements:
-		var pb := Button.new()
-		pb.text    = p
-		pb.flat    = false
-		pb.toggle_mode = true
-		pb.button_pressed = (p == placements[0])
-		_apply_orbitron(pb, 9)
-		pb.custom_minimum_size = Vector2(0, 22)
-		pb.pressed.connect(func() -> void:
-			selected_placement[0] = p
-			for other in place_btns:
-				other.button_pressed = (other.text == p))
-		place_btns.append(pb)
-		place_box.add_child(pb)
-	form.add_child(place_box)
-
-	# confirm button
 	var confirm := Button.new()
 	confirm.text = "▶  PLACE DISTRICT"
-	confirm.flat = false
-	_apply_orbitron(confirm, 10)
-	confirm.add_theme_color_override("font_color",        Color(0.90, 0.82, 0.45))
-	confirm.add_theme_color_override("font_hover_color",  Color(1.00, 0.95, 0.60))
+	_apply_orbitron(confirm, 9)
+	confirm.add_theme_color_override("font_color",       Color(0.90, 0.82, 0.45))
+	confirm.add_theme_color_override("font_hover_color", Color(1.00, 0.95, 0.60))
+	confirm.disabled = GameState.credits < cost
+	var cap_def  := def
+	var cap_data := data
+	var cap_cost := cost
 	confirm.pressed.connect(func() -> void:
+		if not GameState.spend_credits(cap_cost):
+			return
 		var lbl: String = name_edit.text.strip_edges()
-		if lbl.is_empty(): lbl = "Site"
-		_spawn_district(data, lbl, selected_placement[0]))
-	form.add_child(confirm)
+		if lbl.is_empty(): lbl = cap_def.display_name
+		if is_instance_valid(overlay):
+			overlay.queue_free()
+		_name_form_overlay = null
+		_spawn_district(cap_data, lbl, cap_def))
+	vbox.add_child(confirm)
 
-	# insert before BackButton (last child)
-	panel_content.add_child(form)
-	panel_content.move_child(form, panel_content.get_child_count() - 2)
+	panel_content.add_child(overlay)
+	_name_form_overlay = overlay
+	name_edit.grab_focus()
 
-func _spawn_district(data: PlanetData, lbl: String, placement: String) -> void:
-	var poi       := POIData.new()
-	poi.label     = lbl
-	poi.type_tag  = placement.to_lower()
+func _spawn_district(data: PlanetData, lbl: String, def: DistrictDef) -> void:
+	var poi          := POIData.new()
+	poi.label        = lbl
+	poi.poi_type     = def.to_poi_type()
+	poi.type_tag     = DistrictDef.Type.keys()[def.id].to_lower()
+	poi.placement    = def.placement
+	poi.light_intensity = 0.0 if def.placement == LocationFinder.Placement.ANY else 1.0
 
-	if placement == "Ring":
-		# place on ring at a random angle
-		var rng := RandomNumberGenerator.new()
-		rng.seed = data.seed ^ (data.custom_pois.size() * 0x1234)
-		poi.type_tag       = "ring"
-		poi.manual_position = true
-		poi.lon_deg        = rng.randf_range(0.0, 360.0)   # ring angle degrees
-		poi.lat_deg        = rng.randf_range(0.2, 0.8)     # dist_t within ring
-		poi.light_intensity = 0.0
-	else:
-		match placement:
-			"Land":  poi.placement = LocationFinder.Placement.LAND
-			"Sea":   poi.placement = LocationFinder.Placement.SEA
-			"Coast": poi.placement = LocationFinder.Placement.COAST
-			_:       poi.placement = LocationFinder.Placement.ANY
-		poi.light_intensity = 1.0
+	# Pre-seed LocationFinder with existing district positions so new ones spread out.
+	# Same-type districts use double the avoidance angle to push them further apart.
+	var lf := LocationFinder.new(
+		data.seed ^ (data.custom_pois.size() * 0xBEEF),
+		data.sea_level, data.terrain_roughness, data.continent_scale)
+	for existing: POIData in data.custom_pois:
+		if existing.manual_position:
+			var lon := deg_to_rad(existing.lon_deg)
+			lf._used_lons.append(lon)
+			# double-add same-type districts so avoidance loop hits twice → bigger gap
+			if existing.poi_type == def.to_poi_type():
+				lf._used_lons.append(fposmod(lon + deg_to_rad(5.0), TAU))
+
+	var pos := lf.find(def.placement)
+	poi.lon_deg = rad_to_deg(pos.x)
+	poi.lat_deg = rad_to_deg(pos.y)
+	poi.manual_position = true
 
 	data.custom_pois.append(poi)
 	load_planet(data)   # refresh
@@ -1083,6 +1117,7 @@ func _build_district_overview_card(poi: POIData, planet: PlanetData, pp: PlanetP
 	var cap_poi    := poi
 	var cap_planet := planet
 	sel_btn.pressed.connect(func() -> void:
+		_select_district_on_planet(cap_poi.label)
 		_rotate_to_lon(cap_poi.lon_deg)
 		_build_district_panel(cap_poi, cap_planet))
 	hbox.add_child(sel_btn)
@@ -1095,11 +1130,22 @@ func _build_district_overview_card(poi: POIData, planet: PlanetData, pp: PlanetP
 	card.gui_input.connect(func(e: InputEvent) -> void:
 		if e is InputEventMouseButton and (e as InputEventMouseButton).pressed \
 				and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+			_select_district_on_planet(poi.label)
 			_rotate_to_lon(poi.lon_deg)
 			_build_district_panel(poi, planet))
 	return card
 
-func _build_add_district_card(data: PlanetData, enabled: bool) -> PanelContainer:
+func _select_district_on_planet(label: String) -> void:
+	for i in poi_layer._pois.size():
+		if poi_layer._pois[i].get("label", "") == label:
+			poi_layer.select_poi(i)
+			return
+
+func _build_add_district_card(data: PlanetData, enabled: bool) -> VBoxContainer:
+	var wrapper := VBoxContainer.new()
+	wrapper.add_theme_constant_override("separation", 0)
+	wrapper.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
 	var card := PanelContainer.new()
 	var s := StyleBoxFlat.new()
 	s.bg_color = Color(0.08, 0.12, 0.22, 0.55) if enabled else Color(0.05, 0.06, 0.10, 0.35)
@@ -1112,6 +1158,7 @@ func _build_add_district_card(data: PlanetData, enabled: bool) -> PanelContainer
 	s.content_margin_top    = 8;  s.content_margin_bottom = 8
 	card.add_theme_stylebox_override("panel", s)
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	wrapper.add_child(card)
 
 	var hbox := HBoxContainer.new()
 	card.add_child(hbox)
@@ -1130,7 +1177,7 @@ func _build_add_district_card(data: PlanetData, enabled: bool) -> PanelContainer
 	hbox.add_child(spacer)
 
 	var txt := Label.new()
-	txt.text = "ADD DISTRICT" if enabled else "DISTRICT SLOTS FULL"
+	txt.text = "ADD DISTRICT" if enabled else "SLOTS FULL"
 	_apply_orbitron(txt, 8)
 	txt.add_theme_color_override("font_color",
 		Color(0.55, 0.70, 1.0, 0.75) if enabled else Color(0.35, 0.38, 0.52, 0.6))
@@ -1139,19 +1186,85 @@ func _build_add_district_card(data: PlanetData, enabled: bool) -> PanelContainer
 
 	if enabled:
 		card.mouse_entered.connect(func() -> void:
-			if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER)
-			TooltipManager.show_tip("Add District",
-				"Place a new district on the planet surface."))
+			if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER))
 		card.mouse_exited.connect(func() -> void:
-			CursorManager.set_state(CursorManager.State.NORMAL)
-			TooltipManager.hide_tip())
-		var cap_data := data
+			CursorManager.set_state(CursorManager.State.NORMAL))
+		# Dropdown panel — appended to wrapper, appears below card
+		var dropdown_ref: Array[Control] = [null]
+		var cap_data  := data
+		var cap_wrap  := wrapper
 		card.gui_input.connect(func(e: InputEvent) -> void:
-			if e is InputEventMouseButton and (e as InputEventMouseButton).pressed \
-					and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
-				_build_district_form(cap_data))
+			if not (e is InputEventMouseButton and (e as InputEventMouseButton).pressed \
+					and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT):
+				return
+			# Toggle
+			if dropdown_ref[0] != null and is_instance_valid(dropdown_ref[0]):
+				dropdown_ref[0].queue_free()
+				dropdown_ref[0] = null
+				return
+			var dd := _build_district_type_dropdown(cap_data, cap_wrap, dropdown_ref)
+			cap_wrap.add_child(dd)
+			dropdown_ref[0] = dd)
 
-	return card
+	return wrapper
+
+func _build_district_type_dropdown(data: PlanetData, _anchor: VBoxContainer,
+		dropdown_ref: Array[Control]) -> PanelContainer:
+	var dd := PanelContainer.new()
+	dd.add_theme_stylebox_override("panel", _make_hud_style(Color(0.06, 0.08, 0.16, 0.97), 6))
+	dd.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 2)
+	dd.add_child(vbox)
+
+	var available := DistrictDef.for_planet(data.planet_type)
+	for def: DistrictDef in available:
+		var row := _build_district_type_row(data, def, dropdown_ref)
+		vbox.add_child(row)
+
+	return dd
+
+func _build_district_type_row(data: PlanetData, def: DistrictDef,
+		dropdown_ref: Array[Control]) -> Control:
+	var btn := Button.new()
+	btn.flat = true
+	btn.text = "%s  %s" % [def.icon, def.display_name]
+	_apply_orbitron(btn, 9)
+	btn.add_theme_color_override("font_color",       Color(0.75, 0.82, 1.0))
+	btn.add_theme_color_override("font_hover_color", Color(1.0,  0.95, 0.55))
+	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var norm := StyleBoxFlat.new()
+	norm.bg_color = Color(0, 0, 0, 0)
+	norm.content_margin_left = 10; norm.content_margin_right  = 10
+	norm.content_margin_top  = 6;  norm.content_margin_bottom = 6
+	var hov := norm.duplicate() as StyleBoxFlat
+	hov.bg_color = Color(0.12, 0.18, 0.35, 0.60)
+	btn.add_theme_stylebox_override("normal",  norm)
+	btn.add_theme_stylebox_override("hover",   hov)
+	btn.add_theme_stylebox_override("pressed", hov)
+	btn.add_theme_stylebox_override("focus",   StyleBoxEmpty.new())
+
+	var cost: float = DistrictDef.placement_cost(def, data)
+	var tip_body := def.description + "\n\nCost: %s" % HUDManager.fmt_credits(cost)
+	btn.mouse_entered.connect(func() -> void:
+		if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER)
+		TooltipManager.show_tip(def.display_name, tip_body))
+	btn.mouse_exited.connect(func() -> void:
+		CursorManager.set_state(CursorManager.State.NORMAL)
+		TooltipManager.hide_tip())
+
+	var cap_def  := def
+	var cap_data := data
+	btn.pressed.connect(func() -> void:
+		# Close dropdown, then show name form
+		if dropdown_ref[0] != null and is_instance_valid(dropdown_ref[0]):
+			dropdown_ref[0].queue_free()
+			dropdown_ref[0] = null
+		_show_district_name_form_modal(cap_data, cap_def))
+
+	return btn
 
 func _on_district_clicked(index: int, _data: Dictionary) -> void:
 	if index >= poi_layer._pois.size():
