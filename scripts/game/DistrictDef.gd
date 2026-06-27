@@ -98,7 +98,7 @@ static func _build_registry() -> void:
 			"Generator Facility",
 			"Power plant complex. Produces energy for the colony grid.",
 			"⚡",
-			LocationFinder.Placement.ANY,
+			LocationFinder.Placement.LAND,
 			300.0,
 			[],   # available on all planet types
 			["solar_array", "fusion_reactor", "geothermal_tap"],
@@ -111,7 +111,7 @@ static func _build_registry() -> void:
 			"Mining Facility",
 			"Extracts raw minerals from local deposits.",
 			"⛏",
-			LocationFinder.Placement.ANY,
+			LocationFinder.Placement.LAND,
 			250.0,
 			[PlanetData.Type.TERRAN, PlanetData.Type.ARID, PlanetData.Type.ICE,
 			 PlanetData.Type.VOLCANIC, PlanetData.Type.BARREN,

@@ -101,6 +101,7 @@ func _input(event: InputEvent) -> void:
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT:
 			if poi_layer._selected_index >= 0:
 				poi_layer.deselect_all()
+				_build_planet_overview(current_data)
 				get_viewport().set_input_as_handled()
 			else:
 				CursorManager.set_state(CursorManager.State.EXIT)
