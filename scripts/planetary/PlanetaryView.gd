@@ -26,6 +26,7 @@ const LIGHT_SPEED: float = 0.04   # radians per second
 ## Tracks which district POI is currently shown in the district panel.
 ## Used by _on_building_constructed to refresh panel without DOM traversal.
 var _active_district_poi: POIData = null
+var _overview_energy_val: Label = null   # kept for live energy updates
 ## Toast log container — created lazily, anchored bottom-left.
 var _toast_container: VBoxContainer = null
 ## Maps building pm_key -> bool indicating if its mineral switcher tray is expanded
@@ -106,6 +107,13 @@ var _back_charge: int = 0
 func _input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
+		# Close slot dropdown on any click outside it
+		if mb.pressed and _active_slot_dropdown != null \
+				and is_instance_valid(_active_slot_dropdown):
+			var dd_rect := _active_slot_dropdown.get_global_rect()
+			if not dd_rect.has_point(get_viewport().get_mouse_position()):
+				_active_slot_dropdown.queue_free()
+				_active_slot_dropdown = null
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT:
 			if poi_layer._selected_index >= 0:
 				poi_layer.deselect_all()
@@ -625,7 +633,7 @@ func _mineral_icon_cell(rd: ResourceData, show_count: bool, stored: float = 0.0)
 	return cell
 
 ## Square grid card: icon top, count bottom, fixed width. Used in resource grid.
-func _mineral_grid_card(rd: ResourceData, stored: float, show_count: bool, sub_label: String = "") -> PanelContainer:
+func _mineral_grid_card(rd: ResourceData, stored: float, show_count: bool, sub_label: String = "", pp: PlanetProgress = null) -> PanelContainer:
 	var rarity_col := _rarity_border_color(rd.rarity)
 
 	var card := PanelContainer.new()
@@ -691,9 +699,52 @@ func _mineral_grid_card(rd: ResourceData, stored: float, show_count: bool, sub_l
 			vbox2.add_child(sl)
 
 	var tier_suffix := ResourceData.TIER_SUFFIXES[clampi(rd.tier - 1, 0, ResourceData.TIER_SUFFIXES.size() - 1)]
-	var tip_body := "R%d  ·  T%d %s" % [rd.rarity, rd.tier, tier_suffix]
+	var cap_rd := rd
+	var cap_pp := pp
 	card.mouse_entered.connect(func() -> void:
-		TooltipManager.show_tip(rd.unique_name, tip_body))
+		var header := "R%d  ·  T%d %s" % [cap_rd.rarity, cap_rd.tier, tier_suffix]
+		var rid    := cap_rd.resource_id()
+		if cap_pp == null:
+			TooltipManager.show_tip(cap_rd.unique_name, header)
+			return
+		# Compute per-building income / expense for this resource
+		var income_lines: Array[String] = []
+		var expense_lines: Array[String] = []
+		var net: float = 0.0
+		for entry: Dictionary in cap_pp.buildings:
+			if entry.get("constructing", false): continue
+			var def := BuildingDef.find(entry.get("building_id", ""))
+			if def == null: continue
+			var amt: int     = entry.get("amount", 1)
+			var cycle: float = def.tick_duration if def.tick_duration > 0.0 else 1.0
+			# Producer: mine / refinery outputting this specific resource
+			if (def.output_type == BuildingDef.OutputType.RAW_MINERAL or
+					def.output_type == BuildingDef.OutputType.REFINED_MINERAL):
+				var tgt: String = entry.get("target_mineral", "")
+				if tgt == rid:
+					var rate: float = def.output_amount * float(amt) * get_node("/root/SkillTree").get_mine_output_mult() / cycle
+					income_lines.append("+%.2f/s  %s" % [rate, def.display_name])
+					net += rate
+			# Consumer: building that uses this resource as input
+			if def.input_type != BuildingDef.OutputType.NONE:
+				var input_rid: String = entry.get("input_mineral", "")
+				if input_rid == rid:
+					var rate: float = def.input_amount * float(amt) / cycle
+					expense_lines.append("−%.2f/s  %s" % [rate, def.display_name])
+					net -= rate
+		var body_lines: Array[String] = [header]
+		if not income_lines.is_empty() or not expense_lines.is_empty():
+			body_lines.append("")
+			body_lines.append_array(income_lines)
+			body_lines.append_array(expense_lines)
+		var net_cost: String = ""
+		if not income_lines.is_empty() or not expense_lines.is_empty():
+			var net_sign := "+" if net >= 0.0 else ""
+			net_cost = "%s%.2f / s" % [net_sign, net]
+		TooltipManager.show_tip(cap_rd.unique_name, "\n".join(body_lines), net_cost)
+		# Tint Net label red when negative
+		if net_cost != "":
+			TooltipManager.set_cost_color(Color(0.35, 0.85, 0.45) if net >= 0.0 else Color(0.90, 0.38, 0.28)))
 	card.mouse_exited.connect(func() -> void:
 		TooltipManager.hide_tip())
 
@@ -754,8 +805,13 @@ func _fill_deposits_section(vbox: VBoxContainer, data: PlanetData) -> void:
 	grid.add_theme_constant_override("h_separation", 5)
 	grid.add_theme_constant_override("v_separation", 5)
 	for rd: ResourceData in br.as_array():
-		rng.seed = data.seed ^ (rd.rarity * 0x4E3D)
-		var mineral_density: float = data.deposit_density * rng.randf_range(0.75, 1.25)
+		var rid := rd.resource_id()
+		var mineral_density: float
+		if data.mineral_densities.has(rid):
+			mineral_density = float(data.mineral_densities[rid])
+		else:
+			rng.seed = data.seed ^ (rd.rarity * 0x4E3D)
+			mineral_density = data.deposit_density * rng.randf_range(0.75, 1.25)
 		var pct_text := "%d%%" % int(round(mineral_density * 100.0))
 		grid.add_child(_mineral_grid_card(rd, 0.0, false, pct_text))
 	vbox.add_child(grid)
@@ -796,9 +852,30 @@ func _planet_energy_breakdown(pp: PlanetProgress, data: PlanetData) -> Dictionar
 			continue
 		var amt: int  = b.get("amount", 1)
 		var label: String = b.get("district_id", "")
-		var contrib: float = def.energy_per_tick * amt
+		
+		# Read modified energy flow
+		var etick := def.energy_per_tick
+		if etick > 0.0:
+			if def.building_id == "solar_panel":
+				etick *= get_node("/root/SkillTree").get_solar_mult()
+		elif etick < 0.0:
+			etick *= get_node("/root/SkillTree").get_energy_consume_mult()
+			
+		var contrib: float = etick * amt
 		if def.output_type == BuildingDef.OutputType.ENERGY:
-			contrib += def.output_amount * amt
+			var mult := 1.0
+			if def.building_id == "solar_panel":
+				mult = get_node("/root/SkillTree").get_solar_mult()
+			elif def.building_id == "generator":
+				mult = get_node("/root/SkillTree").get_generator_output_mult()
+				var in_min: String = b.get("burning_mineral", "")
+				if in_min != "":
+					var rd: ResourceData = GameState.known_resources.get(in_min)
+					if rd: mult *= float(rd.rarity)
+				else:
+					mult = 0.0 # No fuel, no energy!
+			contrib += def.output_amount * amt * mult
+			
 		total += contrib
 		by_district[label] = by_district.get(label, 0.0) + contrib
 	var result: Dictionary = { "total": total }
@@ -815,9 +892,30 @@ func _planet_energy_balance(pp: PlanetProgress) -> float:
 		var def := BuildingDef.find(b.get("building_id", ""))
 		if def == null:
 			continue
-		bal += def.energy_per_tick * b.get("amount", 1)
+		var amt: int = b.get("amount", 1)
+		
+		# Read modified energy flow
+		var etick := def.energy_per_tick
+		if etick > 0.0:
+			if def.building_id == "solar_panel":
+				etick *= get_node("/root/SkillTree").get_solar_mult()
+		elif etick < 0.0:
+			etick *= get_node("/root/SkillTree").get_energy_consume_mult()
+			
+		bal += etick * amt
 		if def.output_type == BuildingDef.OutputType.ENERGY:
-			bal += def.output_amount * b.get("amount", 1)
+			var mult := 1.0
+			if def.building_id == "solar_panel":
+				mult = get_node("/root/SkillTree").get_solar_mult()
+			elif def.building_id == "generator":
+				mult = get_node("/root/SkillTree").get_generator_output_mult()
+				var in_min: String = b.get("burning_mineral", "")
+				if in_min != "":
+					var rd: ResourceData = GameState.known_resources.get(in_min)
+					if rd: mult *= float(rd.rarity)
+				else:
+					mult = 0.0 # No fuel, no energy!
+			bal += def.output_amount * amt * mult
 	return bal
 
 func _fill_modifiers_section(vbox: VBoxContainer, data: PlanetData) -> void:
@@ -1215,6 +1313,7 @@ func _build_planet_overview(data: PlanetData) -> void:
 	e_val.add_theme_color_override("font_color",
 		Color(0.9, 0.82, 0.25) if energy_bal >= 0.0 else Color(0.9, 0.40, 0.28))
 	e_row.add_child(e_lbl); e_row.add_child(e_val)
+	_overview_energy_val = e_val
 	root.add_child(e_row)
 	# Tooltip with per-district breakdown — show all districts (producers + consumers)
 	var tip_producers: Array[String] = []
@@ -1229,13 +1328,25 @@ func _build_planet_overview(data: PlanetData) -> void:
 			tip_producers.append(line)
 		else:
 			tip_consumers.append(line)
-	var all_tip_lines: Array[String] = tip_producers + tip_consumers
-	if not all_tip_lines.is_empty():
-		var tip_body: String = "\n".join(all_tip_lines)
-		e_row.mouse_entered.connect(func() -> void:
-			TooltipManager.show_tip("Energy by District", tip_body))
-		e_row.mouse_exited.connect(func() -> void:
-			TooltipManager.hide_tip())
+	var cap_data_ref := data
+	e_row.mouse_entered.connect(func() -> void:
+		if cap_data_ref == null: return
+		var cur_pp := GameState.get_planet(cap_data_ref.seed)
+		if cur_pp == null: return
+		var bd := _planet_energy_breakdown(cur_pp, cap_data_ref)
+		var prod: Array[String] = []
+		var cons: Array[String] = []
+		for poi_t: POIData in cap_data_ref.custom_pois:
+			var d_val: float = bd.get(poi_t.label, 0.0) as float
+			if d_val == 0.0: continue
+			var line := "%s  %s%.0f ⚡" % [poi_t.label, "+" if d_val >= 0.0 else "", d_val]
+			if d_val >= 0.0: prod.append(line)
+			else:            cons.append(line)
+		var lines: Array[String] = prod + cons
+		if not lines.is_empty():
+			TooltipManager.show_tip("Energy by District", "\n".join(lines)))
+	e_row.mouse_exited.connect(func() -> void:
+		TooltipManager.hide_tip())
 
 	_build_resources_section(root, data, pp)
 
@@ -1302,7 +1413,7 @@ func _build_resources_section(parent: VBoxContainer, data: PlanetData, pp: Plane
 	grid.add_theme_constant_override("v_separation", 6)
 	for rd: ResourceData in stored_entries:
 		var stored: float = pp.stored_resources.get(rd.resource_id(), 0.0)
-		grid.add_child(_mineral_grid_card(rd, stored, true))
+		grid.add_child(_mineral_grid_card(rd, stored, true, "", pp))
 	parent.add_child(grid)
 
 func _build_district_overview_card(poi: POIData, planet: PlanetData, pp: PlanetProgress,
@@ -1338,8 +1449,11 @@ func _build_district_overview_card(poi: POIData, planet: PlanetData, pp: PlanetP
 	n_lbl.add_theme_color_override("font_color", Color(0.82, 0.88, 1.0))
 
 	var t_lbl := Label.new()
-	var bld_count: int = pp.buildings_in_district(poi.label).size()
-	t_lbl.text = poi.type_label() + "  ·  %d bldg" % bld_count
+	var district_buildings := pp.buildings_in_district(poi.label)
+	var total_size: int = 0
+	for eb: Dictionary in district_buildings:
+		total_size += eb.get("amount", 1)
+	t_lbl.text = poi.type_label() + "  ·  Size %d" % total_size
 	t_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_apply_orbitron(t_lbl, 8)
 	t_lbl.add_theme_color_override("font_color", Color(0.42, 0.48, 0.68))
@@ -1480,10 +1594,10 @@ func _build_district_type_row(data: PlanetData, def: DistrictDef,
 	btn.add_theme_stylebox_override("focus",   StyleBoxEmpty.new())
 
 	var cost: float = DistrictDef.placement_cost(def, data)
-	var tip_body := def.description + "\n\nCost: %s" % HUDManager.fmt_credits(cost)
+	var cost_str := HUDManager.fmt_credits(cost)
 	btn.mouse_entered.connect(func() -> void:
 		if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER)
-		TooltipManager.show_tip(def.display_name, tip_body))
+		TooltipManager.show_tip(def.display_name, def.description, cost_str))
 	btn.mouse_exited.connect(func() -> void:
 		CursorManager.set_state(CursorManager.State.NORMAL)
 		TooltipManager.hide_tip())
@@ -1491,11 +1605,12 @@ func _build_district_type_row(data: PlanetData, def: DistrictDef,
 	var cap_def  := def
 	var cap_data := data
 	btn.pressed.connect(func() -> void:
-		# Close dropdown, then show name form
 		if dropdown_ref[0] != null and is_instance_valid(dropdown_ref[0]):
 			dropdown_ref[0].queue_free()
 			dropdown_ref[0] = null
-		_show_district_name_form_modal(cap_data, cap_def))
+		if not GameState.spend_credits(DistrictDef.placement_cost(cap_def, cap_data)):
+			return
+		_spawn_district(cap_data, cap_def.suggest_name(cap_data), cap_def))
 
 	return btn
 
@@ -1519,6 +1634,7 @@ func _on_district_clicked(index: int, _data: Dictionary) -> void:
 ## pm_key -> { "fill": Control, "prog": Array[float] }
 var _bar_meta: Dictionary = {}
 var _active_slot_dropdown: Control = null
+var _dd_layer: CanvasLayer = null  # CanvasLayer overlay for slot dropdown (always on top)
 
 func _is_at_edge() -> bool:
 	var mouse := get_viewport().get_mouse_position()
@@ -1534,13 +1650,11 @@ func _on_production_update(_planet_seed: int, key: String, progress: float) -> v
 	var fc: Control = m["fill"]
 	if is_instance_valid(fc):
 		fc.queue_redraw()
-	# Update percent label on construction bars
+	# Update percent label on construction bars only — status label updates via building_ticked
 	if m.get("construction", false) and m.has("pct"):
 		var pct: Label = m["pct"]
 		if is_instance_valid(pct):
 			pct.text = "%d%%" % int(progress * 100)
-	else:
-		_refresh_bar_label_status(key)
 
 func _on_building_ticked_night(planet_seed: int, key: String) -> void:
 	if current_data != null and current_data.seed == planet_seed:
@@ -1551,6 +1665,35 @@ func _on_building_ticked_night(planet_seed: int, key: String) -> void:
 		if is_instance_valid(fc):
 			fc.queue_redraw()
 		_refresh_bar_label_status(key)
+		
+	# Energy ratio can change when any building starts/stops.
+	# Refresh all slowed_lbl visibilities for the whole planet to ensure UI consistency.
+	var er := ProductionManager.get_energy_ratio(planet_seed)
+	for k: String in _bar_meta:
+		var m: Dictionary = _bar_meta[k]
+		if m.get("planet_seed", -1) == planet_seed:
+			var sl: Label = m.get("slowed_lbl", null)
+			if is_instance_valid(sl):
+				var paused := ProductionManager.is_paused(k)
+				sl.text    = "⚡ Slowed %d%% — Energy Crisis" % [int((1.0 - er) * 100)]
+				sl.visible = not paused and er < 0.999
+
+	_refresh_district_energy_lbl()
+
+var _active_district_energy_lbl: Label = null
+
+func _refresh_district_energy_lbl() -> void:
+	if not is_instance_valid(_active_district_energy_lbl):
+		return
+	if current_data == null or _active_district_poi == null:
+		return
+	var pp := GameState.get_planet(current_data.seed)
+	var breakdown := _planet_energy_breakdown(pp, current_data)
+	var d_energy: float = breakdown.get(_active_district_poi.label, 0.0)
+	var de_sign := "+" if d_energy >= 0.0 else ""
+	_active_district_energy_lbl.text = de_sign + "%.0f ⚡" % d_energy
+	_active_district_energy_lbl.add_theme_color_override("font_color",
+		Color(0.85, 0.78, 0.22) if d_energy >= 0.0 else Color(0.85, 0.38, 0.25))
 
 func _on_building_toggled(key: String, _paused: bool) -> void:
 	if not _bar_meta.has(key):
@@ -1571,9 +1714,40 @@ func _refresh_bar_label_status(key: String) -> void:
 	var fc: Color = m.get("fc", Color.WHITE)
 	if is_instance_valid(out_lbl) and def != null:
 		var paused := ProductionManager.is_paused(key)
-		out_lbl.text = "⏸ waiting" if paused else def.output_label()
+		var out_text := "⏸ waiting"
+		if not paused:
+			var out_val := def.output_amount
+			if def.output_type == BuildingDef.OutputType.CREDITS:
+				out_val *= get_node("/root/SkillTree").get_credits_mult()
+			elif def.output_type == BuildingDef.OutputType.ENERGY:
+				if def.building_id == "solar_panel":
+					out_val *= get_node("/root/SkillTree").get_solar_mult()
+				elif def.building_id == "generator":
+					out_val *= get_node("/root/SkillTree").get_generator_output_mult()
+					var in_min: String = m.get("entry", {}).get("burning_mineral", "")
+					if in_min != "":
+						var rd: ResourceData = GameState.known_resources.get(in_min)
+						if rd: out_val *= float(rd.rarity)
+					else:
+						out_val = 0.0 # No fuel
+			elif def.output_type == BuildingDef.OutputType.RAW_MINERAL or def.output_type == BuildingDef.OutputType.REFINED_MINERAL:
+				out_val *= get_node("/root/SkillTree").get_mine_output_mult()
+				
+			match def.output_type:
+				BuildingDef.OutputType.ENERGY:          out_text = "+%.0f ⚡" % out_val
+				BuildingDef.OutputType.CREDITS:         out_text = "+%.0f cr" % out_val
+				BuildingDef.OutputType.RAW_MINERAL:     out_text = "+%.0f ore" % out_val
+				BuildingDef.OutputType.REFINED_MINERAL: out_text = "+%.0f ref" % out_val
+				
+		out_lbl.text = out_text
 		out_lbl.add_theme_color_override("font_color",
 			Color(0.45, 0.48, 0.60) if paused else fc)
+
+		var slowed_lbl: Label = m.get("slowed_lbl", null)
+		if is_instance_valid(slowed_lbl):
+			var er := ProductionManager.get_energy_ratio(m.get("planet_seed", -1))
+			slowed_lbl.text    = "⚡ Slowed %d%% — Energy Crisis" % [int((1.0 - er) * 100)]
+			slowed_lbl.visible = not paused and er < 0.999
 
 func _on_building_constructed(planet_seed: int, key: String) -> void:
 	if current_data == null or current_data.seed != planet_seed:
@@ -1599,12 +1773,27 @@ func _on_building_constructed(planet_seed: int, key: String) -> void:
 		building_name if building_name != "" else "Building",
 		poi_label)
 
+	_refresh_overview_energy()
+
 	# Refresh panel only if the player is actively viewing that specific district.
 	if _active_district_poi == null:
 		return
 	if poi_label != "" and _active_district_poi.label != poi_label:
 		return   # completed in a different district — don’t switch view
 	_build_district_panel(_active_district_poi, current_data)
+
+func _refresh_overview_energy() -> void:
+	if not is_instance_valid(_overview_energy_val) or current_data == null:
+		return
+	var pp := GameState.get_planet(current_data.seed)
+	if pp == null:
+		return
+	var e_breakdown := _planet_energy_breakdown(pp, current_data)
+	var bal: float   = e_breakdown.get("total", 0.0)
+	var sign := "+" if bal >= 0.0 else ""
+	_overview_energy_val.text = sign + "%.0f ⚡" % bal
+	_overview_energy_val.add_theme_color_override("font_color",
+		Color(0.9, 0.82, 0.25) if bal >= 0.0 else Color(0.9, 0.40, 0.28))
 
 # ── Toast / build-log notification ───────────────────────────────────────────
 
@@ -1729,15 +1918,13 @@ func _build_construction_bar(def: BuildingDef, pm_key: String) -> PanelContainer
 	var card := PanelContainer.new()
 	card.add_theme_stylebox_override("panel", _card_panel_style())
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.clip_contents = true
 
-	var body := Control.new()
+	var body := MarginContainer.new()
 	body.custom_minimum_size   = Vector2(0, 50)
-	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	body.size_flags_vertical   = Control.SIZE_EXPAND_FILL
 	card.add_child(body)
 
 	var fill_ctrl := Control.new()
-	fill_ctrl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	fill_ctrl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var prog_ref: Array = [ProductionManager.get_construct_progress(pm_key)]
 	fill_ctrl.draw.connect(func() -> void:
@@ -1749,7 +1936,6 @@ func _build_construction_bar(def: BuildingDef, pm_key: String) -> PanelContainer
 	body.add_child(fill_ctrl)
 
 	var margin := MarginContainer.new()
-	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	margin.add_theme_constant_override("margin_left",  10)
 	margin.add_theme_constant_override("margin_right",  8)
 	margin.add_theme_constant_override("margin_top",    7)
@@ -1805,17 +1991,15 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 	var card := PanelContainer.new()
 	card.add_theme_stylebox_override("panel", _card_panel_style())
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.clip_contents = true
 
 	# Inner layer control — fill draws here, content sits on top
-	var body := Control.new()
+	var body := MarginContainer.new()
 	body.custom_minimum_size   = Vector2(0, 54)
-	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	body.size_flags_vertical   = Control.SIZE_EXPAND_FILL
 	card.add_child(body)
 
 	# Fill control — redraws each production tick
 	var fill_ctrl := Control.new()
-	fill_ctrl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	fill_ctrl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var prog_ref: Array = [prog]
 	var cap_fill_key := pm_key
@@ -1845,7 +2029,6 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 
 	# Content layout on top of fill
 	var margin := MarginContainer.new()
-	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	margin.add_theme_constant_override("margin_left",   10)
 	margin.add_theme_constant_override("margin_right",   8)
 	margin.add_theme_constant_override("margin_top",     7)
@@ -1888,22 +2071,57 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 	var info_row := HBoxContainer.new()
 	info_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	info_row.add_theme_constant_override("separation", 8)
-	var out_text := "⏸ waiting" if paused else def.output_label()
+	
+	# Determine modified output label text
+	var out_val := def.output_amount
+	if def.output_type == BuildingDef.OutputType.CREDITS:
+		out_val *= get_node("/root/SkillTree").get_credits_mult()
+	elif def.output_type == BuildingDef.OutputType.ENERGY:
+		if def.building_id == "solar_panel":
+			out_val *= get_node("/root/SkillTree").get_solar_mult()
+		elif def.building_id == "generator":
+			out_val *= get_node("/root/SkillTree").get_generator_output_mult()
+			var in_min: String = entry.get("burning_mineral", "")
+			if in_min != "":
+				var rd: ResourceData = GameState.known_resources.get(in_min)
+				if rd: out_val *= float(rd.rarity)
+			else:
+				out_val = 0.0 # No fuel
+	elif def.output_type == BuildingDef.OutputType.RAW_MINERAL or def.output_type == BuildingDef.OutputType.REFINED_MINERAL:
+		out_val *= get_node("/root/SkillTree").get_mine_output_mult()
+		
+	var out_text := "⏸ waiting" if paused else ""
+	if not paused:
+		match def.output_type:
+			BuildingDef.OutputType.ENERGY:          out_text = "+%.0f ⚡" % out_val
+			BuildingDef.OutputType.CREDITS:         out_text = "+%.0f cr" % out_val
+			BuildingDef.OutputType.RAW_MINERAL:     out_text = "+%.0f ore" % out_val
+			BuildingDef.OutputType.REFINED_MINERAL: out_text = "+%.0f ref" % out_val
+
 	var out_lbl := Label.new()
 	out_lbl.text = out_text
 	out_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	out_lbl.custom_minimum_size = Vector2(60, 0)
 	_apply_orbitron(out_lbl, 8)
 	out_lbl.add_theme_color_override("font_color",
 		Color(0.45, 0.48, 0.60) if paused else fc)
 	info_row.add_child(out_lbl)
+	
 	if def.energy_per_tick != 0.0:
+		var etick := def.energy_per_tick
+		if etick > 0.0:
+			if def.building_id == "solar_panel":
+				etick *= get_node("/root/SkillTree").get_solar_mult()
+		else:
+			etick *= get_node("/root/SkillTree").get_energy_consume_mult()
+			
 		var e_lbl := Label.new()
-		var sign := "+" if def.energy_per_tick > 0.0 else ""
-		e_lbl.text = sign + "%.0f ⚡" % def.energy_per_tick
+		var sign := "+" if etick > 0.0 else ""
+		e_lbl.text = sign + "%.0f ⚡" % etick
 		e_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_apply_orbitron(e_lbl, 8)
 		e_lbl.add_theme_color_override("font_color",
-			Color(0.9, 0.82, 0.25, 0.55) if def.energy_per_tick > 0 else Color(0.75, 0.48, 0.28, 0.55))
+			Color(0.9, 0.82, 0.25, 0.55) if etick > 0 else Color(0.75, 0.48, 0.28, 0.55))
 		info_row.add_child(e_lbl)
 
 	# ── Dynamic Mineral Selection Tray for Mine / Generator ───────────────────
@@ -1938,10 +2156,18 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 			sep_lbl.add_theme_color_override("font_color", Color(0.35, 0.38, 0.50))
 			info_row.add_child(sep_lbl)
 
+			if is_generator and def.input_amount > 0.0:
+				var cost_lbl := Label.new()
+				cost_lbl.text = " −%.0f " % (def.input_amount * count)
+				cost_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				_apply_orbitron(cost_lbl, 9)
+				cost_lbl.add_theme_color_override("font_color", Color(0.85, 0.45, 0.45))
+				info_row.add_child(cost_lbl)
+
 			var chip_btn := Button.new()
 			chip_btn.flat = false
 			chip_btn.focus_mode = Control.FOCUS_NONE
-			chip_btn.custom_minimum_size = Vector2(18, 18)
+			chip_btn.custom_minimum_size = Vector2(26, 26)
 			
 			var chip_style := StyleBoxFlat.new()
 			chip_style.bg_color = current_rd.display_color.darkened(0.55)
@@ -1967,6 +2193,8 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 
 			var action_desc := "Digging" if is_mine else "Burning"
 			var tip_str := "%s: %s" % [action_desc, current_rd.unique_name]
+			if is_generator and def.input_amount > 0.0:
+				tip_str += "\nConsumes: %.0f per cycle" % (def.input_amount * count)
 			if raw_list.size() > 1:
 				tip_str += "\n(Click to switch alternative mineral)"
 
@@ -1978,94 +2206,37 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 				TooltipManager.hide_tip())
 
 			if raw_list.size() > 1:
-				var is_open: bool = _open_mineral_switchers.get(pm_key, false)
+				var cap_chip_btn := chip_btn
+				var cap_raw_list := raw_list
+				var cap_target_key := target_key
+				var cap_tgt := tgt
+				var cap_poi := poi
+				var cap_planet := planet
+				var cap_entry := entry
 				chip_btn.pressed.connect(func() -> void:
-					_open_mineral_switchers[pm_key] = not is_open
-					_build_district_panel(poi, planet))
+					_toggle_mineral_dropdown(cap_chip_btn, cap_raw_list, cap_target_key, cap_tgt, cap_poi, cap_planet, cap_entry))
 			else:
 				chip_btn.disabled = true
 				chip_btn.focus_mode = Control.FOCUS_NONE
 
 			info_row.add_child(chip_btn)
-
-			if _open_mineral_switchers.get(pm_key, false) and raw_list.size() > 1:
-				var tray_container := PanelContainer.new()
-				var tray_style := StyleBoxFlat.new()
-				tray_style.bg_color = Color(0.05, 0.07, 0.12, 0.95)
-				tray_style.border_color = Color(0.2, 0.25, 0.4, 0.7)
-				tray_style.set_border_width_all(1)
-				tray_style.corner_radius_top_left = 4
-				tray_style.corner_radius_top_right = 4
-				tray_style.corner_radius_bottom_left = 4
-				tray_style.corner_radius_bottom_right = 4
-				tray_style.content_margin_left = 6
-				tray_style.content_margin_right = 6
-				tray_style.content_margin_top = 4
-				tray_style.content_margin_bottom = 4
-				tray_container.add_theme_stylebox_override("panel", tray_style)
-				
-				vbox.add_child(info_row)
-
-				var tray_h := HBoxContainer.new()
-				tray_h.add_theme_constant_override("separation", 6)
-				tray_container.add_child(tray_h)
-
-				for alternative: ResourceData in raw_list:
-					if alternative.resource_id() == tgt:
-						continue
-					var alt_btn := Button.new()
-					alt_btn.flat = true
-					alt_btn.focus_mode = Control.FOCUS_NONE
-					alt_btn.custom_minimum_size = Vector2(22, 22)
-					
-					var alt_icon := TextureRect.new()
-					alt_icon.texture = MineralIcon.make(alternative.tier, alternative.display_color)
-					alt_icon.stretch_mode = TextureRect.STRETCH_KEEP_CENTERED
-					alt_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-					alt_btn.add_child(alt_icon)
-					alt_icon.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-
-					var alt_style := StyleBoxFlat.new()
-					alt_style.bg_color = Color(0.1, 0.12, 0.2, 0.8)
-					alt_style.border_color = alternative.display_color.darkened(0.3)
-					alt_style.set_border_width_all(1)
-					alt_style.corner_radius_top_left = 3
-					alt_style.corner_radius_top_right = 3
-					alt_style.corner_radius_bottom_left = 3
-					alt_style.corner_radius_bottom_right = 3
-					alt_btn.add_theme_stylebox_override("normal", alt_style)
-
-					var alt_hover := alt_style.duplicate() as StyleBoxFlat
-					alt_hover.bg_color = Color(0.15, 0.18, 0.3, 0.95)
-					alt_hover.border_color = alternative.display_color
-					alt_btn.add_theme_stylebox_override("hover", alt_hover)
-
-					var cap_target_key := target_key
-					var cap_alternative := alternative
-					var cap_poi2 := poi
-					var cap_planet2 := planet
-					var cap_pm_key := pm_key
-					alt_btn.pressed.connect(func() -> void:
-						entry[cap_target_key] = cap_alternative.resource_id()
-						_open_mineral_switchers[cap_pm_key] = false
-						_build_district_panel(cap_poi2, cap_planet2))
-					
-					alt_btn.mouse_entered.connect(func() -> void:
-						if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER)
-						TooltipManager.show_tip("Switch to:", alternative.unique_name))
-					alt_btn.mouse_exited.connect(func() -> void:
-						CursorManager.set_state(CursorManager.State.NORMAL)
-						TooltipManager.hide_tip())
-
-					tray_h.add_child(alt_btn)
-				
-				vbox.add_child(tray_container)
-			else:
-				vbox.add_child(info_row)
+			vbox.add_child(info_row)
 		else:
 			vbox.add_child(info_row)
 	else:
 		vbox.add_child(info_row)
+
+	# Energy-crisis "Slowed" label — shown below info row for energy consumers
+	var slowed_lbl: Label = null
+	if def.energy_per_tick < 0.0:
+		slowed_lbl = Label.new()
+		slowed_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_apply_orbitron(slowed_lbl, 7)
+		slowed_lbl.add_theme_color_override("font_color", Color(0.90, 0.55, 0.20))
+		var er := ProductionManager.get_energy_ratio(pp.planet_seed)
+		slowed_lbl.text    = "⚡ Slowed %d%% — Energy Crisis" % [int((1.0 - er) * 100)]
+		slowed_lbl.visible = er < 0.999
+		vbox.add_child(slowed_lbl)
 
 	# Right: "+" stacking and "−" demolish buttons
 	var slots_free: int  = pp.district_slots(poi.label) - pp.slots_used_in_district(poi.label)
@@ -2115,6 +2286,7 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 		if GameState.spend_credits(cap_def.base_cost):
 			pp.stack_building_unchecked(cap_poi.label, cap_def.building_id)
 			GameState.planet_progress_changed.emit(cap_planet.seed)
+			_refresh_overview_energy()
 			_build_district_panel(cap_poi, cap_planet))
 
 	var rem_btn := Button.new()
@@ -2162,11 +2334,14 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 				ProductionManager.toggle_user_pause(cap_toggle_key))
 
 	_bar_meta[pm_key] = {
-		"fill": fill_ctrl,
-		"prog": prog_ref,
-		"out_lbl": out_lbl,
-		"def": def,
-		"fc": fc
+		"fill":        fill_ctrl,
+		"prog":        prog_ref,
+		"out_lbl":     out_lbl,
+		"slowed_lbl":  slowed_lbl,
+		"planet_seed": pp.planet_seed,
+		"def":         def,
+		"fc":          fc,
+		"entry":       entry
 	}
 	return card
 
@@ -2212,12 +2387,11 @@ func _toggle_slot_dropdown(card: PanelContainer, poi: POIData, planet: PlanetDat
 		pp: PlanetProgress, root: VBoxContainer, _slot_idx: int) -> void:
 	# Toggle off if already open for this slot
 	if _active_slot_dropdown != null and is_instance_valid(_active_slot_dropdown):
-		if _active_slot_dropdown.get_meta("slot_card", null) == card:
-			_active_slot_dropdown.queue_free()
-			_active_slot_dropdown = null
-			return
+		var prev_card = _active_slot_dropdown.get_meta("slot_card", null)
 		_active_slot_dropdown.queue_free()
 		_active_slot_dropdown = null
+		if prev_card == card:
+			return
 
 	var buildable := BuildingDef.for_poi_type(poi.poi_type)
 	if buildable.is_empty():
@@ -2225,11 +2399,16 @@ func _toggle_slot_dropdown(card: PanelContainer, poi: POIData, planet: PlanetDat
 
 	var slots_free: int = pp.district_slots(poi.label) - pp.slots_used_in_district(poi.label)
 
+	# ── CanvasLayer overlay — always renders above game UI ───────────
+	if _dd_layer == null or not is_instance_valid(_dd_layer):
+		_dd_layer = CanvasLayer.new()
+		_dd_layer.layer = 120   # above HUD (100) but below tooltip (150)
+		add_child(_dd_layer)
+
 	var outer := PanelContainer.new()
 	outer.set_meta("slot_card", card)
 	outer.add_theme_stylebox_override("panel",
 		_make_hud_style(Color(0.05, 0.07, 0.14, 0.97), 6))
-	outer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	var list := VBoxContainer.new()
 	list.add_theme_constant_override("separation", 2)
@@ -2267,23 +2446,36 @@ func _toggle_slot_dropdown(card: PanelContainer, poi: POIData, planet: PlanetDat
 		if not has_slots: reason = "No free slots"
 		elif not can_afford: reason = "Need %.0f cr" % def.base_cost
 
-		var sub_parts: Array[String] = []
-		sub_parts.append("%.0f cr" % def.base_cost)
-		sub_parts.append("%d slot%s" % [def.slot_cost, "s" if def.slot_cost > 1 else ""])
-		sub_parts.append("%.0fs" % def.tick_duration)
-		if def.energy_per_tick != 0.0:
-			sub_parts.append("%.0f ⚡" % def.energy_per_tick)
-		if def.input_amount > 0.0:
-			var in_name := "ore" if def.input_type == BuildingDef.OutputType.RAW_MINERAL else "input"
-			sub_parts.append("-%.0f %s" % [def.input_amount, in_name])
-		if def.output_label() != "":
-			sub_parts.append(def.output_label())
-		var c_lbl := Label.new()
-		c_lbl.text = " · ".join(sub_parts)
-		c_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		_apply_orbitron(c_lbl, 8)
-		c_lbl.add_theme_color_override("font_color",
-			Color(0.45, 0.72, 0.40) if (can_afford and has_slots) else Color(0.60, 0.30, 0.28))
+		# Compact sub-line: RichTextLabel so we can embed inline mineral icon
+		var row_color := Color(0.45, 0.72, 0.40) if (can_afford and has_slots) \
+			else Color(0.60, 0.30, 0.28)
+		var ore_sub_icon := MineralIcon.make(1, Color(0.55, 0.60, 0.70))
+
+		var c_lbl := RichTextLabel.new()
+		c_lbl.bbcode_enabled  = true
+		c_lbl.fit_content     = true
+		c_lbl.scroll_active   = false
+		c_lbl.mouse_filter    = Control.MOUSE_FILTER_IGNORE
+		c_lbl.add_theme_font_size_override("normal_font_size", 8)
+		c_lbl.add_theme_color_override("default_color", row_color)
+		if _orbitron: c_lbl.add_theme_font_override("normal_font", _orbitron)
+		c_lbl.custom_minimum_size = Vector2(0, 14)
+
+		c_lbl.append_text("%.0f cr" % def.base_cost)
+		if def.output_type == BuildingDef.OutputType.ENERGY:
+			var net := def.energy_per_tick + def.output_amount
+			c_lbl.append_text(" · %s%.0f ⚡" % ["+" if net >= 0.0 else "", net])
+		elif def.energy_per_tick != 0.0:
+			c_lbl.append_text(" · %.0f ⚡" % def.energy_per_tick)
+		if def.input_amount > 0.0 and def.input_type == BuildingDef.OutputType.RAW_MINERAL:
+			c_lbl.append_text(" · −%.0f " % def.input_amount)
+			c_lbl.add_image(ore_sub_icon, 11, 11)
+		if def.output_label() != "" and def.output_type != BuildingDef.OutputType.ENERGY:
+			if def.output_type == BuildingDef.OutputType.RAW_MINERAL:
+				c_lbl.append_text(" · %s " % def.output_label().replace(" ore", ""))
+				c_lbl.add_image(ore_sub_icon, 11, 11)
+			else:
+				c_lbl.append_text(" · %s" % def.output_label())
 
 		vbox.add_child(n_lbl); vbox.add_child(c_lbl)
 		row_panel.add_child(vbox)
@@ -2295,48 +2487,207 @@ func _toggle_slot_dropdown(card: PanelContainer, poi: POIData, planet: PlanetDat
 		var cap_row    := row_panel
 		var cap_norm   := norm_s
 		var cap_hov    := hov_s
-		var tip_title  := def.display_name
-		
-		# Generate detailed info for tooltip
-		var info_parts: Array[String] = []
-		info_parts.append("Cost: %.0f cr" % def.base_cost)
-		info_parts.append("Slots: %d" % def.slot_cost)
-		info_parts.append("Time: %.0fs" % def.tick_duration)
-		if def.energy_per_tick != 0.0:
-			var sign_str := "+" if def.energy_per_tick > 0 else ""
-			info_parts.append("Energy: %s%.0f ⚡" % [sign_str, def.energy_per_tick])
-		if def.input_amount > 0.0:
-			var in_name := "Raw Mineral" if def.input_type == BuildingDef.OutputType.RAW_MINERAL else "Input"
-			info_parts.append("Consumes: %.0f %s / cycle" % [def.input_amount, in_name])
-		if def.output_label() != "":
-			info_parts.append("Produces: %s / cycle" % def.output_label())
+		var tip_title := def.display_name
 
-		var tip_body   := "%s\n\n%s%s" % [
-			def.description,
-			" · ".join(info_parts),
-			("\n\n➡ " + reason) if reason != "" else ""]
+		# ── Dynamic stat calculation ────────────────────────────────
+		var sk         := get_node("/root/SkillTree")
+		var mods       := PlanetModifier.for_planet(planet.planet_type)
+		var spd_mult: float = sk.get_global_speed_mult()
+		var out_mult   := 1.0
+		var cycle_s    := def.tick_duration
+
+		match def.output_type:
+			BuildingDef.OutputType.RAW_MINERAL:
+				out_mult = PlanetModifier.combined(mods, PlanetModifier.Effect.MINE_OUTPUT_MULT) \
+					* sk.get_mine_output_mult()
+				spd_mult *= sk.get_mine_speed_mult()
+			BuildingDef.OutputType.CREDITS:
+				out_mult = sk.get_credits_mult()
+			BuildingDef.OutputType.ENERGY:
+				if def.building_id == "solar_panel":  out_mult = sk.get_solar_mult()
+				elif def.building_id == "generator":  out_mult = sk.get_generator_output_mult()
+
+		if cycle_s > 0.0 and spd_mult > 0.0:
+			cycle_s = cycle_s / spd_mult
+
+		var dyn_output := def.output_amount * out_mult
+		var dyn_energy := def.energy_per_tick  # upkeep doesn't scale with output_mult
+
+		# ── Ore icon (colorless gray T1 shape used inline) ─────────
+		var ore_icon := MineralIcon.make(1, Color(0.55, 0.58, 0.70))
+
+		# ── Find which ore this building will consume/produce ────
+		var pd_for_tip := planet
+		var br_for_tip := GameState.get_body_resources_for(pd_for_tip)
+		var raw_arr    := br_for_tip.get_by_tag(ResourceData.Tag.RAW_MINERAL)
+		# Use the first/lowest-rarity ore on this planet as the example
+		var example_rd: ResourceData = raw_arr[0] if not raw_arr.is_empty() else null
+		var example_ore_power: float = example_rd.power if example_rd != null else 1.0
+
+		# ── Body: description + stat rows as mixed Array ─────────
+		# Order: Cycle, then production (+), then upkeep (−).
+		var tip_body_parts: Array = [def.description, "\n\n"]
+		if def.slot_cost > 1:
+			tip_body_parts.append("Slots    %d\n" % def.slot_cost)
+		tip_body_parts.append("Cycle    %.0fs" % cycle_s)
+
+		# Active energy output on the same line as Cycle
+		if def.output_type == BuildingDef.OutputType.ENERGY:
+			tip_body_parts.append("    +%.0f ⚡" % dyn_output)
+
+		# Production rows (after cycle)
+		if def.output_type == BuildingDef.OutputType.RAW_MINERAL:
+			tip_body_parts.append("\n+%.1f " % dyn_output)
+			tip_body_parts.append(ore_icon)
+		elif def.output_type == BuildingDef.OutputType.CREDITS:
+			tip_body_parts.append("\n+%.0f cr" % dyn_output)
+		elif def.output_type == BuildingDef.OutputType.REFINED_MINERAL:
+			tip_body_parts.append("\n+%.1f refined" % dyn_output)
+
+		# Upkeep / consumption (below production)
+		if dyn_energy < 0.0:
+			tip_body_parts.append("\nUpkeep   %.0f ⚡" % dyn_energy)  # negative value includes sign
+		if def.input_type == BuildingDef.OutputType.RAW_MINERAL and def.input_amount > 0.0:
+			tip_body_parts.append("\nUses     −%.0f " % def.input_amount)
+			tip_body_parts.append(ore_icon)
+
+		if reason != "":
+			tip_body_parts.append("\n\n➡ " + reason)
+		var tip_cost := "%.0f cr" % def.base_cost
 
 		row_panel.mouse_entered.connect(func() -> void:
 			cap_row.add_theme_stylebox_override("panel", cap_hov)
 			if enabled and not _is_at_edge():
 				CursorManager.set_state(CursorManager.State.POINTER)
-			TooltipManager.show_tip(tip_title, tip_body))
+			TooltipManager.show_tip(tip_title, tip_body_parts, tip_cost))
 		row_panel.mouse_exited.connect(func() -> void:
 			cap_row.add_theme_stylebox_override("panel", cap_norm)
 			CursorManager.set_state(CursorManager.State.NORMAL)
 			TooltipManager.hide_tip())
 
+		var cap_overlay := outer
 		if enabled:
 			row_panel.gui_input.connect(func(e: InputEvent) -> void:
 				if e is InputEventMouseButton and (e as InputEventMouseButton).pressed \
 						and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
 					if GameState.spend_credits(cap_def.base_cost):
 						pp.build_in_district(cap_poi, cap_def.building_id)
+						if is_instance_valid(cap_overlay):
+							cap_overlay.queue_free()
+						_active_slot_dropdown = null
 						GameState.planet_progress_changed.emit(cap_planet.seed)
+						_refresh_overview_energy()
 						_build_district_panel(cap_poi, cap_planet))
 
-	root.add_child(outer)
-	root.move_child(outer, card.get_index() + 1)
+	_dd_layer.add_child(outer)
+	# CanvasLayer children use screen-space coordinates directly
+	await get_tree().process_frame
+	if not is_instance_valid(outer):
+		return
+	var card_rect := card.get_global_rect()
+	outer.position            = Vector2(card_rect.position.x, card_rect.end.y)
+	outer.custom_minimum_size = Vector2(card_rect.size.x, 0)
+	_active_slot_dropdown = outer
+
+func _toggle_mineral_dropdown(btn: Control, raw_list: Array, target_key: String, current_tgt: String, poi: POIData, planet: PlanetData, entry: Dictionary) -> void:
+	if _active_slot_dropdown != null and is_instance_valid(_active_slot_dropdown):
+		var prev_btn = _active_slot_dropdown.get_meta("trigger_btn", null)
+		_active_slot_dropdown.queue_free()
+		_active_slot_dropdown = null
+		if prev_btn == btn:
+			return
+
+	if _dd_layer == null or not is_instance_valid(_dd_layer):
+		_dd_layer = CanvasLayer.new()
+		_dd_layer.layer = 120
+		add_child(_dd_layer)
+
+	var outer := PanelContainer.new()
+	outer.set_meta("trigger_btn", btn)
+	var tray_style := StyleBoxFlat.new()
+	tray_style.bg_color = Color(0.05, 0.07, 0.12, 0.95)
+	tray_style.border_color = Color(0.2, 0.25, 0.4, 0.7)
+	tray_style.set_border_width_all(1)
+	tray_style.corner_radius_top_left = 4
+	tray_style.corner_radius_top_right = 4
+	tray_style.corner_radius_bottom_left = 4
+	tray_style.corner_radius_bottom_right = 4
+	tray_style.content_margin_left = 6
+	tray_style.content_margin_right = 6
+	tray_style.content_margin_top = 4
+	tray_style.content_margin_bottom = 4
+	outer.add_theme_stylebox_override("panel", tray_style)
+
+	var tray_h := HBoxContainer.new()
+	tray_h.add_theme_constant_override("separation", 6)
+	outer.add_child(tray_h)
+
+	for alternative: ResourceData in raw_list:
+		var is_current := alternative.resource_id() == current_tgt
+		var alt_btn := Button.new()
+		alt_btn.flat = true
+		alt_btn.focus_mode = Control.FOCUS_NONE
+		alt_btn.custom_minimum_size = Vector2(28, 28)
+		
+		var alt_icon := TextureRect.new()
+		alt_icon.texture = MineralIcon.make(alternative.tier, alternative.display_color)
+		alt_icon.stretch_mode = TextureRect.STRETCH_KEEP_CENTERED
+		alt_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		alt_btn.add_child(alt_icon)
+		alt_icon.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+
+		var alt_style := StyleBoxFlat.new()
+		alt_style.bg_color = Color(0.1, 0.12, 0.2, 0.8)
+		alt_style.border_color = alternative.display_color.darkened(0.3)
+		if is_current:
+			alt_style.bg_color = Color(0.15, 0.25, 0.15, 0.9)
+			alt_style.border_color = Color(0.4, 0.8, 0.4, 0.8)
+		alt_style.set_border_width_all(1)
+		alt_style.corner_radius_top_left = 3
+		alt_style.corner_radius_top_right = 3
+		alt_style.corner_radius_bottom_left = 3
+		alt_style.corner_radius_bottom_right = 3
+		alt_btn.add_theme_stylebox_override("normal", alt_style)
+
+		var alt_hover := alt_style.duplicate() as StyleBoxFlat
+		alt_hover.bg_color = Color(0.15, 0.18, 0.3, 0.95)
+		alt_hover.border_color = alternative.display_color
+		alt_btn.add_theme_stylebox_override("hover", alt_hover)
+		
+		if is_current:
+			alt_btn.disabled = true
+			alt_btn.mouse_default_cursor_shape = Control.CURSOR_ARROW
+		else:
+			alt_btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+
+		var cap_target_key := target_key
+		var cap_alternative := alternative
+		var cap_poi := poi
+		var cap_planet := planet
+		var cap_entry := entry
+		var cap_outer := outer
+		alt_btn.pressed.connect(func() -> void:
+			cap_entry[cap_target_key] = cap_alternative.resource_id()
+			if is_instance_valid(cap_outer):
+				cap_outer.queue_free()
+			_active_slot_dropdown = null
+			_build_district_panel(cap_poi, cap_planet))
+		
+		alt_btn.mouse_entered.connect(func() -> void:
+			if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER)
+			TooltipManager.show_tip("Switch to:", cap_alternative.unique_name))
+		alt_btn.mouse_exited.connect(func() -> void:
+			CursorManager.set_state(CursorManager.State.NORMAL)
+			TooltipManager.hide_tip())
+
+		tray_h.add_child(alt_btn)
+
+	_dd_layer.add_child(outer)
+	await get_tree().process_frame
+	if not is_instance_valid(outer):
+		return
+	var btn_rect := btn.get_global_rect()
+	outer.position = Vector2(btn_rect.position.x, btn_rect.end.y)
 	_active_slot_dropdown = outer
 
 func _build_district_panel(poi: POIData, planet: PlanetData) -> void:
@@ -2347,6 +2698,8 @@ func _build_district_panel(poi: POIData, planet: PlanetData) -> void:
 		old.name = "__freeing_district__"   # free name slot before queue_free
 		old.queue_free()
 		_bar_meta.clear()
+		if _active_slot_dropdown != null and is_instance_valid(_active_slot_dropdown):
+			_active_slot_dropdown.queue_free()
 		_active_slot_dropdown = null
 
 	var pp   := GameState.get_planet(planet.seed)
@@ -2356,12 +2709,51 @@ func _build_district_panel(poi: POIData, planet: PlanetData) -> void:
 	root.add_child(HSeparator.new())
 
 	var header := HBoxContainer.new()
+
+	# Inline rename: click label → LineEdit appears
+	var title_stack := Control.new()
+	title_stack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_stack.custom_minimum_size    = Vector2(0, 22)
+	header.add_child(title_stack)
+
 	var poi_title := Label.new()
 	poi_title.text = poi.label + "  ·  " + poi.type_label()
 	_apply_orbitron(poi_title, 11)
 	poi_title.add_theme_color_override("font_color", Color(1.0, 0.92, 0.55))
-	poi_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	header.add_child(poi_title)
+	poi_title.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	poi_title.mouse_filter = Control.MOUSE_FILTER_STOP
+	title_stack.add_child(poi_title)
+
+	var cap_poi_rename  := poi
+	var cap_planet_ren  := planet
+	var cap_pp_rename   := pp
+	poi_title.gui_input.connect(func(ev: InputEvent) -> void:
+		if not (ev is InputEventMouseButton): return
+		var mb := ev as InputEventMouseButton
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+			poi_title.visible = false
+			var edit := LineEdit.new()
+			edit.text = cap_poi_rename.label
+			_apply_orbitron(edit, 10)
+			edit.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			title_stack.add_child(edit)
+			edit.grab_focus()
+			edit.select_all()
+			var _commit := func(new_name: String) -> void:
+				var trimmed := new_name.strip_edges()
+				if trimmed.is_empty(): trimmed = cap_poi_rename.label
+				# Update POI label and re-key all building entries
+				var old_label := cap_poi_rename.label
+				cap_poi_rename.label = trimmed
+				for b: Dictionary in cap_pp_rename.buildings:
+					if b.get("district_id") == old_label:
+						b["district_id"] = trimmed
+				edit.queue_free()
+				poi_title.text = trimmed + "  ·  " + cap_poi_rename.type_label()
+				poi_title.visible = true
+				GameState.planet_progress_changed.emit(cap_planet_ren.seed)
+			edit.text_submitted.connect(_commit)
+			edit.focus_exited.connect(func() -> void: _commit.call(edit.text)))
 
 	var slots_used  := pp.slots_used_in_district(poi.label)
 	var slots_total := pp.district_slots(poi.label)
@@ -2386,7 +2778,7 @@ func _build_district_panel(poi: POIData, planet: PlanetData) -> void:
 	upg_btn.mouse_entered.connect(func() -> void:
 		if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER)
 		TooltipManager.show_tip("Upgrade District",
-			"Increases slot capacity by 2.\nCost: %d cr" % upg_cost))
+			"Increases slot capacity by 2.", "%d cr" % upg_cost))
 	upg_btn.mouse_exited.connect(func() -> void:
 		CursorManager.set_state(CursorManager.State.NORMAL)
 		TooltipManager.hide_tip())
@@ -2401,15 +2793,6 @@ func _build_district_panel(poi: POIData, planet: PlanetData) -> void:
 	root.add_child(header)
 
 	# District energy balance row
-	var d_energy: float = 0.0
-	for b: Dictionary in pp.buildings_in_district(poi.label):
-		if b.get("constructing", false): continue
-		var bdef := BuildingDef.find(b.get("building_id", ""))
-		if bdef == null: continue
-		var bamt: int = b.get("amount", 1)
-		d_energy += bdef.energy_per_tick * bamt
-		if bdef.output_type == BuildingDef.OutputType.ENERGY:
-			d_energy += bdef.output_amount * bamt
 	var de_row := HBoxContainer.new()
 	var de_lbl := Label.new()
 	de_lbl.text = "District Energy"
@@ -2417,11 +2800,9 @@ func _build_district_panel(poi: POIData, planet: PlanetData) -> void:
 	_apply_orbitron(de_lbl, 8)
 	de_lbl.add_theme_color_override("font_color", Color(0.45, 0.50, 0.65))
 	var de_val := Label.new()
-	var de_sign := "+" if d_energy >= 0.0 else ""
-	de_val.text = de_sign + "%.0f ⚡" % d_energy
+	_active_district_energy_lbl = de_val
+	_refresh_district_energy_lbl()
 	_apply_orbitron(de_val, 8)
-	de_val.add_theme_color_override("font_color",
-		Color(0.85, 0.78, 0.22) if d_energy >= 0.0 else Color(0.85, 0.38, 0.25))
 	de_row.add_child(de_lbl); de_row.add_child(de_val)
 	root.add_child(de_row)
 

@@ -1,10 +1,14 @@
 extends CanvasLayer
 
-var _panel:     PanelContainer
-var _title_lbl: Label
-var _body_lbl:  Label
-var _orbitron:  Font
-var _visible:   bool = false
+var _panel:      PanelContainer
+var _title_lbl:  Label
+var _body_lbl:   RichTextLabel
+var _cost_lbl:   Label
+var _sep:        Control
+var _spacer:     Control
+var _orbitron:   Font
+var _visible:    bool  = false
+var _hide_timer: float = 0.0   # seconds remaining before hide fires
 
 func _ready() -> void:
 	layer = 150
@@ -16,66 +20,139 @@ func _ready() -> void:
 	s.border_width_left  = 1; s.border_width_right  = 1
 	s.border_width_top   = 1; s.border_width_bottom = 1
 	s.border_color       = Color(0.28, 0.35, 0.60, 0.55)
-	s.corner_radius_top_left     = 5
-	s.corner_radius_top_right    = 5
-	s.corner_radius_bottom_left  = 5
-	s.corner_radius_bottom_right = 5
-	s.content_margin_left   = 10
-	s.content_margin_right  = 10
-	s.content_margin_top    = 7
-	s.content_margin_bottom = 7
+	s.corner_radius_top_left     = 5; s.corner_radius_top_right    = 5
+	s.corner_radius_bottom_left  = 5; s.corner_radius_bottom_right = 5
+	s.content_margin_left   = 12; s.content_margin_right  = 12
+	s.content_margin_top    = 8;  s.content_margin_bottom = 8
 	_panel.add_theme_stylebox_override("panel", s)
-	_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_panel.custom_minimum_size = Vector2(120, 0)
+	_panel.mouse_filter          = Control.MOUSE_FILTER_IGNORE
+	_panel.custom_minimum_size   = Vector2(0, 0)
+	_panel.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	_panel.visible = false
 
 	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 3)
-	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_theme_constant_override("separation", 5)
+	vbox.mouse_filter          = Control.MOUSE_FILTER_IGNORE
+	vbox.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	_panel.add_child(vbox)
 
 	_title_lbl = Label.new()
 	_title_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if _orbitron: _title_lbl.add_theme_font_override("font", _orbitron)
-	_title_lbl.add_theme_font_size_override("font_size", 10)
+	_title_lbl.add_theme_font_size_override("font_size", 11)
 	_title_lbl.add_theme_color_override("font_color", Color(1.0, 0.92, 0.55))
-	_title_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+	_title_lbl.autowrap_mode = TextServer.AUTOWRAP_OFF
 	vbox.add_child(_title_lbl)
 
-	_body_lbl = Label.new()
-	_body_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	# Do NOT apply Orbitron font to the body label, as it lacks gliphs for unicode symbols (like ⚡)
-	# which causes baseline offset misalignment / emoji clipping.
-	_body_lbl.add_theme_font_size_override("font_size", 8)
-	_body_lbl.add_theme_color_override("font_color", Color(0.72, 0.78, 0.92))
-	_body_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
+	_body_lbl = RichTextLabel.new()
+	_body_lbl.mouse_filter   = Control.MOUSE_FILTER_IGNORE
+	_body_lbl.bbcode_enabled = true
+	_body_lbl.fit_content    = true
+	_body_lbl.scroll_active  = false
+	_body_lbl.add_theme_font_size_override("normal_font_size", 9)
+	_body_lbl.add_theme_color_override("default_color", Color(0.72, 0.78, 0.92))
+	_body_lbl.custom_minimum_size = Vector2(0, 0)
 	vbox.add_child(_body_lbl)
+
+	# Spacer pushes cost to the bottom
+	_spacer = Control.new()
+	_spacer.custom_minimum_size = Vector2(0, 4)
+	_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_spacer.visible = false
+	vbox.add_child(_spacer)
+
+	# Cost header row: "COST ————"
+	_sep = HBoxContainer.new()
+	_sep.add_theme_constant_override("separation", 6)
+	_sep.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_sep.visible = false
+	var cost_hdr := Label.new()
+	cost_hdr.text = "COST"
+	if _orbitron: cost_hdr.add_theme_font_override("font", _orbitron)
+	cost_hdr.add_theme_font_size_override("font_size", 7)
+	cost_hdr.add_theme_color_override("font_color", Color(0.45, 0.50, 0.70))
+	cost_hdr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_sep.add_child(cost_hdr)
+	vbox.add_child(_sep)
+
+	_cost_lbl = Label.new()
+	_cost_lbl.mouse_filter          = Control.MOUSE_FILTER_IGNORE
+	if _orbitron: _cost_lbl.add_theme_font_override("font", _orbitron)
+	_cost_lbl.add_theme_font_size_override("font_size", 11)
+	_cost_lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.30))
+	_cost_lbl.autowrap_mode         = TextServer.AUTOWRAP_OFF
+	_cost_lbl.horizontal_alignment  = HORIZONTAL_ALIGNMENT_RIGHT
+	_cost_lbl.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	_cost_lbl.visible = false
+	vbox.add_child(_cost_lbl)
 
 	add_child(_panel)
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	if _hide_timer > 0.0:
+		_hide_timer -= delta
+		if _hide_timer <= 0.0:
+			_panel.visible = false
+			_visible       = false
+		return
 	if not _visible:
 		return
 	var mouse := get_viewport().get_mouse_position()
 	var vp    := get_viewport().get_visible_rect().size
-	var pw: float = _panel.size.x if _panel.size.x > 10 else 160.0
-	var ph: float = _panel.size.y if _panel.size.y > 10 else 48.0
-	var pos := mouse + Vector2(10, -ph - 8.0)   # appear above cursor
-	if pos.x + pw > vp.x:
-		pos.x = vp.x - pw - 4.0
-	if pos.x < 4.0:
-		pos.x = 4.0
-	if pos.y < 4.0:
-		pos.y = mouse.y + 14.0   # flip below if too close to top
+	var pw: float = _panel.size.x
+	var ph: float = _panel.size.y
+	var pos := mouse + Vector2(10, -ph - 8.0)
+	if pos.x + pw > vp.x: pos.x = vp.x - pw - 4.0
+	if pos.x < 4.0:       pos.x = 4.0
+	if pos.y < 4.0:       pos.y = mouse.y + 14.0
 	_panel.position = pos
 
-func show_tip(title: String, body: String) -> void:
+## Show a tooltip.
+## body: String or Array — Array elements may be String or ImageTexture (rendered inline).
+## cost: String, Array[String], or Array[Variant] mixing strings and textures.
+func show_tip(title: String, body = "", cost = "") -> void:
 	_title_lbl.text = title
-	_body_lbl.text  = body
-	_body_lbl.visible = not body.is_empty()
-	_panel.visible  = true
-	_visible        = true
+
+	# ── Body ────────────────────────────────────────────────────────
+	_body_lbl.clear()
+	if body is String:
+		_body_lbl.append_text(body as String)
+		_body_lbl.visible = not (body as String).is_empty()
+	elif body is Array:
+		var arr := body as Array
+		for part in arr:
+			if part is String:
+				_body_lbl.append_text(part as String)
+			elif part is ImageTexture or part is Texture2D:
+				_body_lbl.add_image(part as Texture2D, 13, 13)
+		_body_lbl.visible = not arr.is_empty()
+	else:
+		_body_lbl.visible = false
+
+	# ── Cost ────────────────────────────────────────────────────────
+	var cost_lines: Array[String] = []
+	if cost is String and (cost as String) != "":
+		cost_lines.append(cost as String)
+	elif cost is Array:
+		for item in (cost as Array):
+			if item is String and (item as String) != "":
+				cost_lines.append(item as String)
+
+	var has_cost := not cost_lines.is_empty()
+	_spacer.visible   = has_cost
+	_sep.visible      = has_cost
+	_cost_lbl.visible = has_cost
+	if has_cost:
+		_cost_lbl.text = "\n".join(cost_lines)
+
+	_panel.visible = true
+	_hide_timer    = 0.0   # cancel any pending hide
+	_visible       = true
+	_panel.reset_size()    # shrink to content next frame
+
+func set_cost_color(c: Color) -> void:
+	_cost_lbl.add_theme_color_override("font_color", c)
 
 func hide_tip() -> void:
-	_panel.visible = false
-	_visible       = false
+	_cost_lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.30))  # reset to default gold
+	_hide_timer = 0.18   # 180 ms grace period before actually hiding

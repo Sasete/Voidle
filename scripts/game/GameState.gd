@@ -10,7 +10,7 @@ signal asteroid_discovered(slot: int, count: int)
 
 # ── Starting Config (edit these to change new-game defaults) ─────────────────
 ## Starting credits for a new game.
-@export var start_credits:        float = 500.0
+@export var start_credits:        float = 1000.0
 ## Whether Solar View is unlocked from the start.
 @export var start_solar_unlocked: bool  = false
 ## Whether Galaxy View is unlocked from the start.
@@ -76,18 +76,35 @@ func _bootstrap_world() -> void:
 
 func _seed_starting_resources() -> void:
 	var home_pp := get_planet(home_planet_seed)
-	# Give the player R1T1, R1T2, R2T1 to start with
+	var home_pd := get_home_planet()
+
+	# Starting stored resources (all tiers for visual testing)
 	var r1t1 := ResourceData.generate(home_planet_seed, ResourceData.Tag.RAW_MINERAL, 1, 1)
 	var r1t2 := ResourceData.generate(home_planet_seed, ResourceData.Tag.RAW_MINERAL, 1, 2)
+	var r1t3 := ResourceData.generate(home_planet_seed, ResourceData.Tag.RAW_MINERAL, 1, 3)
+	var r1t4 := ResourceData.generate(home_planet_seed, ResourceData.Tag.RAW_MINERAL, 1, 4)
+	var r1t5 := ResourceData.generate(home_planet_seed, ResourceData.Tag.RAW_MINERAL, 1, 5)
 	var r2t1 := ResourceData.generate(home_planet_seed, ResourceData.Tag.RAW_MINERAL, 2, 1)
 	home_pp.stored_resources[r1t1.resource_id()] = 50.0
 	home_pp.stored_resources[r1t2.resource_id()] = 10.0
+	home_pp.stored_resources[r1t3.resource_id()] = 10.0
+	home_pp.stored_resources[r1t4.resource_id()] = 10.0
+	home_pp.stored_resources[r1t5.resource_id()] = 10.0
 	home_pp.stored_resources[r2t1.resource_id()] = 10.0
-	# Register them so the global known_resources dict is populated
-	for rd: ResourceData in [r1t1, r1t2, r2t1]:
+	for rd: ResourceData in [r1t1, r1t2, r1t3, r1t4, r1t5, r2t1]:
 		var key := rd.resource_id()
 		if not known_resources.has(key):
 			known_resources[key] = rd
+
+	# Force home planet deposits: R1 always present, R2 injected at low density
+	var br := get_body_resources_for(home_pd)
+	if not br.resources.has(r2t1.resource_id()):
+		br.resources[r2t1.resource_id()] = r2t1
+
+	# Per-mineral density overrides for home planet
+	if home_pd != null:
+		home_pd.mineral_densities[r1t1.resource_id()] = 0.80
+		home_pd.mineral_densities[r2t1.resource_id()] = 0.10
 
 func _build_home_solar() -> SolarData:
 	# Use the galaxy star's own seed so the system matches what the galaxy would generate
@@ -249,6 +266,8 @@ func save() -> void:
 		"home_planet_seed":     home_planet_seed,
 		"home_star_idx":        home_star_idx,
 		"home_planet_idx":      home_planet_idx,
+		"unlocked_skills":      get_node("/root/SkillTree").unlocked_skills if has_node("/root/SkillTree") else ["root"],
+		"skill_levels":         get_node("/root/SkillTree").skill_levels if has_node("/root/SkillTree") else {},
 		"planet_progress":      {},
 	}
 	for seed_val in _planet_progress:
@@ -280,6 +299,17 @@ func load_save() -> bool:
 	home_planet_idx          = data.get("home_planet_idx",      -1)
 	discovered_asteroids     = data.get("discovered_asteroids", [])
 	asteroid_scan_counts     = data.get("asteroid_scan_counts", {})
+	
+	if data.has("unlocked_skills"):
+		get_node("/root/SkillTree").unlocked_skills = data["unlocked_skills"]
+	else:
+		get_node("/root/SkillTree").unlocked_skills = ["root"]
+		
+	if data.has("skill_levels"):
+		get_node("/root/SkillTree").skill_levels = data["skill_levels"]
+	else:
+		get_node("/root/SkillTree").skill_levels = {}
+		
 	for key in data.get("planet_progress", {}).keys():
 		var seed_val: int    = int(key)
 		var d: Dictionary    = data["planet_progress"][key]
@@ -307,5 +337,7 @@ func delete_save() -> void:
 	home_planet_idx      = -1
 	_home_solar          = null
 	home_galaxy          = null
+	get_node("/root/SkillTree").unlocked_skills = ["root"]
+	get_node("/root/SkillTree").skill_levels = {}
 	_planet_progress.clear()
 	_bootstrap_world()

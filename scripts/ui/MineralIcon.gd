@@ -15,11 +15,22 @@ static var _T1: Array[int] = [
 	131070, 131070, 65532, 32760, 8160, 0, 0, 0,
 ]
 
-# T2: tall hexagonal crystal shard
+# T2: crystal prism — flat top, wide middle, pointed bottom
 static var _T2: Array[int] = [
-	768, 1920, 4032, 8160, 16368, 32760,
-	65532, 65532, 65532,
-	32760, 16368, 8160, 4032, 1920, 768, 0, 0, 0,
+	0, 0,
+	4032,   # row 2  flat top 6px  (cols 6-11)
+	8160,   # row 3  8px  (cols 5-12)
+	16368,  # row 4  10px (cols 4-13)
+	16368,  # row 5
+	16368,  # row 6
+	16368,  # row 7
+	16368,  # row 8
+	16368,  # row 9
+	8160,   # row 10 tapering
+	4032,   # row 11
+	1920,   # row 12 4px
+	768,    # row 13 bottom point 2px
+	0, 0, 0, 0,
 ]
 
 # T3: solid diamond gem (rhombus)
@@ -63,10 +74,16 @@ static var _T1_detail: Array[int] = [
 	512, 768, 256, 128, 192, 0, 0, 0, 0, 0, 0, 0,
 ]
 
-# T2: bright vertical spine facet
+# T2: bright right-edge facet (light hits the right crystal face)
 static var _T2_detail: Array[int] = [
-	0, 512, 512, 512, 512, 512, 512, 512, 512,
-	512, 512, 512, 512, 512, 0, 0, 0, 0,
+	0, 0,
+	2048,  # row 2  col 11 (right of flat top)
+	4096,  # row 3  col 12
+	8192,  # row 4  col 13
+	8192,  # row 5
+	4096,  # row 6
+	2048,  # row 7
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 ]
 
 # T3: upper triangular facet

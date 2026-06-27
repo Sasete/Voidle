@@ -143,20 +143,31 @@ static func _resource_color(res_tag: Tag, res_rarity: int, res_tier: int) -> Col
 		Tag.FOOD:   return Color(0.4, 0.9, 0.3)
 		Tag.EXOTIC: return Color(0.9, 0.4, 1.0)
 
-	var r: float = clamp(float(res_rarity - 1) / 14.0, 0.0, 1.0)
+	# Hue anchors at specific rarities — large early jumps so R1/R2/R3 are clearly distinct.
+	# Anchors: R1=blue, R2=green, R3=teal, R5=orange, R8=purple, R11=magenta, R15=gold
+	const HUE_ANCHORS: Array[float] = [
+		0.60,  # R1  steel blue
+		0.35,  # R2  green
+		0.50,  # R3  teal
+		0.47,  # R4  cyan-teal
+		0.14,  # R5  amber/orange
+		0.10,  # R6  orange-red
+		0.05,  # R7  red
+		0.78,  # R8  violet-purple
+		0.76,  # R9  purple
+		0.82,  # R10 blue-purple
+		0.88,  # R11 magenta
+		0.92,  # R12 pink
+		0.95,  # R13 hot pink
+		0.06,  # R14 warm gold
+		0.12,  # R15 gold
+	]
+	var idx: int   = clampi(res_rarity - 1, 0, HUE_ANCHORS.size() - 1)
+	var hue: float = HUE_ANCHORS[idx]
 
-	# Hue arc: R1=blue-gray(0.60) → R5=teal(0.48) → R8=green(0.35)
-	#          → R11=purple(0.78) → R15=gold(0.12)
-	var hue: float
-	if r < 0.33:
-		hue = lerp(0.60, 0.35, r / 0.33)
-	elif r < 0.66:
-		hue = lerp(0.35, 0.78, (r - 0.33) / 0.33)
-	else:
-		hue = lerp(0.78, 0.12, (r - 0.66) / 0.34)
-
-	# Saturation: always visible — even R1 has strong color
-	var sat: float = lerp(0.60, 0.92, r)
+	var r: float   = clamp(float(res_rarity - 1) / 14.0, 0.0, 1.0)
+	# Saturation: punchy from the start
+	var sat: float = lerp(0.70, 0.95, r)
 
 	# Brightness: tier 1 = darker raw ore, tier 5 = bright processed material
 	var t: float   = clamp(float(res_tier - 1) / 4.0, 0.0, 1.0)

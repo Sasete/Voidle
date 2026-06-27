@@ -36,8 +36,12 @@ static func get_shader_path(type: Type) -> String:
 @export var specular_strength: float = 1.0    # 0=no ocean glint (barren/arid)
 @export var city_lights: float = 0.6          # night side glow
 @export var irregularity: float = 0.3
-## Deposit richness: multiplier on mine output and speed (0.5 = sparse, 2.0 = very rich).
+## Overall deposit richness for this body (used as base for per-mineral density).
 @export var deposit_density: float = 1.0
+
+## Per-mineral density overrides: { resource_id -> float (0.0-2.0+) }.
+## When set, overrides the procedural density for that specific mineral.
+@export var mineral_densities: Dictionary = {}
 
 @export var custom_pois: Array[POIData] = []
 @export var moons: Array[PlanetData] = []

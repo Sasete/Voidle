@@ -40,7 +40,10 @@ static func generate(b_seed: int, r_min: int, r_max: int) -> BodyResources:
 
 	# Bodies don't always expose every rarity in their range — add some variety
 	for r in range(r_min, r_max + 1):
-		# All rarities in the body's range are guaranteed to appear
+		# Higher rarities have a chance of not appearing (rarer = harder to find)
+		var chance: float = 1.0 if r == r_min else 0.65
+		if rng.randf() > chance:
+			continue
 		var rd := ResourceData.generate(b_seed, ResourceData.Tag.RAW_MINERAL, r, 1)
 		br.resources[rd.resource_id()] = rd
 

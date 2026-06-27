@@ -86,10 +86,20 @@ func build_in_district(district: POIData, building_id: String,
 		has_spaceport = true
 	return true
 
+## Stack one more of an existing building — goes through construction before merging.
 func stack_building_unchecked(district_label: String, building_id: String) -> bool:
 	for b: Dictionary in buildings:
-		if b.get("district_id") == district_label and b.get("building_id") == building_id:
-			b["amount"] = b.get("amount", 1) + 1
+		if b.get("district_id") == district_label and b.get("building_id") == building_id \
+				and not b.get("constructing", false):
+			# Add a temporary construction entry; ProductionManager merges it on completion
+			var entry := {
+				"district_id": district_label,
+				"building_id": building_id,
+				"amount": 1,
+				"constructing": true,
+				"merge_into": buildings.find(b),
+			}
+			buildings.append(entry)
 			return true
 	return false
 

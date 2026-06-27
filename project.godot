@@ -24,6 +24,7 @@ ProductionManager="*res://scripts/game/ProductionManager.gd"
 TooltipManager="*res://scripts/system/TooltipManager.gd"
 HUDManager="*res://scripts/system/HUDManager.gd"
 DevConsole="*res://scripts/system/DevConsole.gd"
+SkillTree="*res://scripts/game/SkillTree.gd"
 
 [display]
 

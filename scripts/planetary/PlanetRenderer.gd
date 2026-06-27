@@ -6,6 +6,7 @@ signal planet_clicked(screen_pos: Vector2)
 
 var _dragging := false
 var _drag_velocity := 0.0
+var _drag_total_px := 0.0
 var _rotation_offset := 0.0
 var _last_mouse_x := 0.0
 var _planet_radius_px := 0.0
@@ -49,6 +50,20 @@ func _update_light_direction() -> void:
 	(material as ShaderMaterial).set_shader_parameter("light_direction", ld)
 
 func _input(event: InputEvent) -> void:
+	# Absolutely block and ignore any click, drag, or hover events if SkillTreeView is active
+	var root := get_tree().root
+	var is_tree_open := false
+	for child in root.get_children():
+		var script = child.get_script()
+		if script != null and script.resource_path.ends_with("SkillTreeView.gd"):
+			is_tree_open = true
+			break
+			
+	if is_tree_open:
+		_dragging = false
+		_drag_velocity = 0.0
+		return
+			
 	_update_radius()
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		var local := get_local_mouse_position()
@@ -60,14 +75,31 @@ func _input(event: InputEvent) -> void:
 		if event.pressed and dist < _planet_radius_px:
 			_dragging = true
 			_drag_velocity = 0.0
+			_drag_total_px = 0.0
 			_last_mouse_x = float(event.position.x)
 		elif not event.pressed:
-			if _dragging and abs(_drag_velocity) < 0.002:
+			# Only treat as a tap if total drag distance was small
+			if _dragging and _drag_total_px < 8.0:
 				planet_clicked.emit(event.position)
 			_dragging = false
+			_drag_total_px = 0.0
 
 	if event is InputEventMouseMotion and _dragging:
+		root = get_tree().root
+		is_tree_open = false
+		for child in root.get_children():
+			var script = child.get_script()
+			if script != null and script.resource_path.ends_with("SkillTreeView.gd"):
+				is_tree_open = true
+				break
+				
+		if is_tree_open:
+			_dragging = false
+			_drag_velocity = 0.0
+			return
+				
 		var delta_x: float = float(event.position.x) - _last_mouse_x
+		_drag_total_px += abs(delta_x)
 		_last_mouse_x = float(event.position.x)
 		# 1:1 surface mapping: dragging by r_px = π radians rotation
 		var delta_rot: float = delta_x / _planet_radius_px
