@@ -2,7 +2,12 @@
 extends CanvasLayer
 
 var _credits_lbl: Label
+## Current displayed value (tweened, may lag behind GameState.credits)
+var _credits_display: float = 0.0
+var _credits_tween: Tween = null
 var _orbitron: Font
+## The credits panel node — exposed so PlanetaryView can read its screen height for toast offset.
+var credits_panel: PanelContainer = null
 
 static func fmt_credits(val: float) -> String:
 	if val >= 1_000_000_000.0:
@@ -65,9 +70,34 @@ func _ready() -> void:
 	panel.offset_bottom = -12.0
 
 	add_child(panel)
+	credits_panel = panel
+
+	_credits_display = GameState.credits
 
 	GameState.credits_changed.connect(_on_credits_changed)
 
-func _on_credits_changed(val: float) -> void:
-	if _credits_lbl:
-		_credits_lbl.text = fmt_credits(val)
+func _on_credits_changed(new_val: float) -> void:
+	if not is_instance_valid(_credits_lbl):
+		return
+
+	var old_val := _credits_display
+	var gained  := new_val > old_val
+
+	# Kill any running tween so we start fresh from the current displayed value
+	if _credits_tween and _credits_tween.is_valid():
+		_credits_tween.kill()
+
+	_credits_tween = create_tween()
+
+	# Briefly flash the label colour to signal gain / loss
+	var flash_col := Color(0.55, 1.0, 0.35) if gained else Color(1.0, 0.55, 0.25)
+	_credits_tween.tween_property(_credits_lbl, "theme_override_colors/font_color",
+		flash_col, 0.12).set_ease(Tween.EASE_OUT)
+	_credits_tween.parallel().tween_method(
+		func(v: float) -> void:
+			_credits_display = v
+			if is_instance_valid(_credits_lbl):
+				_credits_lbl.text = fmt_credits(v),
+		old_val, new_val, 0.55).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
+	_credits_tween.tween_property(_credits_lbl, "theme_override_colors/font_color",
+		Color(1.0, 0.92, 0.55), 0.3).set_ease(Tween.EASE_IN)

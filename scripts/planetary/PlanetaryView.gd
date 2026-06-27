@@ -142,6 +142,10 @@ func load_planet(data: PlanetData) -> void:
 	GameState.active_planet_seed = data.seed
 	GameState.cache_planet_data(data)
 	_setup_material(data)
+	# Sync light state to the renderer for this planet
+	planet_renderer.local_time_offset = data.local_time_offset
+	planet_renderer.light_angle       = _light_angle
+	planet_renderer._update_light_direction()
 	_update_panel(data)
 	_build_companion_moons(data)
 	_build_rings(data)
@@ -540,29 +544,29 @@ func _details_row(parent: VBoxContainer, label: String, value: String,
 func _mineral_icon_cell(rd: ResourceData, show_count: bool, stored: float = 0.0) -> PanelContainer:
 	var cell := PanelContainer.new()
 	var s := StyleBoxFlat.new()
-	var border_col := rd.display_color.darkened(0.15)
-	border_col.a = 0.70
-	s.bg_color    = rd.display_color.darkened(0.60)
-	s.bg_color.a  = 0.45
+	var border_col := rd.display_color.lightened(0.05)
+	border_col.a = 0.80
+	s.bg_color    = rd.display_color.darkened(0.40)
+	s.bg_color.a  = 0.70
 	s.border_color = border_col
 	s.border_width_left = 1; s.border_width_right  = 1
 	s.border_width_top  = 1; s.border_width_bottom = 1
-	s.corner_radius_top_left     = 3; s.corner_radius_top_right    = 3
-	s.corner_radius_bottom_left  = 3; s.corner_radius_bottom_right = 3
-	s.content_margin_left   = 4; s.content_margin_right  = 4
-	s.content_margin_top    = 3; s.content_margin_bottom = 3
+	s.corner_radius_top_left     = 4; s.corner_radius_top_right    = 4
+	s.corner_radius_bottom_left  = 4; s.corner_radius_bottom_right = 4
+	s.content_margin_left   = 5; s.content_margin_right  = 5
+	s.content_margin_top    = 4; s.content_margin_bottom = 4
 	cell.add_theme_stylebox_override("panel", s)
 	cell.mouse_filter = Control.MOUSE_FILTER_STOP
 
 	var inner := HBoxContainer.new()
-	inner.add_theme_constant_override("separation", 3)
+	inner.add_theme_constant_override("separation", 4)
 	inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	cell.add_child(inner)
 
 	var tex := MineralIcon.make(rd.tier, rd.display_color)
 	var icon_rect := TextureRect.new()
 	icon_rect.texture = tex
-	icon_rect.custom_minimum_size = Vector2(12, 12)
+	icon_rect.custom_minimum_size = Vector2(18, 18)
 	icon_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	icon_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	inner.add_child(icon_rect)
@@ -570,8 +574,8 @@ func _mineral_icon_cell(rd: ResourceData, show_count: bool, stored: float = 0.0)
 	if show_count:
 		var count_lbl := Label.new()
 		count_lbl.text = "%.0f" % stored if stored > 0.0 else "0"
-		_apply_orbitron(count_lbl, 8)
-		count_lbl.add_theme_color_override("font_color", Color(0.92, 0.95, 1.0))
+		_apply_orbitron(count_lbl, 9)
+		count_lbl.add_theme_color_override("font_color", Color(0.95, 0.97, 1.0))
 		count_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		inner.add_child(count_lbl)
 
@@ -619,51 +623,28 @@ func _details_section(parent: VBoxContainer, title: String) -> void:
 func _fill_uncolonized_details(vbox: VBoxContainer, data: PlanetData) -> void:
 	_fill_modifiers_section(vbox, data)
 	_details_section(vbox, "PLANET INFO")
-	_details_row(vbox, "Type",  PlanetData.Type.keys()[data.planet_type].capitalize())
+	_details_row(vbox, "Type", PlanetData.Type.keys()[data.planet_type].capitalize())
 	var size_str := "Small" if data.planet_size < 0.8 else ("Large" if data.planet_size > 1.3 else "Medium")
-	_details_row(vbox, "Size",  size_str)
+	_details_row(vbox, "Size", size_str)
 	if data.has_atmosphere:
 		var atm := "Thin" if data.atmosphere_density < 0.4 else ("Dense" if data.atmosphere_density > 0.7 else "Standard")
 		_details_row(vbox, "Atm.", atm)
 	else:
-		_details_row(vbox, "Atm.",  "None", Color(0.6, 0.4, 0.4))
-
-	_details_section(vbox, "RESOURCES")
-	var br_unc := GameState.get_body_resources(data.seed, 1, 3)
-	var icon_row_unc := HFlowContainer.new()
-	icon_row_unc.add_theme_constant_override("h_separation", 4)
-	icon_row_unc.add_theme_constant_override("v_separation", 4)
-	for rd: ResourceData in br_unc.as_array():
-		icon_row_unc.add_child(_mineral_icon_cell(rd, false))
-	vbox.add_child(icon_row_unc)
-
+		_details_row(vbox, "Atm.", "None", Color(0.6, 0.4, 0.4))
 	_details_section(vbox, "STATUS")
 	_details_row(vbox, "Colony", "Not established", Color(0.65, 0.45, 0.35))
 
-func _fill_colonized_details(vbox: VBoxContainer, data: PlanetData, pp: PlanetProgress) -> void:
-	var name_lbl := Label.new()
-	name_lbl.text = data.planet_name
-	_apply_orbitron(name_lbl, 13)
-	name_lbl.add_theme_color_override("font_color", Color(1.0, 0.92, 0.55))
-	vbox.add_child(name_lbl)
-
+func _fill_colonized_details(vbox: VBoxContainer, data: PlanetData, _pp: PlanetProgress) -> void:
 	_fill_modifiers_section(vbox, data)
-
-	_details_section(vbox, "COLONY")
-	_details_row(vbox, "Level",     "Lv %d" % pp.level, Color(1.0, 0.88, 0.4))
-	_details_row(vbox, "Districts", "%d / %d" % [data.custom_pois.size(), pp.max_districts])
-
-	_details_section(vbox, "DEPOSITS")
-	var br := GameState.get_body_resources(data.seed, 1, 3)
-	for rd: ResourceData in br.as_array():
-		var key: String = rd.resource_id()
-		var stored: float = pp.stored_resources.get(key, 0.0)
-		_mineral_row(vbox, rd, stored)
-
 	_details_section(vbox, "PLANET INFO")
 	_details_row(vbox, "Type", PlanetData.Type.keys()[data.planet_type].capitalize())
 	var size_str := "Small" if data.planet_size < 0.8 else ("Large" if data.planet_size > 1.3 else "Medium")
 	_details_row(vbox, "Size", size_str)
+	if data.has_atmosphere:
+		var atm := "Thin" if data.atmosphere_density < 0.4 else ("Dense" if data.atmosphere_density > 0.7 else "Standard")
+		_details_row(vbox, "Atm.", atm)
+	else:
+		_details_row(vbox, "Atm.", "None", Color(0.6, 0.4, 0.4))
 
 ## Active building count for a district (for night-light glow size).
 ## Excludes constructing and user-paused buildings.
@@ -1025,12 +1006,13 @@ func _update_cursor() -> void:
 	CursorManager.set_state(CursorManager.State.NORMAL)
 
 func _apply_light_angle() -> void:
-	if planet_renderer == null or planet_renderer.material == null:
+	if planet_renderer == null:
 		return
-	var lx := cos(_light_angle) * 0.85
-	var lz := sin(_light_angle) * 0.55
-	var ld := Vector3(lx, -0.45, lz).normalized()
-	(planet_renderer.material as ShaderMaterial).set_shader_parameter("light_direction", ld)
+	# Just update the value — PlanetRenderer._process calls _update_light_direction()
+	# at the END of every frame (after both parent and child _process have run),
+	# so light_direction is always computed with fresh rotation_offset + light_angle.
+	planet_renderer.light_angle = _light_angle
+
 
 func _rotate_to_lon(lon_deg: float, duration: float = 0.45) -> void:
 	var target  := fposmod(deg_to_rad(lon_deg), TAU)
@@ -1059,13 +1041,16 @@ func _build_planet_overview(data: PlanetData) -> void:
 	_active_district_poi = null   # overview shown — don’t auto-reopen on construction
 
 	var pp := GameState.get_planet(data.seed)
-	if not pp.is_colonized:
-		return   # uncolonized: details panel already shows info
 
 	var root := VBoxContainer.new()
 	root.name = "DistrictBuildPanel"
 	root.add_theme_constant_override("separation", 8)
 	root.add_child(HSeparator.new())
+
+	if not pp.is_colonized:
+		_build_resources_section(root, data, pp)
+		panel_content.add_child(root)
+		return
 
 	# Planet name + level
 	var name_lbl := Label.new()
@@ -1138,6 +1123,8 @@ func _build_planet_overview(data: PlanetData) -> void:
 		e_row.mouse_exited.connect(func() -> void:
 			TooltipManager.hide_tip())
 
+	_build_resources_section(root, data, pp)
+
 	# POI list
 	if not data.custom_pois.is_empty():
 		var sep := HSeparator.new()
@@ -1161,6 +1148,42 @@ func _build_planet_overview(data: PlanetData) -> void:
 	root.add_child(add_dist_card)
 
 	panel_content.add_child(root)
+
+func _build_resources_section(parent: VBoxContainer, data: PlanetData, pp: PlanetProgress) -> void:
+	var sep := HSeparator.new()
+	var sep_s := StyleBoxFlat.new()
+	sep_s.bg_color = Color(0.2, 0.25, 0.4, 0.35)
+	sep.add_theme_stylebox_override("separator", sep_s)
+	parent.add_child(sep)
+
+	var title := Label.new()
+	title.text = "RESOURCES"
+	_apply_orbitron(title, 8)
+	title.add_theme_color_override("font_color", Color(0.40, 0.45, 0.65))
+	parent.add_child(title)
+
+	var br := GameState.get_body_resources(data.seed, 1, 3)
+	if br.as_array().is_empty():
+		var none_lbl := Label.new()
+		none_lbl.text = "No deposits detected"
+		_apply_orbitron(none_lbl, 8)
+		none_lbl.add_theme_color_override("font_color", Color(0.45, 0.45, 0.55))
+		parent.add_child(none_lbl)
+		return
+
+	if pp.is_colonized:
+		# Show name + stored amount per resource
+		for rd: ResourceData in br.as_array():
+			var stored: float = pp.stored_resources.get(rd.resource_id(), 0.0)
+			_mineral_row(parent, rd, stored)
+	else:
+		# Show icon grid — deposits are visible but not yet harvested
+		var icon_flow := HFlowContainer.new()
+		icon_flow.add_theme_constant_override("h_separation", 5)
+		icon_flow.add_theme_constant_override("v_separation", 5)
+		for rd: ResourceData in br.as_array():
+			icon_flow.add_child(_mineral_icon_cell(rd, false))
+		parent.add_child(icon_flow)
 
 func _build_district_overview_card(poi: POIData, planet: PlanetData, pp: PlanetProgress,
 		_panel_content: VBoxContainer, _root: VBoxContainer) -> PanelContainer:
@@ -1455,17 +1478,35 @@ func _get_toast_container() -> VBoxContainer:
 	tc.grow_vertical   = Control.GROW_DIRECTION_BEGIN   # stack upward
 	tc.grow_horizontal = Control.GROW_DIRECTION_END
 	tc.custom_minimum_size = Vector2(260, 0)
-	tc.offset_left   = 14.0
-	tc.offset_bottom = -14.0
+	tc.offset_left = 14.0
 	tc.add_theme_constant_override("separation", 5)
 	tc.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(tc)
 	_toast_container = tc
 	return tc
 
+## Measures the credits panel height and updates the toast container offset so
+## toasts always stack just above the credits bar. Safe to call every time.
+func _reanchor_toast_above_credits() -> void:
+	var tc := _get_toast_container()
+	# HUDManager lives on a CanvasLayer sibling — find it in the scene tree
+	var hud: Node = get_tree().root.find_child("HUDManager", true, false)
+	var credits_h: float = 38.0   # fallback
+	if hud != null:
+		var cp = hud.get("credits_panel")
+		if cp != null and is_instance_valid(cp as Node):
+			var real_h: float = (cp as Control).size.y
+			if real_h > 4.0:
+				credits_h = real_h
+	# credits panel: offset_bottom = -12, height = credits_h
+	# gap between credits top and toast bottom = 8px
+	tc.offset_bottom = -(12.0 + credits_h + 8.0)
+
 ## Shows a brief construction-complete notification at the bottom-left,
 ## then fades it out after a few seconds.
 func _show_construction_toast(building_name: String, district_label: String) -> void:
+	# Re-measure credits panel height each time in case it changed after layout
+	_reanchor_toast_above_credits()
 	var tc := _get_toast_container()
 
 	# ── Outer panel ─────────────────────────────────────────────────────────

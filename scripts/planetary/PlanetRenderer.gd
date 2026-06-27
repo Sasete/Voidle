@@ -9,6 +9,10 @@ var _drag_velocity := 0.0
 var _rotation_offset := 0.0
 var _last_mouse_x := 0.0
 var _planet_radius_px := 0.0
+## Global light angle (shared time-of-day clock, advances in PlanetaryView._process)
+var light_angle: float = 0.0
+## Per-planet offset so each world has its own "local noon" position
+var local_time_offset: float = 0.0
 
 func _ready() -> void:
 	pass  # material assigned externally
@@ -27,6 +31,22 @@ func set_rotation_offset(val: float) -> void:
 	_rotation_offset = fposmod(val, TAU)
 	if material:
 		(material as ShaderMaterial).set_shader_parameter("rotation_offset", _rotation_offset)
+		# Note: light_direction is recomputed every frame in _process;
+		# calling _update_light_direction here too ensures tweens stay in sync.
+		_update_light_direction()
+
+func _update_light_direction() -> void:
+	if material == null:
+		return
+	# eff = global_time + planet_local_offset + surface_rotation
+	# Adding rotation_offset means the light rotates WITH the terrain:
+	# a landmass that's in night stays in night as you spin the planet,
+	# giving the feel of a camera orbiting a stationary world.
+	var eff: float = light_angle + local_time_offset + _rotation_offset
+	var lx := cos(eff) * 0.85
+	var lz := sin(eff) * 0.55
+	var ld := Vector3(lx, -0.45, lz).normalized()
+	(material as ShaderMaterial).set_shader_parameter("light_direction", ld)
 
 func _input(event: InputEvent) -> void:
 	_update_radius()
@@ -55,6 +75,7 @@ func _input(event: InputEvent) -> void:
 		_drag_velocity = -delta_rot
 		if material:
 			material.set_shader_parameter("rotation_offset", _rotation_offset)
+			# light_direction synced at end of _process every frame
 
 func _process(_delta: float) -> void:
 	if not _dragging and abs(_drag_velocity) > 0.0001:
@@ -62,3 +83,8 @@ func _process(_delta: float) -> void:
 		_rotation_offset = fposmod(_rotation_offset + _drag_velocity, TAU)
 		if material:
 			material.set_shader_parameter("rotation_offset", _rotation_offset)
+	# Always sync light direction at the END of every frame so both
+	# rotation_offset (updated above or in _input) and light_angle
+	# (updated by PlanetaryView._process which runs before us as the parent)
+	# are fully up-to-date before the GPU renders.
+	_update_light_direction()

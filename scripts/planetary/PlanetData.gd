@@ -38,6 +38,11 @@ static func get_shader_path(type: Type) -> String:
 @export var irregularity: float = 0.3
 @export var custom_pois: Array[POIData] = []
 @export var moons: Array[PlanetData] = []
+## Longitude offset (radians) that anchors this planet's "local time".
+## The night-side is always at (global_light_angle + local_time_offset - rotation_offset)
+## from the camera's perspective, so the terminator stays fixed in world space
+## and the surface texture appears to rotate beneath a stationary sun.
+@export var local_time_offset: float = 0.0
 
 # Ring system
 @export var has_rings:   bool  = false
@@ -205,6 +210,12 @@ static func _apply_type_defaults(data: PlanetData, rng: RandomNumberGenerator) -
 				data.ring_outer = rng.randf_range(1.75, 2.20)
 				var hue := rng.randf_range(0.07, 0.14)   # warm tan/gold
 				data.ring_color = Color.from_hsv(hue, rng.randf_range(0.15, 0.45), rng.randf_range(0.65, 0.90), rng.randf_range(0.50, 0.72))
+
+	# Each planet gets a unique "local noon" position so that when you first
+	# arrive, the lit side faces you at a variety of angles — and the terminator
+	# stays fixed in world-space as you rotate the globe.
+	data.local_time_offset = rng.randf_range(0.0, TAU)
+
 
 static func _generate_name_with_seed(s: int) -> String:
 	var rng := RandomNumberGenerator.new()
