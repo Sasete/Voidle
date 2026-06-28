@@ -39,7 +39,8 @@ var _toast_container: VBoxContainer = null
 ## Maps building pm_key -> bool indicating if its mineral switcher tray is expanded
 var _open_mineral_switchers: Dictionary = {}
 
-
+## Live district construction progress bars.
+var _district_pbars: Dictionary = {}
 func _make_system(root: PlanetData) -> Array[PlanetData]:
 	var arr: Array[PlanetData] = [root]
 	for m in root.moons:
@@ -59,7 +60,11 @@ func _ready() -> void:
 	GameState.planet_progress_changed.connect(func(_s: int) -> void:
 		_build_system_panel()
 		if current_data != null:
-			_build_details_panel(current_data))
+			_build_details_panel(current_data)
+			if _active_district_poi == null:
+				_build_planet_overview(current_data)
+			else:
+				_build_district_panel(_active_district_poi, current_data))
 	_refresh_solar_btn()
 
 	# load from transition if navigating from SolarView or first launch
@@ -429,6 +434,9 @@ func _spawn_district(data: PlanetData, lbl: String, def: DistrictDef) -> void:
 	poi.type_tag     = DistrictDef.Type.keys()[def.id].to_lower()
 	poi.placement    = def.placement
 	poi.light_intensity = 0.0 if def.placement == LocationFinder.Placement.ANY else 1.0
+	poi.constructing = true
+	poi.construct_progress = 0.0
+	poi.construct_duration = def.construction_duration
 
 	# Pre-seed LocationFinder with existing district positions so new ones spread out.
 	# Same-type districts use double the avoidance angle to push them further apart.
@@ -475,6 +483,9 @@ func _build_details_panel(data: PlanetData) -> void:
 	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	container.add_child(root)
 	_details_panel = root
+
+	if not ProductionManager.building_progress_changed.is_connected(_on_production_update):
+		ProductionManager.building_progress_changed.connect(_on_production_update)
 
 	# ── Toggle button ─────────────────────────────────────────────────────────
 	var toggle_btn := Button.new()
@@ -1250,6 +1261,26 @@ func _process(delta: float) -> void:
 		var _oc: Control = planet_renderer.get_parent()
 		_orbital_layer._planet_center   = planet_renderer.global_position + planet_renderer.size * 0.5 - _oc.get_global_rect().position
 		_orbital_layer.queue_redraw()
+		
+	if current_data != null:
+		var any_finished = false
+		for poi_label in _district_pbars:
+			var pbar: ProgressBar = _district_pbars[poi_label]
+			if is_instance_valid(pbar):
+				for poi: POIData in current_data.custom_pois:
+					if poi.label == poi_label:
+						if poi.constructing:
+							# Smooth UI update
+							poi.construct_progress += delta / max(0.1, poi.construct_duration)
+							if poi.construct_progress >= 1.0:
+								poi.construct_progress = 1.0
+								poi.constructing = false
+								any_finished = true
+						pbar.value = poi.construct_progress * 100.0
+						break
+		if any_finished:
+			GameState.planet_progress_changed.emit(current_data.seed)
+
 	if not _rocket_anim.is_empty():
 		_tick_rocket_anim(delta)
 
@@ -1512,6 +1543,28 @@ func _build_district_overview_card(poi: POIData, planet: PlanetData, pp: PlanetP
 	t_lbl.add_theme_color_override("font_color", Color(0.42, 0.48, 0.68))
 
 	info.add_child(n_lbl); info.add_child(t_lbl)
+
+	if poi.constructing:
+		var pbar := ProgressBar.new()
+		pbar.value = poi.construct_progress * 100.0
+		pbar.custom_minimum_size = Vector2(0, 4)
+		pbar.show_percentage = false
+		var bg_s := StyleBoxFlat.new()
+		bg_s.bg_color = Color(0.1, 0.1, 0.15)
+		var fg_s := StyleBoxFlat.new()
+		fg_s.bg_color = Color(0.3, 0.7, 0.4)
+		pbar.add_theme_stylebox_override("background", bg_s)
+		pbar.add_theme_stylebox_override("fill", fg_s)
+		info.add_child(pbar)
+		t_lbl.text = "Constructing..."
+		
+		# Register for live updates
+		_district_pbars[poi.label] = pbar
+		pbar.tree_exited.connect(func():
+			if _district_pbars.get(poi.label) == pbar:
+				_district_pbars.erase(poi.label)
+		)
+
 	hbox.add_child(info)
 
 	# Whole card clickable — no separate arrow button
@@ -1523,15 +1576,21 @@ func _build_district_overview_card(poi: POIData, planet: PlanetData, pp: PlanetP
 	hov_s2.bg_color = Color(0.10, 0.14, 0.28, 0.92)
 	card.mouse_entered.connect(func() -> void:
 		cap_card.add_theme_stylebox_override("panel", hov_s2)
+		if cap_poi.constructing:
+			TooltipManager.show_tip("Constructing", "This District is not fully operational yet.")
 		if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER))
 	card.mouse_exited.connect(func() -> void:
 		cap_card.add_theme_stylebox_override("panel", norm_s2)
+		TooltipManager.hide_tip()
 		CursorManager.set_state(CursorManager.State.NORMAL))
 	card.gui_input.connect(func(e: InputEvent) -> void:
 		if e is InputEventMouseButton and (e as InputEventMouseButton).pressed \
 				and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
 			_select_district_on_planet(cap_poi.label)
 			_rotate_to_lon(cap_poi.lon_deg)
+			if cap_poi.constructing:
+				TooltipManager.show_tip("Constructing", "This District is not fully operational yet.")
+				return
 			_build_district_panel(cap_poi, cap_planet))
 	return card
 
@@ -1631,9 +1690,15 @@ func _build_district_type_row(data: PlanetData, def: DistrictDef,
 	btn.flat = true
 	btn.text = "%s  %s" % [def.icon, def.display_name]
 	_apply_orbitron(btn, 9)
-	btn.add_theme_color_override("font_color",       Color(0.75, 0.82, 1.0))
-	btn.add_theme_color_override("font_hover_color", Color(1.0,  0.95, 0.55))
-	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var cost: float = DistrictDef.placement_cost(def, data)
+	var can_afford: bool = GameState.credits >= cost
+
+	btn.disabled = not can_afford
+	if not can_afford:
+		btn.add_theme_color_override("font_disabled_color", Color(0.9, 0.3, 0.3))
+	else:
+		btn.add_theme_color_override("font_color",       Color(0.75, 0.82, 1.0))
+		btn.add_theme_color_override("font_hover_color", Color(1.0,  0.95, 0.55))
 
 	var norm := StyleBoxFlat.new()
 	norm.bg_color = Color(0, 0, 0, 0)
@@ -1644,13 +1709,17 @@ func _build_district_type_row(data: PlanetData, def: DistrictDef,
 	btn.add_theme_stylebox_override("normal",  norm)
 	btn.add_theme_stylebox_override("hover",   hov)
 	btn.add_theme_stylebox_override("pressed", hov)
+	btn.add_theme_stylebox_override("disabled", norm)
 	btn.add_theme_stylebox_override("focus",   StyleBoxEmpty.new())
 
-	var cost: float = DistrictDef.placement_cost(def, data)
 	var cost_str := HUDManager.fmt_credits(cost)
 	btn.mouse_entered.connect(func() -> void:
 		if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER)
-		TooltipManager.show_tip(def.display_name, def.description, cost_str))
+		var t_title = def.display_name
+		var t_desc = def.description
+		if not can_afford:
+			t_desc += "\n\n[color=red]Insufficient Credits[/color]"
+		TooltipManager.show_tip(t_title, t_desc, cost_str))
 	btn.mouse_exited.connect(func() -> void:
 		CursorManager.set_state(CursorManager.State.NORMAL)
 		TooltipManager.hide_tip())
@@ -1696,6 +1765,17 @@ func _is_at_edge() -> bool:
 	return mouse.x < EDGE or mouse.y < EDGE or mouse.x > vp.x - EDGE or mouse.y > vp.y - EDGE
 
 func _on_production_update(_planet_seed: int, key: String, progress: float) -> void:
+	if _district_pbars.has(key):
+		var pbar: ProgressBar = _district_pbars[key]
+		if is_instance_valid(pbar):
+			print("[UI Debug] Updating pbar for ", key, " to ", progress * 100.0)
+			pbar.value = progress * 100.0
+		else:
+			print("[UI Debug] pbar is invalid for ", key)
+	else:
+		if " " in key: # naive check for district names to see if we missed it
+			print("[UI Debug] Key not in _district_pbars: ", key)
+
 	if not _bar_meta.has(key):
 		return
 	var m: Dictionary = _bar_meta[key]
@@ -1952,6 +2032,7 @@ func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callabl
 		"poi_lon":      poi_lon,
 		"poi_lat":      poi_lat,
 		"lon_sweep":    0.0,
+		"lat_sweep":    0.0,
 		"sweep_target": sweep_target,
 		"lat_target":   lat_target,
 		"sweep_sign":   sweep_sign,
@@ -1984,27 +2065,91 @@ func _tick_rocket_anim(delta: float) -> void:
 	# Sub-phase B (t ≥ 0.5): circularise — lerp from rise-end to orbital insert point
 	# Both endpoints re-computed each tick so planet drag rotates everything correctly.
 
-	const LAUNCH_DUR: float = 9.0
+	const LAUNCH_DUR: float = 18.0
 
+	# Speed profile: sin curve — accelerates to peak at t=0.5, then decelerates to 0.
+	# lon_sweep uses integral of sin: 0.5*(1-cos(t*PI)) → smooth S from 0 to sweep_target.
+	# radius uses same curve (ease in+out together).
+	var finished := false
 	match phase:
 		0:
 			t += delta / LAUNCH_DUR
 			if t >= 1.0:
-				_finish_rocket_anim()
-				return
-			d["phase_t"]     = t
-			var r_t: float   = 1.0 - (1.0 - t) * (1.0 - t)   # ease-out radius
-			var a_t: float   = t * t                            # ease-in² sweep
-			d["anim_r"]      = lerpf(start_r, orbit_r, r_t)
-			d["lon_sweep"]   = lerpf(0.0, d["sweep_target"], a_t)
-			d["flame_alpha"] = clampf((0.85 - t) / 0.15, 0.0, 1.0)
+				t = 1.0
+				finished = true
+			d["phase_t"] = t
+
+			# Speed profile: ease-in [0→0.5], then linear decel to CRUISE_FRAC of peak [0.5→1].
+			# Normalized so curve reaches exactly 1.0 at t=1 (no stopping short).
+			# CRUISE_FRAC = velocity at orbit entry as fraction of peak.
+			const CRUISE_FRAC: float = 0.10
+			const D: float = (1.0 + CRUISE_FRAC) * 0.5
+			var curve: float
+			if t <= 0.5:
+				curve = 0.5 * (1.0 - cos(t * PI))
+			else:
+				var u: float    = (t - 0.5) / 0.5
+				var integ: float = u - u * u * (1.0 - CRUISE_FRAC) * 0.5
+				curve = 0.5 + (integ / D) * 0.5
+			d["anim_r"]      = lerpf(start_r, orbit_r, curve)
+			d["lon_sweep"]   = d["sweep_target"] * curve
+			d["lat_sweep"]   = (d["lat_target"] - d["poi_lat"]) * curve
+			d["flame_alpha"] = clampf(1.0 - t / 0.5, 0.0, 1.0) if t < 0.5 else 0.0
+
+			# Booster separation particles at peak speed (t crosses 0.5)
+			if not d.get("boosters_spawned", false) and t >= 0.5:
+				d["boosters_spawned"] = true
+				d["booster_particles"] = []
+				var rot_bp:  float   = planet_renderer.get_rotation_offset()
+				var lon_bp:  float   = d["poi_lon"] + d["lon_sweep"] - rot_bp
+				var lat_bp:  float   = d["poi_lat"] + d["lat_sweep"]
+				var ctr_bp:  Vector2 = planet_renderer.global_position + planet_renderer.size * 0.5 \
+					- d["container"].get_global_rect().position
+				var pos_bp:  Vector2 = ctr_bp + Vector2(sin(lon_bp)*cos(lat_bp), -sin(lat_bp)) * d["anim_r"]
+				var vel_dir: Vector2 = Vector2(
+					cos(lon_bp)*cos(lat_bp)*d["sweep_target"],
+					-cos(lat_bp)*(d["lat_target"]-d["poi_lat"])
+				).normalized()
+				var perp: Vector2 = Vector2(-vel_dir.y, vel_dir.x)
+				for sp: float in [1.0, -1.0]:
+					var bp_data: Dictionary = {"pos": pos_bp, "vel": perp * sp * 8.0, "alpha": 1.0}
+					var bp_node := Control.new()
+					bp_node.mouse_filter = Control.MOUSE_FILTER_IGNORE
+					bp_node.z_index = 11
+					bp_node.size    = Vector2(4, 4)
+					bp_node.position = pos_bp
+					d["container"].add_child(bp_node)
+					bp_data["node"] = bp_node
+					var bp_ref: Dictionary = bp_data   # capture
+					bp_node.draw.connect(func() -> void:
+						if bp_ref["alpha"] > 0.0:
+							bp_node.draw_rect(Rect2(Vector2.ZERO, Vector2(2, 2)),
+								Color(1.0, 0.8, 0.3, bp_ref["alpha"])))
+					d["booster_particles"].append(bp_data)
+
+	# ── Tick booster particles ────────────────────────────────────────────────────
+	if d.get("booster_particles") != null:
+		var alive: Array = []
+		for bp: Dictionary in d["booster_particles"]:
+			bp["pos"]   += bp["vel"] * delta
+			bp["vel"]   *= pow(0.85, delta * 60.0)
+			bp["alpha"] -= delta * 0.55
+			if bp["alpha"] > 0.0:
+				alive.append(bp)
+			else:
+				if bp.get("node") != null and is_instance_valid(bp["node"]):
+					bp["node"].queue_free()
+		d["booster_particles"] = alive
 
 	# POILayer formula — same as POILayer._process, tracks planet rotation exactly
 	var rot:     float   = planet_renderer.get_rotation_offset()
 	var lon_eff: float   = d["poi_lon"] + d["lon_sweep"] - rot
-	var lat:     float   = lerpf(d["poi_lat"], d["lat_target"], t * t)
+	var lat:     float   = d["poi_lat"] + d["lat_sweep"]
 	var r:       float   = d["anim_r"]
-	var center:  Vector2 = d["center_local"]
+	# Re-derive center each frame so it stays in sync with OrbitalLayer._planet_center.
+	var center:  Vector2 = planet_renderer.global_position + planet_renderer.size * 0.5 \
+		- d["container"].get_global_rect().position
+	d["center_local"] = center
 	var offset:  Vector2 = Vector2(sin(lon_eff) * cos(lat), -sin(lat)) * r
 	rocket.position = center + offset
 
@@ -2014,10 +2159,17 @@ func _tick_rocket_anim(delta: float) -> void:
 
 	rocket.queue_redraw()
 
+	# ── Booster particles: update positions and trigger redraws ──────────────────
+	if d.get("booster_particles") != null:
+		for bp: Dictionary in d["booster_particles"]:
+			if bp.get("node") != null and is_instance_valid(bp["node"]):
+				bp["node"].position = bp["pos"]
+				bp["node"].queue_redraw()
+
 	# ── Hover tooltip ────────────────────────────────────────────────────────────
-	var container: Control = d["container"]
+	var ctr2: Control = d["container"]
 	var mp:   Vector2 = get_viewport().get_mouse_position()
-	var rp:   Vector2 = container.get_global_rect().position + rocket.position   # rocket pos is container-local
+	var rp:   Vector2 = ctr2.get_global_rect().position + rocket.position
 	var near: bool    = mp.distance_to(rp) < 12.0
 	if near and not d["hover_active"]:
 		d["hover_active"] = true
@@ -2025,6 +2177,10 @@ func _tick_rocket_anim(delta: float) -> void:
 	elif not near and d["hover_active"]:
 		d["hover_active"] = false
 		TooltipManager.hide_tip()
+
+	if finished:
+		_finish_rocket_anim()
+		return
 
 ## Same projection formula as OrbitalLayer._project, returns 2D screen offset from center.
 func _orbital_project_2d(angle: float, inc: float, r: float, rot: float) -> Vector2:
@@ -2062,20 +2218,19 @@ func _finish_rocket_anim() -> void:
 	var rocket: Control = d.get("rocket")
 	var container: Control = d["container"]
 
-	# Read rocket's final container-local position BEFORE freeing it.
-	# OrbitalLayer draws with center = container.size * 0.5, so subtract that to get
-	# the offset in the same coordinate space as _orbital_project_2d output.
-	var final_off: Vector2 = Vector2.ZERO
 	if rocket != null and is_instance_valid(rocket):
-		# Use planet center (center_local) as reference — same as OrbitalLayer._planet_center
-		final_off = rocket.position - d["center_local"]
 		rocket.queue_free()
 	TooltipManager.hide_tip()
 
 	var rot_now: float = planet_renderer.get_rotation_offset()
 	var orbit_r: float = planet_renderer._planet_radius_px * 1.06
-	var tx: float = final_off.x / orbit_r   # normalised
-	var ty: float = final_off.y / orbit_r
+
+	# Compute insertion point analytically at t=1 — avoids reading rocket.position
+	# from the previous frame (t<1) which caused a visible teleport on spawn.
+	var lon_final: float = d["poi_lon"] + d["sweep_target"] - rot_now
+	var lat_final: float = d["lat_target"]
+	var tx: float = sin(lon_final) * cos(lat_final)   # normalised
+	var ty: float = -sin(lat_final)
 
 	# Analytical 3-DOF solution: orbit_angle + orbit_inc + orbit_node
 	# gives EXACT position AND correct tangent direction simultaneously.
@@ -2098,42 +2253,49 @@ func _finish_rocket_anim() -> void:
 	# Full analytical 3-DOF solve: orbit_angle, orbit_inc, orbit_node
 	# such that position = (tx,ty) AND tangent direction = (rdx,rdy) simultaneously.
 	#
-	# Rocket's 2D screen velocity at t=1 (ease-in² peaked):
-	var lon_eff_f: float = d["poi_lon"] + d["sweep_target"] - rot_now
-	var lat_f:     float = d["lat_target"]
-	var dlon:      float = d["sweep_target"] * 2.0
-	var dlat:      float = (d["lat_target"] - d["poi_lat"]) * 2.0
-	var rdx_raw:   float = cos(lon_eff_f) * cos(lat_f) * dlon - sin(lon_eff_f) * sin(lat_f) * dlat
-	var rdy_raw:   float = -cos(lat_f) * dlat
+	# Direction: vector from launch position to insertion point — simple and intuitive.
+	var start_x: float  = sin(d["poi_lon"] - rot_now) * cos(d["poi_lat"])
+	var start_y: float  = -sin(d["poi_lat"])
+	var rdx_raw: float  = tx - start_x
+	var rdy_raw: float  = ty - start_y
 	var rlen:      float = maxf(sqrt(rdx_raw * rdx_raw + rdy_raw * rdy_raw), 0.001)
 	var rdx:       float = rdx_raw / rlen
 	var rdy:       float = rdy_raw / rlen
 
 	# Solution (derived from P⊥V on circular orbit):
-	#   sin_inc has same sign as ty (orbit tilts to match hemisphere)
-	#   |sin_inc| = sqrt(ty²+rdy²),  a = atan2(ty, rdy)
+	#   sin_inc = sqrt(ty²+rdy²)  [always positive — sign comes from a and node]
+	#   a = atan2(ty, rdy)
 	#   cos(R)         = (tx·rdy - rdx·ty) / sin_inc
 	#   cos_inc·sin(R) = (tx·ty  + rdx·rdy) / sin_inc
-	var inc_sign:   float = 1.0 if ty >= 0.0 else -1.0
 	var sin_inc_sq: float = clampf(ty * ty + rdy * rdy, 0.0, 1.0)
-	var sin_inc:    float = inc_sign * sqrt(sin_inc_sq)   # signed
+	var sin_inc:    float = sqrt(sin_inc_sq)   # always positive
 	var cos_inc:    float = sqrt(maxf(0.0, 1.0 - sin_inc_sq))
 
 	orbit_angle = atan2(ty, rdy)
-	orbit_inc   = asin(clampf(sin_inc, -1.0, 1.0))   # signed inclination
+	orbit_inc   = asin(clampf(sin_inc, 0.0, 1.0))
 
-	var cos_R:     float
-	var cosinc_sinR: float
-	if sin_inc_sq > 0.0001:
-		cos_R       = clampf((tx * rdy - rdx * ty) / sin_inc, -1.0, 1.0)
-		cosinc_sinR = (tx * ty + rdx * rdy) / sin_inc
+	# Solve for orbit_node (R) from the position equation only:
+	#   cos(a)*cos(R) + sin(a)*cos_inc*sin(R) = tx
+	#   amplitude = sqrt(cos²a + sin²a*cos²_inc) = sqrt(1 - ty²) = cos(lat_final)
+	# Two valid solutions — pick the one whose orbit tangent sign matches rdx_raw.
+	var sa: float = sin(orbit_angle)   # = ty / sin_inc
+	var ca: float = cos(orbit_angle)   # = rdy / sin_inc
+	var amp: float = sqrt(maxf(0.0, 1.0 - ty * ty))   # = cos(lat_final)
+	var phase: float = atan2(sa * cos_inc, ca)
+	var R: float
+	if amp > 0.001:
+		var delta: float = acos(clampf(tx / amp, -1.0, 1.0))
+		var R1: float = phase + delta
+		var R2: float = phase - delta
+		# Tangent x at each candidate: -sa*cos(R) + ca*cos_inc*sin(R)
+		var t1: float = -sa * cos(R1) + ca * cos_inc * sin(R1)
+		var t2: float = -sa * cos(R2) + ca * cos_inc * sin(R2)
+		# Pick whichever matches the rdx_raw direction
+		R = R1 if (t1 * rdx_raw >= 0.0) else R2
 	else:
-		# Near-equatorial + horizontal motion: orbit is flat, just match x position
-		cos_R       = clampf(tx, -1.0, 1.0)
-		cosinc_sinR = 0.0
-	# Recover sin(R) from cos_inc*sin(R); cos_inc >= 0 always
-	var sin_R: float = clampf(cosinc_sinR / maxf(cos_inc, 0.001), -1.0, 1.0)
-	orbit_node = atan2(sin_R, cos_R) - rot_now
+		# High-latitude insertion: use sweep direction to pick node
+		R = (PI * 0.5 if rdx_raw >= 0.0 else -PI * 0.5) + atan2(ty * cos_inc, 0.001)
+	orbit_node = R - rot_now
 
 	# Tangent at orbit_angle is (rdx, rdy) for speed_sign=+1 by construction.
 	# Verify sign against sweep direction to handle any degenerate edge case.
@@ -2146,7 +2308,12 @@ func _finish_rocket_anim() -> void:
 	ship.orbit_angle       = orbit_angle
 	ship.orbit_inclination = orbit_inc
 	ship.orbit_node        = orbit_node
-	ship.orbit_speed       = speed_sign * 0.15
+	# CRUISE_FRAC=0.10, D=0.55, LAUNCH_DUR=18 → exit_rate ≈ 0.020 → orbit_speed ≈ 0.01 for rlen≈0.5
+	const _CF: float = 0.10
+	const _D:  float = (1.0 + _CF) * 0.5
+	const _LD: float = 18.0
+	var exit_rate: float = (_CF / _D) * (2.0 / _LD)
+	ship.orbit_speed = speed_sign * rlen * exit_rate
 	if _orbital_layer != null and is_instance_valid(_orbital_layer):
 		_orbital_layer.queue_redraw()
 
@@ -2604,7 +2771,7 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 		vbox.add_child(slowed_lbl)
 
 	# Right: "+" stacking and "−" demolish buttons
-	var slots_free: int  = pp.district_slots(poi.label) - pp.slots_used_in_district(poi.label)
+	var slots_free: int  = pp.district_slots(poi) - pp.slots_used_in_district(poi.label)
 	var can_add: bool    = slots_free >= def.slot_cost and GameState.credits >= def.base_cost
 	var cap_poi    := poi
 	var cap_def    := def
@@ -2868,7 +3035,7 @@ func _toggle_slot_dropdown(card: PanelContainer, poi: POIData, planet: PlanetDat
 	if buildable.is_empty():
 		return
 
-	var slots_free: int = pp.district_slots(poi.label) - pp.slots_used_in_district(poi.label)
+	var slots_free: int = pp.district_slots(poi) - pp.slots_used_in_district(poi.label)
 
 	# ── CanvasLayer overlay — always renders above game UI ───────────
 	if _dd_layer == null or not is_instance_valid(_dd_layer):
@@ -3227,7 +3394,7 @@ func _build_district_panel(poi: POIData, planet: PlanetData) -> void:
 			edit.focus_exited.connect(func() -> void: _commit.call(edit.text)))
 
 	var slots_used  := pp.slots_used_in_district(poi.label)
-	var slots_total := pp.district_slots(poi.label)
+	var slots_total := pp.district_slots(poi)
 	var dist_lv: int = pp.district_levels.get(poi.label, 1)
 	var slots_lbl := Label.new()
 	slots_lbl.text = "%d/%d  Lv%d" % [slots_used, slots_total, dist_lv]
@@ -3304,7 +3471,7 @@ func _build_district_panel(poi: POIData, planet: PlanetData) -> void:
 			root.add_child(_build_production_bar(def, pm_key, planet.seed, amount, poi, planet, pp, entry))
 
 	# ── Empty slot "+" cards ──────────────────────────────────────────────────
-	var total_slots := pp.district_slots(poi.label)
+	var total_slots := pp.district_slots(poi)
 	var used_slots  := pp.slots_used_in_district(poi.label)
 	for si in (total_slots - used_slots):
 		root.add_child(_build_slot_card(poi, planet, pp, root, si))

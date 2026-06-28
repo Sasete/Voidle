@@ -18,11 +18,9 @@ func setup(planet_seed: int) -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	ShipManager.ship_changed.connect(_on_ship_changed)
 
-func _process(delta: float) -> void:
+func _process(_delta: float) -> void:
 	if _planet_seed < 0:
 		return
-	for ship: ShipData in ShipManager.ships_for(_planet_seed):
-		ship.orbit_angle += ship.orbit_speed * delta
 	queue_redraw()
 
 func _on_ship_changed(ship: ShipData) -> void:

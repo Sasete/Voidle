@@ -56,6 +56,21 @@ func invalidate(planet_seed: int) -> void:
 func _tick_all(delta: float) -> void:
 	for pp: PlanetProgress in _all_colonies():
 		var planet_seed: int = pp.planet_seed
+		var pd: PlanetData = GameState.get_planet_data(planet_seed)
+		if pd:
+			var district_changed := false
+			for poi in pd.custom_pois:
+				if poi.constructing:
+					poi.construct_progress += delta / max(0.1, poi.construct_duration)
+					if poi.construct_progress >= 1.0:
+						poi.constructing = false
+						poi.construct_progress = 1.0
+						district_changed = true
+					else:
+						building_progress_changed.emit(planet_seed, poi.label, poi.construct_progress)
+			if district_changed:
+				GameState.planet_progress_changed.emit(planet_seed)
+
 		_planet_energy(pp)  # refresh net energy cache for HUD
 
 		# Throttle ratio: production-only (never negative) vs total demand.

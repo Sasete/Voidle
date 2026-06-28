@@ -19,7 +19,7 @@ func _process(delta: float) -> void:
 					ship.travel_progress = 1.0
 					_on_arrived(ship)
 			else:
-				ship.orbit_angle = fmod(ship.orbit_angle + ORBIT_SPEED * delta, TAU)
+				ship.orbit_angle = fmod(ship.orbit_angle + ship.orbit_speed * delta, TAU)
 			ship_changed.emit(ship)
 
 func _on_arrived(ship: ShipData) -> void:
@@ -74,15 +74,18 @@ func serialize() -> Array:
 	for seed_val: int in _ships:
 		for ship: ShipData in _ships[seed_val]:
 			out.append({
-				"ship_id":        ship.ship_id,
-				"ship_name":      ship.ship_name,
-				"orbit_seed":     ship.orbit_seed,
-				"orbit_angle":    ship.orbit_angle,
-				"orbit_radius":   ship.orbit_radius,
-				"cargo":          ship.cargo,
-				"dest_seed":      ship.dest_seed,
-				"travel_progress":ship.travel_progress,
-				"travel_duration":ship.travel_duration,
+				"ship_id":           ship.ship_id,
+				"ship_name":         ship.ship_name,
+				"orbit_seed":        ship.orbit_seed,
+				"orbit_angle":       ship.orbit_angle,
+				"orbit_radius":      ship.orbit_radius,
+				"orbit_speed":       ship.orbit_speed,
+				"orbit_inclination": ship.orbit_inclination,
+				"orbit_node":        ship.orbit_node,
+				"cargo":             ship.cargo,
+				"dest_seed":         ship.dest_seed,
+				"travel_progress":   ship.travel_progress,
+				"travel_duration":   ship.travel_duration,
 			})
 	return out
 
@@ -93,9 +96,12 @@ func deserialize(arr: Array) -> void:
 		s.ship_id           = d.get("ship_id",        "")
 		s.ship_name         = d.get("ship_name",      "Shuttle")
 		s.orbit_seed        = d.get("orbit_seed",     -1)
-		s.orbit_angle       = d.get("orbit_angle",    0.0)
-		s.orbit_radius      = d.get("orbit_radius",   1.06)
-		s.cargo             = d.get("cargo",          {})
+		s.orbit_angle       = d.get("orbit_angle",       0.0)
+		s.orbit_radius      = d.get("orbit_radius",      1.06)
+		s.orbit_speed       = d.get("orbit_speed",       1.0)
+		s.orbit_inclination = d.get("orbit_inclination", 0.0)
+		s.orbit_node        = d.get("orbit_node",        0.0)
+		s.cargo             = d.get("cargo",             {})
 		s.dest_seed         = d.get("dest_seed",      -1)
 		s.travel_progress   = d.get("travel_progress",0.0)
 		s.travel_duration   = d.get("travel_duration",0.0)

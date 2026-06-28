@@ -11,6 +11,7 @@ enum Type { CITY, GENERATOR, MINING }
 @export var icon:         String
 @export var placement:    LocationFinder.Placement
 @export var base_cost:    float
+@export var construction_duration: float = 15.0
 ## Empty = available on all planet types.
 @export var allowed_planet_types: Array[PlanetData.Type] = []
 ## Which BuildingDef building_ids are available inside this district type.

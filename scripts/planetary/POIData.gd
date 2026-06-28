@@ -18,6 +18,10 @@ static var TYPE_ICONS:  Array[String] = ["⬡", "⛏", "⚡", "⬡", "⬡", "�
 @export var light_intensity: float = 1.0
 @export var level:         int     = 1    # 1–5; grows as buildings are added
 
+@export var constructing:       bool  = false
+@export var construct_progress: float = 0.0
+@export var construct_duration: float = 15.0
+
 ## Where on the planet this POI should appear.
 @export var placement: LocationFinder.Placement = LocationFinder.Placement.LAND
 

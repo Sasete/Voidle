@@ -54,9 +54,10 @@ func buildings_in_district(district_label: String) -> Array[Dictionary]:
 			result.append(b)
 	return result
 
-func district_slots(district_label: String) -> int:
-	var lv: int = district_levels.get(district_label, 1)
-	return lv * 2
+func district_slots(poi: POIData) -> int:
+	var lv: int = district_levels.get(poi.label, 1)
+	var base_slots: int = 5 if poi.poi_type == POIData.POIType.CITY else 2
+	return base_slots + (lv - 1) * 2
 
 func upgrade_district(district_label: String) -> void:
 	district_levels[district_label] = district_levels.get(district_label, 1) + 1
@@ -74,7 +75,7 @@ func build_in_district(district: POIData, building_id: String,
 	var def := BuildingDef.find(building_id)
 	if def == null:
 		return false
-	if slots_used_in_district(district.label) + def.slot_cost > district_slots(district.label):
+	if slots_used_in_district(district.label) + def.slot_cost > district_slots(district):
 		return false
 	var entry := { "district_id": district.label, "building_id": building_id, "amount": 1, "constructing": true }
 	# Mines target a specific raw mineral — caller may supply one, otherwise left blank
