@@ -76,6 +76,7 @@ func serialize() -> Array:
 			out.append({
 				"ship_id":           ship.ship_id,
 				"ship_name":         ship.ship_name,
+				"ship_type":         ship.ship_type,
 				"orbit_seed":        ship.orbit_seed,
 				"orbit_angle":       ship.orbit_angle,
 				"orbit_radius":      ship.orbit_radius,
@@ -95,6 +96,7 @@ func deserialize(arr: Array) -> void:
 		var s               := ShipData.new()
 		s.ship_id           = d.get("ship_id",        "")
 		s.ship_name         = d.get("ship_name",      "Shuttle")
+		s.ship_type         = d.get("ship_type",      "shuttle")
 		s.orbit_seed        = d.get("orbit_seed",     -1)
 		s.orbit_angle       = d.get("orbit_angle",       0.0)
 		s.orbit_radius      = d.get("orbit_radius",      1.06)

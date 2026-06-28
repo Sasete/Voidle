@@ -5,6 +5,8 @@ extends Resource
 ## Unique id — generated at launch.
 @export var ship_id:      String = ""
 @export var ship_name:    String = "Shuttle"
+## "shuttle" | "station"
+@export var ship_type:    String = "shuttle"
 
 ## Which planet this ship currently orbits (seed).
 @export var orbit_seed:   int    = -1

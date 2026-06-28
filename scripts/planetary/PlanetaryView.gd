@@ -486,6 +486,8 @@ func _build_details_panel(data: PlanetData) -> void:
 
 	if not ProductionManager.building_progress_changed.is_connected(_on_production_update):
 		ProductionManager.building_progress_changed.connect(_on_production_update)
+	if not ProductionManager.resource_produced.is_connected(_on_resource_produced):
+		ProductionManager.resource_produced.connect(_on_resource_produced)
 
 	# ── Toggle button ─────────────────────────────────────────────────────────
 	var toggle_btn := Button.new()
@@ -1330,7 +1332,11 @@ func _on_planet_clicked(_screen_pos: Vector2) -> void:
 		var lat_rad := asin(-ny)
 		var lon_rad := atan2(nx, z)
 		var actual_lon := fposmod(planet_renderer.get_rotation_offset() + lon_rad, TAU)
-		print("[Planet Debug] Clicked Lon: ", rad_to_deg(actual_lon), " | Lat: ", rad_to_deg(lat_rad))
+		
+		var lat_d := rad_to_deg(lat_rad)
+		var lon_d := rad_to_deg(actual_lon)
+		var text := "%.1f, %.1f" % [lon_d, lat_d]
+		poi_layer.spawn_floating_text(lon_d, lat_d, text, Color(0.4, 1.0, 0.4), 7)
 
 	poi_layer.deselect_all()
 	_build_planet_overview(current_data)
@@ -1776,6 +1782,14 @@ func _is_at_edge() -> bool:
 	const EDGE := 40.0
 	return mouse.x < EDGE or mouse.y < EDGE or mouse.x > vp.x - EDGE or mouse.y > vp.y - EDGE
 
+func _on_resource_produced(planet_seed: int, poi_label: String, text: String, color: Color, icon: Texture2D) -> void:
+	if current_data == null or current_data.seed != planet_seed:
+		return
+	for poi in current_data.custom_pois:
+		if poi.label == poi_label:
+			poi_layer.spawn_floating_text(poi.lon_deg, poi.lat_deg, text, color, 14, icon)
+			break
+
 func _on_production_update(_planet_seed: int, key: String, progress: float) -> void:
 	if _district_pbars.has(key):
 		var pbar: ProgressBar = _district_pbars[key]
@@ -1858,9 +1872,13 @@ func _refresh_bar_label_status(key: String) -> void:
 	if m.has("launch_btn"):
 		(m["prog"] as Array)[0] = ProductionManager.get_progress(key)
 		var btn: Button = m["launch_btn"]
-		if is_instance_valid(btn) and ProductionManager.is_user_paused(key):
-			btn.text     = "🚀 Launch"
+		var slbl: Label = m.get("status_lbl", null)
+		var is_paused := ProductionManager.is_user_paused(key)
+		if is_instance_valid(btn) and is_paused:
+			btn.text     = "Launch"
 			btn.disabled = false
+		if is_instance_valid(slbl):
+			slbl.text = "–8 ⚡   Ready to launch" if is_paused else "–8 ⚡   Recharging…"
 		return
 	var out_lbl: Label = m.get("out_lbl", null)
 	var def: BuildingDef = m.get("def", null)
@@ -1968,7 +1986,11 @@ func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callabl
 
 	var container: Control = planet_renderer.get_parent()
 	var planet_r:  float   = planet_renderer._planet_radius_px
-	const ORBIT_FRAC: float = 1.06
+	const ORBIT_FRAC:       float = 1.06
+	const BASE_LAUNCH_DUR:  float = 22.0   # seconds at reference planet radius
+	const REF_RADIUS:       float = 200.0
+	const LAUNCH_TIME_SCALE: float = 1.0   # hook here for upgrade (lower = faster)
+	var launch_dur: float = (planet_r / REF_RADIUS) * BASE_LAUNCH_DUR * LAUNCH_TIME_SCALE
 
 	# Planet center — same reference as POILayer (_planet.global_position + size*0.5)
 	var planet_center_global: Vector2 = planet_renderer.global_position + planet_renderer.size * 0.5
@@ -2021,14 +2043,23 @@ func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callabl
 				rocket.draw_rect(Rect2((back + Vector2(randf_range(-2,2), randf_range(-2,2))).floor(), Vector2.ONE), fc)
 		var col := Color(1, 1, 1, 0.95)
 		var p   := Vector2.ZERO
-		rocket.draw_rect(Rect2(p,                   Vector2(2, 2)), col)
-		rocket.draw_rect(Rect2(p + Vector2(-2,  0), Vector2(2, 2)), col)
-		rocket.draw_rect(Rect2(p + Vector2( 2,  0), Vector2(2, 2)), col)
-		rocket.draw_rect(Rect2(p + Vector2( 0, -2), Vector2(2, 2)), col)
-		rocket.draw_rect(Rect2(p + Vector2( 0,  2), Vector2(2, 2)), col))
+		if _rocket_anim.get("boosters_spawned", false):
+			# Post-separation: T shape (horizontal bar on top, stem below)
+			rocket.draw_rect(Rect2(p + Vector2(-2, -2), Vector2(2, 2)), col)
+			rocket.draw_rect(Rect2(p + Vector2( 0, -2), Vector2(2, 2)), col)
+			rocket.draw_rect(Rect2(p + Vector2( 2, -2), Vector2(2, 2)), col)
+			rocket.draw_rect(Rect2(p,                   Vector2(2, 2)), col)
+			rocket.draw_rect(Rect2(p + Vector2( 0,  2), Vector2(2, 2)), col)
+		else:
+			rocket.draw_rect(Rect2(p,                   Vector2(2, 2)), col)
+			rocket.draw_rect(Rect2(p + Vector2(-2,  0), Vector2(2, 2)), col)
+			rocket.draw_rect(Rect2(p + Vector2( 2,  0), Vector2(2, 2)), col)
+			rocket.draw_rect(Rect2(p + Vector2( 0, -2), Vector2(2, 2)), col)
+			rocket.draw_rect(Rect2(p + Vector2( 0,  2), Vector2(2, 2)), col))
 
 	var lbl := Label.new()
-	lbl.text = "· launching to orbit"
+	var eta_secs: int = int(ceil(launch_dur))
+	lbl.text = "eta %02d:%02d" % [eta_secs / 60, eta_secs % 60]
 	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_apply_orbitron(lbl, 7)
 	lbl.add_theme_color_override("font_color", Color(0.65, 0.88, 1.0, 0.80))
@@ -2039,7 +2070,7 @@ func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callabl
 		"rocket":          rocket,
 		"container":       container,
 		"center_local":    center_local,
-		"planet_r_frac":   start_r / maxf(planet_r, 1.0),   # start radius as fraction
+		"planet_r_frac":   start_r / maxf(planet_r, 1.0),
 		"anim_r":          start_r,
 		"poi_lon":      poi_lon,
 		"poi_lat":      poi_lat,
@@ -2052,6 +2083,8 @@ func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callabl
 		"phase":           0,
 		"phase_t":         0.0,
 		"planet_seed":     planet_seed,
+		"launch_dur":      launch_dur,
+		"eta_lbl":         lbl,
 		"hover_active":    false,
 		"on_complete":     on_complete,
 	}
@@ -2077,7 +2110,7 @@ func _tick_rocket_anim(delta: float) -> void:
 	# Sub-phase B (t ≥ 0.5): circularise — lerp from rise-end to orbital insert point
 	# Both endpoints re-computed each tick so planet drag rotates everything correctly.
 
-	const LAUNCH_DUR: float = 22.0
+	var LAUNCH_DUR: float = d["launch_dur"]
 
 	# Speed profile: sin curve — accelerates to peak at t=0.5, then decelerates to 0.
 	# lon_sweep uses integral of sin: 0.5*(1-cos(t*PI)) → smooth S from 0 to sweep_target.
@@ -2090,6 +2123,10 @@ func _tick_rocket_anim(delta: float) -> void:
 				t = 1.0
 				finished = true
 			d["phase_t"] = t
+			var _eta_sec: int = int(ceil((1.0 - t) * LAUNCH_DUR))
+			var _eta_lbl: Label = d.get("eta_lbl")
+			if _eta_lbl != null and is_instance_valid(_eta_lbl):
+				_eta_lbl.text = "eta %02d:%02d" % [_eta_sec / 60, _eta_sec % 60]
 
 			# Speed profile: ease-in [0→0.5], then linear decel to CRUISE_FRAC of peak [0.5→1].
 			# Normalized so curve reaches exactly 1.0 at t=1 (no stopping short).
@@ -2113,6 +2150,10 @@ func _tick_rocket_anim(delta: float) -> void:
 			# Booster separation particles at peak speed (t crosses 0.5)
 			if not d.get("boosters_spawned", false) and t >= 0.5:
 				d["boosters_spawned"] = true
+				var lon_deg_bp := rad_to_deg(d["poi_lon"] + d["lon_sweep"])
+				var lat_deg_bp := rad_to_deg(d["poi_lat"] + d["lat_sweep"])
+				poi_layer.spawn_floating_text(lon_deg_bp, lat_deg_bp, "Booster dropped!", Color(0.95, 0.45, 0.15), 11)
+				
 				d["booster_particles"] = []
 				var rot_bp:  float   = planet_renderer.get_rotation_offset()
 				var lon_bp:  float   = d["poi_lon"] + d["lon_sweep"] - rot_bp
@@ -2126,13 +2167,16 @@ func _tick_rocket_anim(delta: float) -> void:
 				).normalized()
 				var perp: Vector2 = Vector2(-vel_dir.y, vel_dir.x)
 				for sp: float in [1.0, -1.0]:
-					var vel_px: Vector2 = perp * sp * 8.0
+					# Backward + lateral spread so both boosters separate visibly
+					var vel_px: Vector2 = (-vel_dir * 0.7 + perp * sp * 0.7).normalized() * 10.0
+					var bp_angle: float = atan2(-vel_dir.y, -vel_dir.x)
 					var bp_data: Dictionary = {
 						"abs_lon": abs_lon_bp,
 						"lat":     lat_bp,
 						"vel_lon": vel_px.x / r_bp,
 						"vel_lat": -vel_px.y / r_bp,
 						"r":       r_bp,
+						"angle":   bp_angle,
 						"alpha":   1.0
 					}
 					var bp_node := Control.new()
@@ -2144,8 +2188,11 @@ func _tick_rocket_anim(delta: float) -> void:
 					var bp_ref: Dictionary = bp_data
 					bp_node.draw.connect(func() -> void:
 						if bp_ref["alpha"] > 0.0:
-							bp_node.draw_rect(Rect2(Vector2.ZERO, Vector2(2, 2)),
-								Color(1.0, 0.8, 0.3, bp_ref["alpha"])))
+							var a: float = bp_ref["angle"]
+							bp_node.draw_set_transform(Vector2.ZERO, a, Vector2.ONE)
+							bp_node.draw_rect(Rect2(Vector2(-3, -1), Vector2(6, 2)),
+								Color(1.0, 0.8, 0.3, bp_ref["alpha"]))
+							bp_node.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE))
 					d["booster_particles"].append(bp_data)
 
 	# ── Tick booster particles ────────────────────────────────────────────────────
@@ -2255,6 +2302,10 @@ func _finish_rocket_anim() -> void:
 	# from the previous frame (t<1) which caused a visible teleport on spawn.
 	var lon_final: float = d["poi_lon"] + d["sweep_target"] - rot_now
 	var lat_final: float = d["lat_target"]
+	
+	var lon_deg := rad_to_deg(d["poi_lon"] + d["sweep_target"])
+	var lat_deg := rad_to_deg(lat_final)
+	poi_layer.spawn_floating_text(lon_deg, lat_deg, "Orbit reached!", Color(0.15, 0.95, 0.45), 11)
 	var tx: float = sin(lon_final) * cos(lat_final)   # normalised
 	var ty: float = -sin(lat_final)
 
@@ -2277,13 +2328,13 @@ func _finish_rocket_anim() -> void:
 	var orbit_node:  float
 
 	# Full analytical 3-DOF solve: orbit_angle, orbit_inc, orbit_node
-	# such that position = (tx,ty) AND tangent direction = (rdx,rdy) simultaneously.
+	# such that position = (tx,ty) AND tangent direction matches sweep direction.
 	#
-	# Direction: vector from launch position to insertion point — simple and intuitive.
-	var start_x: float  = sin(d["poi_lon"] - rot_now) * cos(d["poi_lat"])
-	var start_y: float  = -sin(d["poi_lat"])
-	var rdx_raw: float  = tx - start_x
-	var rdy_raw: float  = ty - start_y
+	# Velocity direction at insertion: use sweep_sign (not position delta).
+	# Position delta (end - start) fails for large sweeps (>180°) where the chord
+	# points AGAINST the travel direction, selecting the wrong orbit branch.
+	var rdx_raw: float  = d["sweep_sign"] * cos(lat_final)   # screen tangent x ∝ sweep_sign·cos(lat)
+	var rdy_raw: float  = d["lat_target"] - d["poi_lat"]      # lat change gives tangent y sign
 	var rlen:      float = maxf(sqrt(rdx_raw * rdx_raw + rdy_raw * rdy_raw), 0.001)
 	var rdx:       float = rdx_raw / rlen
 	var rdy:       float = rdy_raw / rlen
@@ -2291,10 +2342,8 @@ func _finish_rocket_anim() -> void:
 	# Solution (derived from P⊥V on circular orbit):
 	#   sin_inc = sqrt(ty²+rdy²)  [always positive — sign comes from a and node]
 	#   a = atan2(ty, rdy)
-	#   cos(R)         = (tx·rdy - rdx·ty) / sin_inc
-	#   cos_inc·sin(R) = (tx·ty  + rdx·rdy) / sin_inc
 	var sin_inc_sq: float = clampf(ty * ty + rdy * rdy, 0.0, 1.0)
-	var sin_inc:    float = sqrt(sin_inc_sq)   # always positive
+	var sin_inc:    float = sqrt(sin_inc_sq)
 	var cos_inc:    float = sqrt(maxf(0.0, 1.0 - sin_inc_sq))
 
 	orbit_angle = atan2(ty, rdy)
@@ -2302,10 +2351,10 @@ func _finish_rocket_anim() -> void:
 
 	# Solve for orbit_node (R) from the position equation only:
 	#   cos(a)*cos(R) + sin(a)*cos_inc*sin(R) = tx
-	#   amplitude = sqrt(cos²a + sin²a*cos²_inc) = sqrt(1 - ty²) = cos(lat_final)
-	# Two valid solutions — pick the one whose orbit tangent sign matches rdx_raw.
-	var sa: float = sin(orbit_angle)   # = ty / sin_inc
-	var ca: float = cos(orbit_angle)   # = rdy / sin_inc
+	#   amplitude = sqrt(cos²a + sin²a*cos²_inc) = cos(lat_final)
+	# Two valid solutions — pick the one whose orbit tangent x matches sweep_sign.
+	var sa: float = sin(orbit_angle)
+	var ca: float = cos(orbit_angle)
 	var amp: float = sqrt(maxf(0.0, 1.0 - ty * ty))   # = cos(lat_final)
 	var phase: float = atan2(sa * cos_inc, ca)
 	var R: float
@@ -2316,11 +2365,11 @@ func _finish_rocket_anim() -> void:
 		# Tangent x at each candidate: -sa*cos(R) + ca*cos_inc*sin(R)
 		var t1: float = -sa * cos(R1) + ca * cos_inc * sin(R1)
 		var t2: float = -sa * cos(R2) + ca * cos_inc * sin(R2)
-		# Pick whichever matches the rdx_raw direction
-		R = R1 if (t1 * rdx_raw >= 0.0) else R2
+		# Pick branch matching sweep direction (sweep_sign is reliable; position delta is not)
+		R = R1 if (t1 * d["sweep_sign"] >= 0.0) else R2
 	else:
-		# High-latitude insertion: use sweep direction to pick node
-		R = (PI * 0.5 if rdx_raw >= 0.0 else -PI * 0.5) + atan2(ty * cos_inc, 0.001)
+		# High-latitude insertion: sweep_sign determines left/right node
+		R = (PI * 0.5 if d["sweep_sign"] >= 0.0 else -PI * 0.5) + atan2(ty * cos_inc, 0.001)
 	orbit_node = R - rot_now
 
 	# Tangent at orbit_angle is (rdx, rdy) for speed_sign=+1 by construction.
@@ -2339,9 +2388,9 @@ func _finish_rocket_anim() -> void:
 	# CRUISE_FRAC=0.10, D=0.55, LAUNCH_DUR=18 → exit_rate ≈ 0.020 → orbit_speed ≈ 0.01 for rlen≈0.5
 	const _CF: float = 0.10
 	const _D:  float = (1.0 + _CF) * 0.5
-	const _LD: float = 22.0
+	var _LD: float = d["launch_dur"]
 	var exit_rate: float = (_CF / _D) * (2.0 / _LD)
-	ship.orbit_speed = speed_sign * rlen * exit_rate
+	ship.orbit_speed = speed_sign * exit_rate
 	if _orbital_layer != null and is_instance_valid(_orbital_layer):
 		_orbital_layer.queue_redraw()
 
@@ -2972,7 +3021,7 @@ func _build_spaceport_card(def: BuildingDef, pm_key: String,
 	var cap_poi      := poi
 	var cap_pp       := pp
 	var launch_btn   := Button.new()
-	launch_btn.text  = "🚀 Launch"
+	launch_btn.text  = "Launch"
 	_apply_orbitron(launch_btn, 9)
 	var btn_style := StyleBoxFlat.new()
 	btn_style.bg_color     = Color(0.12, 0.28, 0.55, 0.90)
@@ -2989,15 +3038,24 @@ func _build_spaceport_card(def: BuildingDef, pm_key: String,
 	launch_btn.add_theme_color_override("font_color", Color(0.65, 0.88, 1.0))
 	launch_btn.custom_minimum_size = Vector2(90, 0)
 
+	var cap_pm_key := pm_key
 	launch_btn.pressed.connect(func() -> void:
 		if not launch_btn.disabled:
 			launch_btn.text     = "Launching…"
 			launch_btn.disabled = true
-			pp.has_spaceport    = true
-			_play_rocket_animation(pp.planet_seed, poi, func() -> void:
-				if is_instance_valid(launch_btn):
-					launch_btn.text    = "🚀 Launch"
-					launch_btn.disabled = false))
+			cap_pp.has_spaceport = true
+			_play_rocket_animation(cap_pp.planet_seed, cap_poi, func() -> void:
+				if not is_instance_valid(launch_btn):
+					return
+				launch_btn.text = "Cooldown…"
+				# Mark that the next produce() is a cooldown completion, not a real launch
+				if def.logic is SpaceportLogic:
+					(def.logic as SpaceportLogic).skip_next_launch = true
+				# Unpause PM → bar starts filling as cooldown
+				if ProductionManager.is_user_paused(cap_pm_key):
+					ProductionManager.toggle_user_pause(cap_pm_key)
+				# Button re-enabled automatically by _refresh_bar_label_status when PM re-pauses
+			))
 
 	hbox.add_child(launch_btn)
 
@@ -3007,6 +3065,7 @@ func _build_spaceport_card(def: BuildingDef, pm_key: String,
 		"prog":        prog_ref,
 		"planet_seed": pp.planet_seed,
 		"launch_btn":  launch_btn,
+		"status_lbl":  status_lbl,
 	}
 
 	return card

@@ -4,6 +4,7 @@ extends Node
 
 signal building_ticked(planet_seed: int, key: String)
 signal building_progress_changed(planet_seed: int, key: String, progress: float)
+signal resource_produced(planet_seed: int, poi_label: String, text: String, color: Color, icon: Texture2D)
 signal building_constructed(planet_seed: int, key: String)
 signal building_toggled(key: String, paused: bool)
 
@@ -221,9 +222,30 @@ func _on_tick_complete(pp: PlanetProgress, def: BuildingDef,
 		entry: Dictionary) -> void:
 	# Produce output (scaled by amount)
 	var mods := PlanetModifier.for_planet(_planet_type(pp.planet_seed))
+	var st := get_node("/root/SkillTree")
 	if def.logic != null:
-		var st := get_node("/root/SkillTree")
 		def.logic.produce(pp, def, amount, mods, entry, st)
+
+	var display_val := def.output_amount * amount
+	var suffix := ""
+	var icon_tex: Texture2D = null
+	match def.output_type:
+		BuildingDef.OutputType.CREDITS:
+			display_val *= st.get_credits_mult()
+			suffix = " cr"
+		BuildingDef.OutputType.RAW_MINERAL:
+			suffix = ""
+			icon_tex = MineralIcon.make(1, Color(0.55, 0.60, 0.70))
+		BuildingDef.OutputType.REFINED_MINERAL:
+			suffix = ""
+			icon_tex = MineralIcon.make(2, Color(0.75, 0.55, 1.00))
+		BuildingDef.OutputType.ENERGY:
+			display_val = 0.0 # Energy is passive, no need for popup
+
+	var poi_lbl: String = entry.get("district_id", "")
+	if display_val > 0.0 and poi_lbl != "":
+		var txt := "+%.0f%s" % [display_val, suffix]
+		resource_produced.emit(pp.planet_seed, poi_lbl, txt, def.output_color(), icon_tex)
 
 func _planet_energy(pp: PlanetProgress) -> float:
 	if _energy.has(pp.planet_seed):

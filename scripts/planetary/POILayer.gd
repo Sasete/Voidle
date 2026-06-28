@@ -81,17 +81,83 @@ func _process(_delta: float) -> void:
 		poi["visible"] = sz > -0.05
 		poi["lat_f"]   = lat   # store for direction
 
+	var keep_texts: Array[Dictionary] = []
+	for ft in _floating_texts:
+		ft.time += _delta
+		if ft.time < ft.max_time:
+			var lon: float = ft.lon - rot
+			var lat: float = ft.lat
+			var sx  := sin(lon) * cos(lat)
+			var sy  := -sin(lat)
+			var sz  := cos(lon) * cos(lat)
+			ft.screen  = center + Vector2(sx * r_px, sy * r_px)
+			ft.visible = sz > -0.05
+			ft.alpha   = clamp(sz * 4.0, 0.0, 1.0)
+			keep_texts.append(ft)
+	_floating_texts = keep_texts
+
 	queue_redraw()
 
 var _orbitron: Font
+var _floating_texts: Array[Dictionary] = []
+
+func spawn_floating_text(lon_deg: float, lat_deg: float, text: String, color: Color = Color.WHITE, font_size: int = 14, icon: Texture2D = null) -> void:
+	_floating_texts.append({
+		"lon": deg_to_rad(lon_deg),
+		"lat": deg_to_rad(lat_deg),
+		"text": text,
+		"color": color,
+		"time": 0.0,
+		"max_time": 2.5,
+		"visible": true,
+		"screen": Vector2.ZERO,
+		"alpha": 1.0,
+		"font_size": font_size,
+		"icon": icon
+	})
 
 func _ready() -> void:
 	_orbitron = load("res://Fonts/Orbitron-VariableFont_wght.ttf")
 
 func _draw() -> void:
-	if _pois.is_empty():
+	if _pois.is_empty() and _floating_texts.is_empty():
 		return
 	var font: Font = _orbitron if _orbitron else ThemeDB.fallback_font
+
+	for ft in _floating_texts:
+		if not ft.visible: continue
+		
+		var progress: float = ft.time / ft.max_time
+		var text_alpha: float = (1.0 - progress * progress) * ft.alpha
+		if text_alpha <= 0.0: continue
+		
+		var float_up_offset := Vector2(0, -progress * 40.0)
+		var pos: Vector2 = ft.screen + float_up_offset
+		
+		var c: Color = ft.color
+		c.a *= text_alpha
+		
+		var f_size: int = ft.get("font_size", 14)
+		var text_width := font.get_string_size(ft.text, HORIZONTAL_ALIGNMENT_LEFT, -1, f_size).x
+		
+		var icon_tex: Texture2D = ft.get("icon")
+		var total_w := text_width
+		var icon_size := 16.0
+		if icon_tex != null:
+			total_w += icon_size + 4.0
+			
+		var start_x := pos.x - total_w * 0.5
+		
+		var text_x := start_x
+		if icon_tex != null:
+			var icon_pos := Vector2(start_x, pos.y - icon_size * 0.8)
+			draw_texture_rect(icon_tex, Rect2(icon_pos, Vector2(icon_size, icon_size)), false, Color(1, 1, 1, c.a))
+			text_x += icon_size + 4.0
+			
+		var text_pos := Vector2(text_x, pos.y)
+		
+		draw_string_outline(font, text_pos, ft.text, HORIZONTAL_ALIGNMENT_LEFT, -1, f_size, 1, Color(0, 0, 0, c.a * 0.8))
+		draw_string(font, text_pos, ft.text, HORIZONTAL_ALIGNMENT_LEFT, -1, f_size, c)
 
 	for i in _pois.size():
 		var poi: Dictionary = _pois[i]
