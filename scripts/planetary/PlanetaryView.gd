@@ -1320,6 +1320,18 @@ func _rotate_to_lon(lon_deg: float, duration: float = 0.45) -> void:
 		current, current + diff, duration)
 
 func _on_planet_clicked(_screen_pos: Vector2) -> void:
+	var center := planet_renderer.size * 0.5
+	var local_click := _screen_pos - center
+	var ar: float = planet_renderer.size.x / planet_renderer.size.y if planet_renderer.size.y > 0 else 1.0
+	var nx: float = (local_click.x * ar) / float(planet_renderer._planet_radius_px)
+	var ny: float = local_click.y / float(planet_renderer._planet_radius_px)
+	if nx*nx + ny*ny <= 1.0:
+		var z := sqrt(1.0 - nx*nx - ny*ny)
+		var lat_rad := asin(-ny)
+		var lon_rad := atan2(nx, z)
+		var actual_lon := fposmod(planet_renderer.get_rotation_offset() + lon_rad, TAU)
+		print("[Planet Debug] Clicked Lon: ", rad_to_deg(actual_lon), " | Lat: ", rad_to_deg(lat_rad))
+
 	poi_layer.deselect_all()
 	_build_planet_overview(current_data)
 
@@ -2065,7 +2077,7 @@ func _tick_rocket_anim(delta: float) -> void:
 	# Sub-phase B (t ≥ 0.5): circularise — lerp from rise-end to orbital insert point
 	# Both endpoints re-computed each tick so planet drag rotates everything correctly.
 
-	const LAUNCH_DUR: float = 18.0
+	const LAUNCH_DUR: float = 22.0
 
 	# Speed profile: sin curve — accelerates to peak at t=0.5, then decelerates to 0.
 	# lon_sweep uses integral of sin: 0.5*(1-cos(t*PI)) → smooth S from 0 to sweep_target.
@@ -2086,9 +2098,11 @@ func _tick_rocket_anim(delta: float) -> void:
 			const D: float = (1.0 + CRUISE_FRAC) * 0.5
 			var curve: float
 			if t <= 0.5:
-				curve = 0.5 * (1.0 - cos(t * PI))
+				# Quadratic ease-in: slow initial ramp, constant acceleration feel.
+				# Lower initial jerk than sine (28% of sine's initial acceleration).
+				curve = 2.0 * t * t
 			else:
-				var u: float    = (t - 0.5) / 0.5
+				var u: float     = (t - 0.5) / 0.5
 				var integ: float = u - u * u * (1.0 - CRUISE_FRAC) * 0.5
 				curve = 0.5 + (integ / D) * 0.5
 			d["anim_r"]      = lerpf(start_r, orbit_r, curve)
@@ -2103,24 +2117,31 @@ func _tick_rocket_anim(delta: float) -> void:
 				var rot_bp:  float   = planet_renderer.get_rotation_offset()
 				var lon_bp:  float   = d["poi_lon"] + d["lon_sweep"] - rot_bp
 				var lat_bp:  float   = d["poi_lat"] + d["lat_sweep"]
-				var ctr_bp:  Vector2 = planet_renderer.global_position + planet_renderer.size * 0.5 \
-					- d["container"].get_global_rect().position
-				var pos_bp:  Vector2 = ctr_bp + Vector2(sin(lon_bp)*cos(lat_bp), -sin(lat_bp)) * d["anim_r"]
+				# abs_lon = planet-fixed longitude (no rot offset), so particle co-rotates with planet.
+				var abs_lon_bp: float = d["poi_lon"] + d["lon_sweep"]
+				var r_bp:       float = d["anim_r"]
 				var vel_dir: Vector2 = Vector2(
 					cos(lon_bp)*cos(lat_bp)*d["sweep_target"],
 					-cos(lat_bp)*(d["lat_target"]-d["poi_lat"])
 				).normalized()
 				var perp: Vector2 = Vector2(-vel_dir.y, vel_dir.x)
 				for sp: float in [1.0, -1.0]:
-					var bp_data: Dictionary = {"pos": pos_bp, "vel": perp * sp * 8.0, "alpha": 1.0}
+					var vel_px: Vector2 = perp * sp * 8.0
+					var bp_data: Dictionary = {
+						"abs_lon": abs_lon_bp,
+						"lat":     lat_bp,
+						"vel_lon": vel_px.x / r_bp,
+						"vel_lat": -vel_px.y / r_bp,
+						"r":       r_bp,
+						"alpha":   1.0
+					}
 					var bp_node := Control.new()
 					bp_node.mouse_filter = Control.MOUSE_FILTER_IGNORE
 					bp_node.z_index = 11
 					bp_node.size    = Vector2(4, 4)
-					bp_node.position = pos_bp
 					d["container"].add_child(bp_node)
 					bp_data["node"] = bp_node
-					var bp_ref: Dictionary = bp_data   # capture
+					var bp_ref: Dictionary = bp_data
 					bp_node.draw.connect(func() -> void:
 						if bp_ref["alpha"] > 0.0:
 							bp_node.draw_rect(Rect2(Vector2.ZERO, Vector2(2, 2)),
@@ -2130,11 +2151,23 @@ func _tick_rocket_anim(delta: float) -> void:
 	# ── Tick booster particles ────────────────────────────────────────────────────
 	if d.get("booster_particles") != null:
 		var alive: Array = []
+		var bp_rot:    float   = planet_renderer.get_rotation_offset()
+		var bp_center: Vector2 = planet_renderer.global_position + planet_renderer.size * 0.5 \
+			- d["container"].get_global_rect().position
+		var decay: float = pow(0.85, delta * 60.0)
 		for bp: Dictionary in d["booster_particles"]:
-			bp["pos"]   += bp["vel"] * delta
-			bp["vel"]   *= pow(0.85, delta * 60.0)
-			bp["alpha"] -= delta * 0.55
+			bp["abs_lon"] += bp["vel_lon"] * delta
+			bp["lat"]     += bp["vel_lat"] * delta
+			bp["vel_lon"] *= decay
+			bp["vel_lat"] *= decay
+			bp["alpha"]   -= delta * 0.55
 			if bp["alpha"] > 0.0:
+				var lon_eff_bp: float = bp["abs_lon"] - bp_rot
+				var lat_bp:     float = bp["lat"]
+				var r_bp:       float = bp["r"]
+				if bp.get("node") != null and is_instance_valid(bp["node"]):
+					bp["node"].position = bp_center + Vector2(sin(lon_eff_bp)*cos(lat_bp), -sin(lat_bp)) * r_bp
+					bp["node"].queue_redraw()
 				alive.append(bp)
 			else:
 				if bp.get("node") != null and is_instance_valid(bp["node"]):
@@ -2158,13 +2191,6 @@ func _tick_rocket_anim(delta: float) -> void:
 	rocket.visible = not (depth < -0.05 and offset.length() < planet_r * 0.99)
 
 	rocket.queue_redraw()
-
-	# ── Booster particles: update positions and trigger redraws ──────────────────
-	if d.get("booster_particles") != null:
-		for bp: Dictionary in d["booster_particles"]:
-			if bp.get("node") != null and is_instance_valid(bp["node"]):
-				bp["node"].position = bp["pos"]
-				bp["node"].queue_redraw()
 
 	# ── Hover tooltip ────────────────────────────────────────────────────────────
 	var ctr2: Control = d["container"]
@@ -2304,6 +2330,8 @@ func _finish_rocket_anim() -> void:
 	var p2:       Vector2 = _orbital_project_2d(orbit_angle + 0.002, orbit_inc, orbit_r, eff_rot2)
 	var speed_sign: float = 1.0 if (p2 - p1).dot(Vector2(rdx_raw, rdy_raw)) >= 0.0 else -1.0
 
+
+
 	var ship := ShipManager.launch(d["planet_seed"], "Shuttle")
 	ship.orbit_angle       = orbit_angle
 	ship.orbit_inclination = orbit_inc
@@ -2311,7 +2339,7 @@ func _finish_rocket_anim() -> void:
 	# CRUISE_FRAC=0.10, D=0.55, LAUNCH_DUR=18 → exit_rate ≈ 0.020 → orbit_speed ≈ 0.01 for rlen≈0.5
 	const _CF: float = 0.10
 	const _D:  float = (1.0 + _CF) * 0.5
-	const _LD: float = 18.0
+	const _LD: float = 22.0
 	var exit_rate: float = (_CF / _D) * (2.0 / _LD)
 	ship.orbit_speed = speed_sign * rlen * exit_rate
 	if _orbital_layer != null and is_instance_valid(_orbital_layer):
