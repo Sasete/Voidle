@@ -1246,6 +1246,9 @@ func _process(delta: float) -> void:
 	if _orbital_layer != null and is_instance_valid(_orbital_layer):
 		_orbital_layer._planet_radius   = planet_renderer._planet_radius_px
 		_orbital_layer._planet_rotation = planet_renderer.get_rotation_offset()
+		# Keep orbital center in sync with actual planet renderer center
+		var _oc: Control = planet_renderer.get_parent()
+		_orbital_layer._planet_center   = planet_renderer.global_position + planet_renderer.size * 0.5 - _oc.get_global_rect().position
 		_orbital_layer.queue_redraw()
 	if not _rocket_anim.is_empty():
 		_tick_rocket_anim(delta)
@@ -2055,38 +2058,60 @@ func _find_orbit_angle_for_pos(target: Vector2, inc: float, r: float, rot: float
 func _finish_rocket_anim() -> void:
 	var d: Dictionary = _rocket_anim
 	var rocket: Control = d.get("rocket")
+	var container: Control = d["container"]
+
+	# Read rocket's final container-local position BEFORE freeing it.
+	# OrbitalLayer draws with center = container.size * 0.5, so subtract that to get
+	# the offset in the same coordinate space as _orbital_project_2d output.
+	var final_off: Vector2 = Vector2.ZERO
 	if rocket != null and is_instance_valid(rocket):
+		# Use planet center (center_local) as reference — same as OrbitalLayer._planet_center
+		final_off = rocket.position - d["center_local"]
 		rocket.queue_free()
 	TooltipManager.hide_tip()
 
-	var rot_now:  float   = planet_renderer.get_rotation_offset()
-	var orbit_r:  float   = planet_renderer._planet_radius_px * 1.06
-	var inc:      float   = d["orbit_inc"]
-	# Final rocket screen offset (POILayer formula at t=1)
-	var final_lon_eff: float   = d["poi_lon"] + d["lon_sweep"] - rot_now
-	var lat:           float   = d["poi_lat"]
-	var final_off:     Vector2 = Vector2(sin(final_lon_eff) * cos(lat), -sin(lat)) * orbit_r
-	# Find nearest orbit_angle numerically
-	var orbit_angle: float = _find_orbit_angle_for_pos(final_off, inc, orbit_r, rot_now)
+	var rot_now: float = planet_renderer.get_rotation_offset()
+	var orbit_r: float = planet_renderer._planet_radius_px * 1.06
+	var tx: float = final_off.x / orbit_r   # normalised
+	var ty: float = final_off.y / orbit_r
 
-	# Orbit tangent at insertion — determines correct speed sign
-	const DA: float = 0.002
-	var p_ins:  Vector2 = _orbital_project_2d(orbit_angle,      inc, orbit_r, rot_now)
-	var p_next: Vector2 = _orbital_project_2d(orbit_angle + DA, inc, orbit_r, rot_now)
-	var tangent: Vector2 = (p_next - p_ins) / DA
+	# Analytical 3-DOF solution: orbit_angle + orbit_inc + orbit_node
+	# gives EXACT position AND correct tangent direction simultaneously.
+	#
+	# Fix a = ±π/2 (tangent is purely horizontal at these points):
+	#   a = -π/2 → tangent = (+cos(R), 0), matches sweep going right
+	#   a = +π/2 → tangent = (-cos(R), 0), matches sweep going left
+	# where R = rot_now + node.
+	#
+	# Then solve inc and node from position equations at the chosen a.
+	var sweep_s: float = d["sweep_sign"]
 
-	# Rocket's final direction (last part of sweep, ease-in² means going fast at t=1)
-	# At t=1: d(lon_sweep)/dt = 2*t * (sweep_sign*PI*0.5/LAUNCH_DUR) → eastward/westward
-	var sweep_dir: float  = d["sweep_sign"]
-	# Screen velocity of lon_sweep at t=1: cos(lon_eff)*cos(lat)*r * d(lon_sweep)/dt
-	var dx_dlon: float   = cos(final_lon_eff) * cos(lat) * orbit_r
-	var anim_dir: Vector2 = Vector2(dx_dlon * sweep_dir, 0.0)   # lon sweep only moves x
+	# a = ±π/2 → tangent is purely horizontal, matches rocket's sweep direction.
+	# a = -π/2: tangent = (+cos(R), 0) → sweep right
+	# a = +π/2: tangent = (-cos(R), 0) → sweep left
+	var orbit_angle: float
+	var orbit_inc:   float
+	var orbit_node:  float
 
-	var speed_sign: float = 1.0 if anim_dir.dot(tangent) >= 0.0 else -1.0
+	if sweep_s >= 0.0:
+		orbit_angle = -PI * 0.5
+		orbit_inc   = asin(clampf(-ty, -1.0, 1.0))
+		var cos_inc: float = cos(orbit_inc)
+		var sin_R:   float = clampf(-tx / maxf(absf(cos_inc), 0.001), -1.0, 1.0)
+		orbit_node  = asin(sin_R) - rot_now
+	else:
+		orbit_angle = PI * 0.5
+		orbit_inc   = asin(clampf(ty, -1.0, 1.0))
+		var cos_inc: float = cos(orbit_inc)
+		var sin_R:   float = clampf(tx / maxf(absf(cos_inc), 0.001), -1.0, 1.0)
+		orbit_node  = asin(sin_R) - rot_now
+
+	var speed_sign: float = 1.0
 
 	var ship := ShipManager.launch(d["planet_seed"], "Shuttle")
 	ship.orbit_angle       = orbit_angle
-	ship.orbit_inclination = inc
+	ship.orbit_inclination = orbit_inc
+	ship.orbit_node        = orbit_node
 	ship.orbit_speed       = speed_sign * 0.15
 	if _orbital_layer != null and is_instance_valid(_orbital_layer):
 		_orbital_layer.queue_redraw()

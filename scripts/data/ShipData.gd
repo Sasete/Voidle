@@ -21,6 +21,10 @@ extends Resource
 ## Orbital angular speed in rad/s. Positive = one direction, negative = opposite.
 @export var orbit_speed: float = 0.15
 
+## Longitude of ascending node — rotates the orbital plane around the Y axis.
+## With orbit_inc and orbit_angle, this gives full 3-DOF orbital orientation.
+@export var orbit_node: float = 0.0
+
 ## Cargo: resource_id -> amount
 @export var cargo:        Dictionary = {}
 

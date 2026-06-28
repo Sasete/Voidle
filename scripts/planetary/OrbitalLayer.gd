@@ -3,9 +3,10 @@
 class_name OrbitalLayer
 extends Control
 
-var _planet_seed:     int   = -1
-var _planet_radius:   float = 0.0
-var _planet_rotation: float = 0.0   # Y-axis rotation (longitude) from planet drag
+var _planet_seed:     int     = -1
+var _planet_radius:   float   = 0.0
+var _planet_rotation: float   = 0.0   # Y-axis rotation (longitude) from planet drag
+var _planet_center:   Vector2 = Vector2.ZERO   # actual planet center in local coords
 var _hovered_ship:    ShipData = null
 
 signal ship_hovered(ship: ShipData, screen_pos: Vector2)
@@ -36,7 +37,7 @@ func _project(ship: ShipData, angle: float) -> Vector3:
 	var px: float  = r * cos(angle)
 	var py: float  = r * sin(angle) * sin(inc)
 	var pz: float  = r * sin(angle) * cos(inc)
-	var rot: float = _planet_rotation
+	var rot: float = _planet_rotation + ship.orbit_node   # node rotates orbital plane around Y
 	var rx: float  =  px * cos(rot) + pz * sin(rot)
 	var rz: float  = -px * sin(rot) + pz * cos(rot)
 	return Vector3(rx, py, rz)
@@ -58,7 +59,7 @@ func _draw_pixel_ship(pos: Vector2, col: Color) -> void:
 func _draw() -> void:
 	if _planet_seed < 0 or _planet_radius <= 0.0:
 		return
-	var center := size * 0.5
+	var center := _planet_center if _planet_center != Vector2.ZERO else size * 0.5
 
 	for ship: ShipData in ShipManager.ships_for(_planet_seed):
 		# ── Orbit path — dash-dash: 3 segments on, 3 off ────────────────────────
@@ -99,7 +100,7 @@ func _input(event: InputEvent) -> void:
 func _ship_at(global_pos: Vector2) -> ShipData:
 	if _planet_seed < 0 or _planet_radius <= 0.0:
 		return null
-	var center := get_global_rect().position + size * 0.5
+	var center := get_global_rect().position + (_planet_center if _planet_center != Vector2.ZERO else size * 0.5)
 	for ship: ShipData in ShipManager.ships_for(_planet_seed):
 		var sv := _project(ship, ship.orbit_angle)
 		if _is_occluded(sv):
