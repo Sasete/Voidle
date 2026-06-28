@@ -1894,9 +1894,10 @@ func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callabl
 		if not p.is_empty():
 			start_r = p.get("r_px", planet_r)
 
-	var sweep_sign: float = 1.0 if randf() > 0.5 else -1.0
-	var inc_base:   float = abs(poi_lat) + randf_range(0.08, 0.4)
-	var orbit_inc:  float = inc_base * (1.0 if randf() > 0.5 else -1.0)
+	# Random orbit insertion point: random longitude sweep + random target latitude
+	var sweep_target: float = randf_range(PI * 0.15, PI * 0.75) * (1.0 if randf() > 0.5 else -1.0)
+	var sweep_sign:   float = sign(sweep_target)
+	var lat_target:   float = randf_range(-PI * 0.35, PI * 0.35)
 
 	# ── Rocket node ──────────────────────────────────────────────────────────────
 	var rocket := Control.new()
@@ -1951,8 +1952,9 @@ func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callabl
 		"poi_lon":      poi_lon,
 		"poi_lat":      poi_lat,
 		"lon_sweep":    0.0,
+		"sweep_target": sweep_target,
+		"lat_target":   lat_target,
 		"sweep_sign":   sweep_sign,
-		"orbit_inc":    orbit_inc,
 		"flame_alpha":     1.0,
 		"phase":           0,
 		"phase_t":         0.0,
@@ -1994,13 +1996,13 @@ func _tick_rocket_anim(delta: float) -> void:
 			var r_t: float   = 1.0 - (1.0 - t) * (1.0 - t)   # ease-out radius
 			var a_t: float   = t * t                            # ease-in² sweep
 			d["anim_r"]      = lerpf(start_r, orbit_r, r_t)
-			d["lon_sweep"]   = lerpf(0.0, d["sweep_sign"] * PI * 0.5, a_t)
+			d["lon_sweep"]   = lerpf(0.0, d["sweep_target"], a_t)
 			d["flame_alpha"] = clampf((0.85 - t) / 0.15, 0.0, 1.0)
 
 	# POILayer formula — same as POILayer._process, tracks planet rotation exactly
 	var rot:     float   = planet_renderer.get_rotation_offset()
 	var lon_eff: float   = d["poi_lon"] + d["lon_sweep"] - rot
-	var lat:     float   = d["poi_lat"]
+	var lat:     float   = lerpf(d["poi_lat"], d["lat_target"], t * t)
 	var r:       float   = d["anim_r"]
 	var center:  Vector2 = d["center_local"]
 	var offset:  Vector2 = Vector2(sin(lon_eff) * cos(lat), -sin(lat)) * r
@@ -2106,7 +2108,13 @@ func _finish_rocket_anim() -> void:
 		var sin_R:   float = clampf(tx / maxf(absf(cos_inc), 0.001), -1.0, 1.0)
 		orbit_node  = asin(sin_R) - rot_now
 
-	var speed_sign: float = 1.0
+	# Verify tangent direction at insertion matches sweep — orbit_node can flip apparent motion
+	var eff_rot:    float   = rot_now + orbit_node
+	const DA:       float   = 0.002
+	var p_ins:      Vector2 = _orbital_project_2d(orbit_angle,      orbit_inc, orbit_r, eff_rot)
+	var p_next:     Vector2 = _orbital_project_2d(orbit_angle + DA, orbit_inc, orbit_r, eff_rot)
+	var tang_x:     float   = (p_next - p_ins).x
+	var speed_sign: float   = 1.0 if tang_x * sweep_s >= 0.0 else -1.0
 
 	var ship := ShipManager.launch(d["planet_seed"], "Shuttle")
 	ship.orbit_angle       = orbit_angle
