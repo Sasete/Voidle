@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="DistrictDef" load_steps=2 format=3 uid="uid://d_2_a90b5e9e"]
+
+[ext_resource type="Script" path="res://scripts/game/DistrictDef.gd" id="1_def"]
+
+[resource]
+script = ExtResource("1_def")
+id = 2
+display_name = "Mining Facility"
+description = "Extracts raw minerals from local deposits."
+icon = "⛏"
+placement = 1
+base_cost = 250.0
+allowed_planet_types = Array[int]([0, 1, 3, 2, 4, 5, 6])
+building_ids = Array[String](["mine", "deep_drill", "refinery"])
+name_pool = Array[String](["Deepvein Complex", "Stratum Site Alpha", "Iron Reach", "Core Station", "Bedrock Post", "Shaft Prime", "Mineral Yard", "Excavation Base", "Ironfall", "Quarry One", "Veindepth"])

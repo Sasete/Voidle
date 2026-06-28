@@ -18,6 +18,9 @@ extends Resource
 ## Inclination of orbital plane in radians (random per ship — gives varied tilt angles).
 @export var orbit_inclination: float = 0.0
 
+## Orbital angular speed in rad/s. Positive = one direction, negative = opposite.
+@export var orbit_speed: float = 0.15
+
 ## Cargo: resource_id -> amount
 @export var cargo:        Dictionary = {}
 

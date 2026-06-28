@@ -1,0 +1,25 @@
+[gd_resource type="Resource" script_class="BuildingDef" load_steps=3 format=3 uid="uid://b_apartments_b0a0498a"]
+
+[ext_resource type="Script" path="res://scripts/game/logic/CreditLogic.gd" id="1_logic"]
+[ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="2_def"]
+
+[sub_resource type="Resource" id="Resource_logic"]
+script = ExtResource("1_logic")
+
+[resource]
+script = ExtResource("2_def")
+building_id = "apartments"
+display_name = "Apartments"
+description = "Denser housing; higher income per slot."
+allowed_poi_types = Array[int]([0])
+base_cost = 250.0
+slot_cost = 1
+min_planet_lv = 1
+tick_duration = 20.0
+energy_per_tick = -4.0
+output_type = 2
+output_amount = 30.0
+input_type = 0
+input_amount = 0.0
+logic = SubResource("Resource_logic")
+unlocked_by_default = false

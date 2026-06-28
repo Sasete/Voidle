@@ -119,6 +119,9 @@ func _tick_all(delta: float) -> void:
 					var merge_idx: int = entry.get("merge_into", -1)
 					if merge_idx >= 0:
 						pending_merges.append(entry)
+					# Spaceport starts paused after construction — player launches manually
+					if def.building_id == "spaceport":
+						_user_paused[key] = true
 					building_constructed.emit(planet_seed, key)
 					building_ticked.emit(planet_seed, key)
 				else:
@@ -180,9 +183,11 @@ func _tick_all(delta: float) -> void:
 
 			if next >= 1.0:
 				# ── End-of-cycle production ───────────────────────────────────
-				# Resource was already consumed at 0.0. Just produce the output.
 				_on_tick_complete(pp, def, key, 0.0, amount, entry)
 				_progress[key] = 0.0
+				# Spaceport: re-pause after each launch cycle so player must trigger manually
+				if def.building_id == "spaceport":
+					_user_paused[key] = true
 				building_ticked.emit(planet_seed, key)
 			else:
 				_progress[key] = next
@@ -201,55 +206,9 @@ func _on_tick_complete(pp: PlanetProgress, def: BuildingDef,
 		entry: Dictionary) -> void:
 	# Produce output (scaled by amount)
 	var mods := PlanetModifier.for_planet(_planet_type(pp.planet_seed))
-	match def.output_type:
-		BuildingDef.OutputType.CREDITS:
-			var mult: float = get_node("/root/SkillTree").get_credits_mult()
-			GameState.earn_credits(def.output_amount * amount * mult)
-		BuildingDef.OutputType.ENERGY:
-			pass   # energy is a flow
-		BuildingDef.OutputType.RAW_MINERAL, BuildingDef.OutputType.REFINED_MINERAL:
-			var mult: float = PlanetModifier.combined(mods, PlanetModifier.Effect.MINE_OUTPUT_MULT) * get_node("/root/SkillTree").get_mine_output_mult()
-			var rid: String = entry.get("burning_mineral", "")
-			if rid == "":
-				rid = _resource_key(def.output_type, pp.planet_seed, entry)
-			
-			if def.input_type != BuildingDef.OutputType.NONE and def.output_type == BuildingDef.OutputType.REFINED_MINERAL:
-				# Example: if refinery burns "iron_ore", it outputs "iron_ingot" (the next tier of burning_mineral)
-				var rd := GameState.known_resources.get(rid) as ResourceData
-				if rd:
-					var raw_list := GameState.get_body_resources(pp.planet_seed).get_by_tag(ResourceData.Tag.REFINED_MINERAL)
-					for refined in raw_list:
-						if refined.mineral_name == rd.mineral_name and refined.tier == rd.tier + 1:
-							rid = refined.resource_id()
-							break
-				pp.add_resource(rid, def.output_amount * amount * mult)
-			elif def.input_type == BuildingDef.OutputType.NONE and def.output_type == BuildingDef.OutputType.RAW_MINERAL:
-				# Basic extractor -> Mix of all minerals based on PlanetData
-				var pd := GameState.get_planet_data(pp.planet_seed)
-				var raw_list := GameState.get_body_resources_for(pd).get_by_tag(ResourceData.Tag.RAW_MINERAL)
-				var total_density: float = 0.0
-				var densities: Array[float] = []
-				var rng := RandomNumberGenerator.new()
-				
-				for rd in raw_list:
-					var r_id := rd.resource_id()
-					var d: float
-					if pd.mineral_densities.has(r_id):
-						d = float(pd.mineral_densities[r_id])
-					else:
-						rng.seed = pd.seed ^ (rd.rarity * 0x4E3D)
-						d = pd.deposit_density * rng.randf_range(0.75, 1.25)
-					densities.append(d)
-					total_density += d
-					
-				var total_out := def.output_amount * amount * mult
-				if total_density > 0.0:
-					for i in raw_list.size():
-						var share := total_out * (densities[i] / total_density)
-						pp.add_resource((raw_list[i] as ResourceData).resource_id(), share)
-			else:
-				rid = _resource_key(def.output_type, pp.planet_seed, entry)
-				pp.add_resource(rid, def.output_amount * amount * mult)
+	if def.logic != null:
+		var st := get_node("/root/SkillTree")
+		def.logic.produce(pp, def, amount, mods, entry, st)
 
 func _planet_energy(pp: PlanetProgress) -> float:
 	if _energy.has(pp.planet_seed):

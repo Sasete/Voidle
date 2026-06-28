@@ -1,31 +1,42 @@
 ## Defines a district type: what it's called, where it can be placed,
 ## what buildings it can contain, and its default placement preference.
 class_name DistrictDef
-extends RefCounted
+extends Resource
 
 enum Type { CITY, GENERATOR, MINING }
 
-var id:           Type
-var display_name: String
-var description:  String
-var icon:         String
-var placement:    LocationFinder.Placement
-var base_cost:    float
+@export var id:           Type
+@export var display_name: String
+@export var description:  String
+@export var icon:         String
+@export var placement:    LocationFinder.Placement
+@export var base_cost:    float
 ## Empty = available on all planet types.
-var allowed_planet_types: Array[PlanetData.Type] = []
+@export var allowed_planet_types: Array[PlanetData.Type] = []
 ## Which BuildingDef building_ids are available inside this district type.
-var building_ids: Array[String] = []
+@export var building_ids: Array[String] = []
 ## Name pool used for random name suggestions.
-var name_pool:    Array[String] = []
+@export var name_pool:    Array[String] = []
 
 # ── Registry ─────────────────────────────────────────────────────────────────
 
-static var _all: Array[DistrictDef] = []
+static var _cache: Array[DistrictDef] = []
 
 static func all() -> Array[DistrictDef]:
-	if _all.is_empty():
-		_build_registry()
-	return _all
+	if not _cache.is_empty():
+		return _cache
+		
+	var dir := DirAccess.open("res://resources/districts")
+	if dir:
+		dir.list_dir_begin()
+		var file_name := dir.get_next()
+		while file_name != "":
+			if not dir.current_is_dir() and file_name.ends_with(".tres"):
+				var res := ResourceLoader.load("res://resources/districts/" + file_name) as DistrictDef
+				if res:
+					_cache.append(res)
+			file_name = dir.get_next()
+	return _cache
 
 static func for_planet(planet_type: PlanetData.Type) -> Array[DistrictDef]:
 	var result: Array[DistrictDef] = []
@@ -58,70 +69,6 @@ func suggest_name(data: PlanetData) -> String:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = data.seed ^ (data.custom_pois.size() * 0xA7F3 + id * 0x1234)
 	return name_pool[rng.randi() % name_pool.size()]
-
-static func _make(
-		p_id: Type, name: String, desc: String, icon: String,
-		placement: LocationFinder.Placement, cost: float,
-		allowed: Array[PlanetData.Type],
-		buildings: Array[String],
-		names: Array[String]) -> DistrictDef:
-	var d := DistrictDef.new()
-	d.id           = p_id
-	d.display_name = name
-	d.description  = desc
-	d.icon         = icon
-	d.placement    = placement
-	d.base_cost    = cost
-	d.allowed_planet_types = allowed
-	d.building_ids = buildings
-	d.name_pool    = names
-	return d
-
-static func _build_registry() -> void:
-	_all = [
-		_make(
-			Type.CITY,
-			"City",
-			"Residential and commercial hub. Generates credits and houses population.",
-			"⬡",
-			LocationFinder.Placement.LAND,
-			500.0,
-			[PlanetData.Type.TERRAN, PlanetData.Type.ARID, PlanetData.Type.ICE,
-			 PlanetData.Type.MOON],
-			["residential", "apartments", "commercial", "luxury_complex", "spaceport"],
-			["New Carthage", "Iron Shore", "Veylan", "Kelast", "Dusk Harbor",
-			 "Aelstrom", "Fort Virion", "Mirelith", "Sunfall", "Coldmere",
-			 "Outpost Hera", "New Delos", "Vanta Port", "Ashfield", "Creston"]
-		),
-		_make(
-			Type.GENERATOR,
-			"Generator Facility",
-			"Power plant complex. Produces energy for the colony grid.",
-			"⚡",
-			LocationFinder.Placement.LAND,
-			300.0,
-			[],   # available on all planet types
-			["solar_panel", "generator", "power_plant"],
-			["Prometheus Array", "Grid Station Alpha", "Helios Platform",
-			 "Solara Base", "Arc Station", "Photon Plant", "Voltex Hub",
-			 "Enerion Core", "Tesla Relay", "Surge Complex", "Dawn Array"]
-		),
-		_make(
-			Type.MINING,
-			"Mining Facility",
-			"Extracts raw minerals from local deposits.",
-			"⛏",
-			LocationFinder.Placement.LAND,
-			250.0,
-			[PlanetData.Type.TERRAN, PlanetData.Type.ARID, PlanetData.Type.ICE,
-			 PlanetData.Type.VOLCANIC, PlanetData.Type.BARREN,
-			 PlanetData.Type.MOON, PlanetData.Type.ASTEROID],
-			["mine", "deep_drill", "refinery"],
-			["Deepvein Complex", "Stratum Site Alpha", "Iron Reach",
-			 "Core Station", "Bedrock Post", "Shaft Prime", "Mineral Yard",
-			 "Excavation Base", "Ironfall", "Quarry One", "Veindepth"]
-		),
-	]
 
 ## Convert DistrictDef.Type → POIData.POIType for placement.
 func to_poi_type() -> POIData.POIType:

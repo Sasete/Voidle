@@ -1,0 +1,25 @@
+[gd_resource type="Resource" script_class="BuildingDef" load_steps=3 format=3 uid="uid://b_mine_abd129ba"]
+
+[ext_resource type="Script" path="res://scripts/game/logic/MineLogic.gd" id="1_logic"]
+[ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="2_def"]
+
+[sub_resource type="Resource" id="Resource_logic"]
+script = ExtResource("1_logic")
+
+[resource]
+script = ExtResource("2_def")
+building_id = "mine"
+display_name = "Mine"
+description = "Extracts raw minerals from local deposits."
+allowed_poi_types = Array[int]([1])
+base_cost = 150.0
+slot_cost = 1
+min_planet_lv = 1
+tick_duration = 18.0
+energy_per_tick = -2.0
+output_type = 3
+output_amount = 10.0
+input_type = 0
+input_amount = 0.0
+logic = SubResource("Resource_logic")
+unlocked_by_default = true

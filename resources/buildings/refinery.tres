@@ -1,0 +1,25 @@
+[gd_resource type="Resource" script_class="BuildingDef" load_steps=3 format=3 uid="uid://b_refinery_19e19511"]
+
+[ext_resource type="Script" path="res://scripts/game/logic/RefineryLogic.gd" id="1_logic"]
+[ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="2_def"]
+
+[sub_resource type="Resource" id="Resource_logic"]
+script = ExtResource("1_logic")
+
+[resource]
+script = ExtResource("2_def")
+building_id = "refinery"
+display_name = "Refinery"
+description = "Converts raw ore to refined minerals."
+allowed_poi_types = Array[int]([1])
+base_cost = 800.0
+slot_cost = 2
+min_planet_lv = 2
+tick_duration = 24.0
+energy_per_tick = -8.0
+output_type = 4
+output_amount = 5.0
+input_type = 3
+input_amount = 10.0
+logic = SubResource("Resource_logic")
+unlocked_by_default = false

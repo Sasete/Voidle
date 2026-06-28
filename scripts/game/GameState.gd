@@ -41,6 +41,7 @@ var _planet_progress:       Dictionary = {}
 var _body_resources:        Dictionary = {}
 var known_resources:        Dictionary = {}
 var resource_deposit_counts: Dictionary = {}
+var unlocked_buildings:     Dictionary = {}
 
 # ── Home location (set once at world generation, then saved) ─────────────────
 var home_planet_seed: int  = -1   # seed of the Terran home planet
@@ -57,6 +58,11 @@ func _ready() -> void:
 	if home_planet_seed < 0:
 		home_planet_seed = randi_range(1000, 99999)
 	_bootstrap_world()
+
+func unlock_building(building_id: String) -> void:
+	if not unlocked_buildings.has(building_id):
+		unlocked_buildings[building_id] = true
+		print("Building Unlocked: ", building_id)
 
 func _bootstrap_world() -> void:
 	# Galaxy first

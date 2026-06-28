@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="BuildingDef" format=3 uid="uid://nihd81eohn77"]
+
+[ext_resource type="Script" uid="uid://dkmxv1v1i0kxk" path="res://scripts/game/logic/SpaceportLogic.gd" id="1_logic"]
+[ext_resource type="Script" uid="uid://vhh2j46rquan" path="res://scripts/game/BuildingDef.gd" id="2_def"]
+
+[sub_resource type="Resource" id="Resource_logic"]
+script = ExtResource("1_logic")
+
+[resource]
+script = ExtResource("2_def")
+building_id = "spaceport"
+display_name = "Spaceport"
+description = "Orbital launch facility. Enables ship construction and interplanetary trade routes."
+allowed_poi_types = Array[int]([0])
+base_cost = 200.0
+slot_cost = 2
+tick_duration = 3.0
+energy_per_tick = 0.0
+logic = SubResource("Resource_logic")

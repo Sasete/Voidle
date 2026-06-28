@@ -28,6 +28,12 @@ const LIGHT_SPEED: float = 0.04   # radians per second
 var _active_district_poi: POIData = null
 var _overview_energy_val: Label = null   # kept for live energy updates
 var _orbital_layer: OrbitalLayer = null
+
+## Active rocket launch animation state. Empty when no launch in progress.
+## Keys: rocket(Control), radius(float), angle_rel(float), alpha(float),
+##       phase(int 0=rise/1=turn/2=fade), phase_t(float), on_complete(Callable),
+##       planet_seed(int), orbit_inc(float), insert_angle_rel(float), planet_r(float)
+var _rocket_anim: Dictionary = {}
 ## Toast log container — created lazily, anchored bottom-left.
 var _toast_container: VBoxContainer = null
 ## Maps building pm_key -> bool indicating if its mineral switcher tray is expanded
@@ -1241,6 +1247,8 @@ func _process(delta: float) -> void:
 		_orbital_layer._planet_radius   = planet_renderer._planet_radius_px
 		_orbital_layer._planet_rotation = planet_renderer.get_rotation_offset()
 		_orbital_layer.queue_redraw()
+	if not _rocket_anim.is_empty():
+		_tick_rocket_anim(delta)
 
 func _update_cursor() -> void:
 	if planet_renderer == null or planet_renderer._planet_radius_px <= 0:
@@ -1751,6 +1759,14 @@ func _refresh_bar_label_status(key: String) -> void:
 	var m: Dictionary = _bar_meta[key]
 	if m.get("construction", false):
 		return
+	# Spaceport: update prog_ref + reset launch button when re-paused
+	if m.has("launch_btn"):
+		(m["prog"] as Array)[0] = ProductionManager.get_progress(key)
+		var btn: Button = m["launch_btn"]
+		if is_instance_valid(btn) and ProductionManager.is_user_paused(key):
+			btn.text     = "🚀 Launch"
+			btn.disabled = false
+		return
 	var out_lbl: Label = m.get("out_lbl", null)
 	var def: BuildingDef = m.get("def", null)
 	var fc: Color = m.get("fc", Color.WHITE)
@@ -1815,6 +1831,15 @@ func _on_building_constructed(planet_seed: int, key: String) -> void:
 		building_name if building_name != "" else "Building",
 		poi_label)
 
+	# If a spaceport just finished construction, mark planet and refresh ships
+	var pp_check := GameState.get_planet(planet_seed)
+	if pp_check != null and not pp_check.has_spaceport:
+		var pp_buildings: Array = pp_check.buildings
+		for eb: Dictionary in pp_buildings:
+			if eb.get("building_id", "") == "spaceport" and not eb.get("constructing", false):
+				pp_check.has_spaceport = true
+				break
+
 	_refresh_overview_energy()
 
 	# Refresh panel only if the player is actively viewing that specific district.
@@ -1836,6 +1861,239 @@ func _refresh_overview_energy() -> void:
 	_overview_energy_val.text = sign + "%.0f ⚡" % bal
 	_overview_energy_val.add_theme_color_override("font_color",
 		Color(0.9, 0.82, 0.25) if bal >= 0.0 else Color(0.9, 0.40, 0.28))
+
+## Starts a rocket launch animation. State is ticked in _process each frame.
+func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callable) -> void:
+	# Kill any existing animation
+	if not _rocket_anim.is_empty():
+		var old: Control = _rocket_anim.get("rocket")
+		if old != null and is_instance_valid(old):
+			old.queue_free()
+		_rocket_anim.clear()
+
+	var container: Control = planet_renderer.get_parent()
+	var planet_r:  float   = planet_renderer._planet_radius_px
+	const ORBIT_FRAC: float = 1.06
+
+	# Planet center — same reference as POILayer (_planet.global_position + size*0.5)
+	var planet_center_global: Vector2 = planet_renderer.global_position + planet_renderer.size * 0.5
+	var center_local:         Vector2 = planet_center_global - container.get_global_rect().position
+
+	# POI lon/lat for positioning (POILayer formula: x=sin(lon-rot)*cos(lat), y=-sin(lat))
+	var poi_lon:   float = 0.0
+	var poi_lat:   float = 0.0
+	var start_r:   float = planet_r
+	if poi != null and poi_layer != null and is_instance_valid(poi_layer):
+		var ll: Vector2 = poi_layer.get_poi_lon_lat(poi.label)
+		poi_lon = ll.x
+		poi_lat = ll.y
+		var p: Dictionary = poi_layer._get_planet_params()
+		if not p.is_empty():
+			start_r = p.get("r_px", planet_r)
+
+	var sweep_sign: float = 1.0 if randf() > 0.5 else -1.0
+	var inc_base:   float = abs(poi_lat) + randf_range(0.08, 0.4)
+	var orbit_inc:  float = inc_base * (1.0 if randf() > 0.5 else -1.0)
+
+	# ── Rocket node ──────────────────────────────────────────────────────────────
+	var rocket := Control.new()
+	rocket.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rocket.z_index      = 12
+	container.add_child(rocket)
+
+	# Set initial position directly from POI screen pos — no formula conversion needed
+	if poi != null and poi_layer != null and is_instance_valid(poi_layer):
+		var poi_global: Vector2 = poi_layer.get_poi_screen_pos(poi.label)
+		if poi_global != Vector2.ZERO:
+			rocket.position = poi_global - container.get_global_rect().position
+
+	rocket.draw.connect(func() -> void:
+		if _rocket_anim.is_empty():
+			return
+		var flame_a:    float   = _rocket_anim.get("flame_alpha", 1.0)
+		var cl:         Vector2 = _rocket_anim.get("center_local", Vector2.ZERO)
+		var rocket_off: Vector2 = rocket.position - cl
+		var exhaust_dir: Vector2 = -rocket_off.normalized() if rocket_off.length() > 1.0 else Vector2.DOWN
+		if flame_a > 0.01:
+			var back: Vector2 = exhaust_dir * 4.0
+			for fi: int in 5:
+				var fa: float = flame_a * (0.35 + randf() * 0.65)
+				var fc: Color
+				if fi < 2:   fc = Color(1.0, 0.35 + randf() * 0.5, 0.05, fa)
+				elif fi < 4: fc = Color(1.0, 0.80, 0.20, fa * 0.6)
+				else:        fc = Color(0.9, 0.4, 0.1, fa * 0.35)
+				rocket.draw_rect(Rect2((back + Vector2(randf_range(-2,2), randf_range(-2,2))).floor(), Vector2.ONE), fc)
+		var col := Color(1, 1, 1, 0.95)
+		var p   := Vector2.ZERO
+		rocket.draw_rect(Rect2(p,                   Vector2(2, 2)), col)
+		rocket.draw_rect(Rect2(p + Vector2(-2,  0), Vector2(2, 2)), col)
+		rocket.draw_rect(Rect2(p + Vector2( 2,  0), Vector2(2, 2)), col)
+		rocket.draw_rect(Rect2(p + Vector2( 0, -2), Vector2(2, 2)), col)
+		rocket.draw_rect(Rect2(p + Vector2( 0,  2), Vector2(2, 2)), col))
+
+	var lbl := Label.new()
+	lbl.text = "· launching to orbit"
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_apply_orbitron(lbl, 7)
+	lbl.add_theme_color_override("font_color", Color(0.65, 0.88, 1.0, 0.80))
+	lbl.position = Vector2(6, -5)
+	rocket.add_child(lbl)
+
+	_rocket_anim = {
+		"rocket":          rocket,
+		"container":       container,
+		"center_local":    center_local,
+		"planet_r_frac":   start_r / maxf(planet_r, 1.0),   # start radius as fraction
+		"anim_r":          start_r,
+		"poi_lon":      poi_lon,
+		"poi_lat":      poi_lat,
+		"lon_sweep":    0.0,
+		"sweep_sign":   sweep_sign,
+		"orbit_inc":    orbit_inc,
+		"flame_alpha":     1.0,
+		"phase":           0,
+		"phase_t":         0.0,
+		"planet_seed":     planet_seed,
+		"hover_active":    false,
+		"on_complete":     on_complete,
+	}
+
+## Called every _process frame while _rocket_anim is active.
+func _tick_rocket_anim(delta: float) -> void:
+	var d: Dictionary = _rocket_anim
+	var rocket: Control = d["rocket"]
+	if not is_instance_valid(rocket):
+		_rocket_anim.clear()
+		return
+
+	var phase: int   = d["phase"]
+	var t:     float = d["phase_t"]
+
+	# Planet radius fresh each tick (handles window resize)
+	var planet_r: float = planet_renderer._planet_radius_px
+	var orbit_r:  float = planet_r * 1.06
+	var start_r:  float = d["planet_r_frac"] * planet_r
+
+	# Two sub-phases within phase 0, each 0→1:
+	# Sub-phase A (t < 0.5): radial rise using POILayer formula (starts at exact district pos)
+	# Sub-phase B (t ≥ 0.5): circularise — lerp from rise-end to orbital insert point
+	# Both endpoints re-computed each tick so planet drag rotates everything correctly.
+
+	const LAUNCH_DUR: float = 9.0
+
+	match phase:
+		0:
+			t += delta / LAUNCH_DUR
+			if t >= 1.0:
+				_finish_rocket_anim()
+				return
+			d["phase_t"]     = t
+			var r_t: float   = 1.0 - (1.0 - t) * (1.0 - t)   # ease-out radius
+			var a_t: float   = t * t                            # ease-in² sweep
+			d["anim_r"]      = lerpf(start_r, orbit_r, r_t)
+			d["lon_sweep"]   = lerpf(0.0, d["sweep_sign"] * PI * 0.5, a_t)
+			d["flame_alpha"] = clampf((0.85 - t) / 0.15, 0.0, 1.0)
+
+	# POILayer formula — same as POILayer._process, tracks planet rotation exactly
+	var rot:     float   = planet_renderer.get_rotation_offset()
+	var lon_eff: float   = d["poi_lon"] + d["lon_sweep"] - rot
+	var lat:     float   = d["poi_lat"]
+	var r:       float   = d["anim_r"]
+	var center:  Vector2 = d["center_local"]
+	var offset:  Vector2 = Vector2(sin(lon_eff) * cos(lat), -sin(lat)) * r
+	rocket.position = center + offset
+
+	# ── Occlusion: hide when behind planet ────────────────────────────────────────
+	var depth: float = cos(lon_eff) * cos(lat)
+	rocket.visible = not (depth < -0.05 and offset.length() < planet_r * 0.99)
+
+	rocket.queue_redraw()
+
+	# ── Hover tooltip ────────────────────────────────────────────────────────────
+	var container: Control = d["container"]
+	var mp:   Vector2 = get_viewport().get_mouse_position()
+	var rp:   Vector2 = container.get_global_rect().position + rocket.position   # rocket pos is container-local
+	var near: bool    = mp.distance_to(rp) < 12.0
+	if near and not d["hover_active"]:
+		d["hover_active"] = true
+		TooltipManager.show_tip("Shuttle", "· launching to orbit")
+	elif not near and d["hover_active"]:
+		d["hover_active"] = false
+		TooltipManager.hide_tip()
+
+## Same projection formula as OrbitalLayer._project, returns 2D screen offset from center.
+func _orbital_project_2d(angle: float, inc: float, r: float, rot: float) -> Vector2:
+	var px: float = r * cos(angle)
+	var py: float = r * sin(angle) * sin(inc)
+	var pz: float = r * sin(angle) * cos(inc)
+	var rx: float = px * cos(rot) + pz * sin(rot)
+	return Vector2(rx, py)
+
+## Finds the orbit_angle whose screen projection is closest to the given offset.
+## Numerical search: 720 coarse samples + 100 fine refinement steps.
+func _find_orbit_angle_for_pos(target: Vector2, inc: float, r: float, rot: float) -> float:
+	const COARSE: int = 720
+	var best_a: float = 0.0
+	var best_d: float = INF
+	for i in COARSE:
+		var a: float   = i * TAU / COARSE
+		var d: float   = (_orbital_project_2d(a, inc, r, rot) - target).length_squared()
+		if d < best_d:
+			best_d = d
+			best_a = a
+	# Refine around best_a
+	var step: float = TAU / COARSE
+	for i in 100:
+		var a: float = best_a + (i - 50) * step * 0.02
+		var d: float = (_orbital_project_2d(a, inc, r, rot) - target).length_squared()
+		if d < best_d:
+			best_d = d
+			best_a = a
+	return best_a
+
+## Called when fade phase ends — spawns ship and clears animation state.
+func _finish_rocket_anim() -> void:
+	var d: Dictionary = _rocket_anim
+	var rocket: Control = d.get("rocket")
+	if rocket != null and is_instance_valid(rocket):
+		rocket.queue_free()
+	TooltipManager.hide_tip()
+
+	var rot_now:  float   = planet_renderer.get_rotation_offset()
+	var orbit_r:  float   = planet_renderer._planet_radius_px * 1.06
+	var inc:      float   = d["orbit_inc"]
+	# Final rocket screen offset (POILayer formula at t=1)
+	var final_lon_eff: float   = d["poi_lon"] + d["lon_sweep"] - rot_now
+	var lat:           float   = d["poi_lat"]
+	var final_off:     Vector2 = Vector2(sin(final_lon_eff) * cos(lat), -sin(lat)) * orbit_r
+	# Find nearest orbit_angle numerically
+	var orbit_angle: float = _find_orbit_angle_for_pos(final_off, inc, orbit_r, rot_now)
+
+	# Orbit tangent at insertion — determines correct speed sign
+	const DA: float = 0.002
+	var p_ins:  Vector2 = _orbital_project_2d(orbit_angle,      inc, orbit_r, rot_now)
+	var p_next: Vector2 = _orbital_project_2d(orbit_angle + DA, inc, orbit_r, rot_now)
+	var tangent: Vector2 = (p_next - p_ins) / DA
+
+	# Rocket's final direction (last part of sweep, ease-in² means going fast at t=1)
+	# At t=1: d(lon_sweep)/dt = 2*t * (sweep_sign*PI*0.5/LAUNCH_DUR) → eastward/westward
+	var sweep_dir: float  = d["sweep_sign"]
+	# Screen velocity of lon_sweep at t=1: cos(lon_eff)*cos(lat)*r * d(lon_sweep)/dt
+	var dx_dlon: float   = cos(final_lon_eff) * cos(lat) * orbit_r
+	var anim_dir: Vector2 = Vector2(dx_dlon * sweep_dir, 0.0)   # lon sweep only moves x
+
+	var speed_sign: float = 1.0 if anim_dir.dot(tangent) >= 0.0 else -1.0
+
+	var ship := ShipManager.launch(d["planet_seed"], "Shuttle")
+	ship.orbit_angle       = orbit_angle
+	ship.orbit_inclination = inc
+	ship.orbit_speed       = speed_sign * 0.15
+	if _orbital_layer != null and is_instance_valid(_orbital_layer):
+		_orbital_layer.queue_redraw()
+
+	var cb: Callable = d["on_complete"]
+	_rocket_anim.clear()
+	cb.call()
 
 # ── Toast / build-log notification ───────────────────────────────────────────
 
@@ -2029,6 +2287,10 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 	var prog   := ProductionManager.get_progress(pm_key)
 	var fc     := def.output_color()
 
+	# ── Spaceport: custom launch card ────────────────────────────────────────────
+	if def.building_id == "spaceport":
+		return _build_spaceport_card(def, pm_key, pp, poi)
+
 	# Outer card
 	var card := PanelContainer.new()
 	card.add_theme_stylebox_override("panel", _card_panel_style())
@@ -2169,9 +2431,9 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 	var is_mine := def.output_type == BuildingDef.OutputType.RAW_MINERAL and def.input_type == BuildingDef.OutputType.NONE
 	var is_generator := def.input_type == BuildingDef.OutputType.RAW_MINERAL and def.output_type == BuildingDef.OutputType.ENERGY
 
-	# ── Dynamic Mineral Selection Tray for Generator / Refinery ───────────────────
-	# Generator/Refinery chooses input RAW_MINERAL. Mines now auto-mix, so no tray.
-	var is_consumer := def.input_type == BuildingDef.OutputType.RAW_MINERAL
+	# ── Dynamic Mineral Selection Tray ───────────────────────────────────────────
+	# Handled via Dependency Injection (BuildingLogic)
+	var is_consumer := def.logic != null and def.logic.requires_mineral_selector()
 
 	if is_consumer:
 		var br := GameState.get_body_resources_for(planet)
@@ -2387,6 +2649,112 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 		"fc":          fc,
 		"entry":       entry
 	}
+	return card
+
+## Spaceport card: idle "READY" state with Launch button, or filling progress bar.
+func _build_spaceport_card(def: BuildingDef, pm_key: String,
+		pp: PlanetProgress, poi: POIData) -> PanelContainer:
+	var is_ready := ProductionManager.is_user_paused(pm_key)
+	var prog     := ProductionManager.get_progress(pm_key)
+
+	var card := PanelContainer.new()
+	var s := _card_panel_style()
+	card.add_theme_stylebox_override("panel", s)
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.clip_contents = true
+
+	var body := MarginContainer.new()
+	body.custom_minimum_size = Vector2(0, 54)
+	card.add_child(body)
+
+	# Fill bar (only visible when launching)
+	var prog_ref: Array = [prog]
+	var fill_ctrl := Control.new()
+	fill_ctrl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var cap_key := pm_key
+	fill_ctrl.draw.connect(func() -> void:
+		var p: float = (prog_ref as Array)[0]
+		if ProductionManager.is_user_paused(cap_key):
+			return
+		var w: float = fill_ctrl.size.x * p
+		if w > 0.5:
+			fill_ctrl.draw_rect(Rect2(0, 0, w, fill_ctrl.size.y), Color(0.35, 0.75, 1.0, 0.18))
+			fill_ctrl.draw_rect(Rect2(w - 2.0, 0, 2.0, fill_ctrl.size.y), Color(0.5, 0.9, 1.0, 0.55)))
+	body.add_child(fill_ctrl)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left",   10)
+	margin.add_theme_constant_override("margin_right",   8)
+	margin.add_theme_constant_override("margin_top",     7)
+	margin.add_theme_constant_override("margin_bottom",  7)
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	body.add_child(margin)
+
+	var hbox := HBoxContainer.new()
+	hbox.add_theme_constant_override("separation", 8)
+	margin.add_child(hbox)
+
+	# Left: name + status
+	var vbox := VBoxContainer.new()
+	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vbox.add_theme_constant_override("separation", 2)
+	hbox.add_child(vbox)
+
+	var name_lbl := Label.new()
+	name_lbl.text = def.display_name
+	_apply_orbitron(name_lbl, 10)
+	name_lbl.add_theme_color_override("font_color", Color(0.85, 0.92, 1.0))
+	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(name_lbl)
+
+	var status_lbl := Label.new()
+	status_lbl.text = "–8 ⚡   Ready to launch"
+	_apply_orbitron(status_lbl, 8)
+	status_lbl.add_theme_color_override("font_color", Color(0.45, 0.65, 0.95, 0.70))
+	status_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(status_lbl)
+
+	# Right: Launch button
+	var cap_poi      := poi
+	var cap_pp       := pp
+	var launch_btn   := Button.new()
+	launch_btn.text  = "🚀 Launch"
+	_apply_orbitron(launch_btn, 9)
+	var btn_style := StyleBoxFlat.new()
+	btn_style.bg_color     = Color(0.12, 0.28, 0.55, 0.90)
+	btn_style.border_color = Color(0.35, 0.65, 1.0, 0.80)
+	btn_style.set_border_width_all(1)
+	btn_style.set_corner_radius_all(4)
+	btn_style.content_margin_left  = 10
+	btn_style.content_margin_right = 10
+	btn_style.content_margin_top   = 4
+	btn_style.content_margin_bottom = 4
+	launch_btn.add_theme_stylebox_override("normal",  btn_style)
+	launch_btn.add_theme_stylebox_override("hover",   btn_style)
+	launch_btn.add_theme_stylebox_override("pressed", btn_style)
+	launch_btn.add_theme_color_override("font_color", Color(0.65, 0.88, 1.0))
+	launch_btn.custom_minimum_size = Vector2(90, 0)
+
+	launch_btn.pressed.connect(func() -> void:
+		if not launch_btn.disabled:
+			launch_btn.text     = "Launching…"
+			launch_btn.disabled = true
+			pp.has_spaceport    = true
+			_play_rocket_animation(pp.planet_seed, poi, func() -> void:
+				if is_instance_valid(launch_btn):
+					launch_btn.text    = "🚀 Launch"
+					launch_btn.disabled = false))
+
+	hbox.add_child(launch_btn)
+
+	# Register in _bar_meta so _on_building_ticked_night drives queue_redraw automatically
+	_bar_meta[pm_key] = {
+		"fill":        fill_ctrl,
+		"prog":        prog_ref,
+		"planet_seed": pp.planet_seed,
+		"launch_btn":  launch_btn,
+	}
+
 	return card
 
 ## Empty slot card — shows "+" and opens a build dropdown on click.

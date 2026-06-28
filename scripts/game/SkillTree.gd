@@ -46,14 +46,26 @@ func _init() -> void:
 	_add_node("solar_efficiency", "Solar Arrays", "Improves solar cell design to absorb more solar energy.", 150.0, Vector2(0, -90), ["root"], 1, "+25% Solar Array output", 1)
 	_add_node("mine_speed", "Excavation Drills", "Equips mining facilities with high-torque diamond drills.", 150.0, Vector2(-110, 50), ["root"], 1, "+5% Mining production speed per level", 10)
 	_add_node("generator_efficiency", "Thermal Boosters", "Adds heat capture loops to standard Generators.", 250.0, Vector2(110, 50), ["root"], 1, "+30% Generator Energy output", 1)
+	
+	_add_node("unlock_generator", "Generator Blueprint", "Unlocks the standard mineral-burning Generator.", 200.0, Vector2(200, 0), ["root"], 1, "Unlocks Generator", 1)
+	_add_node("unlock_apartments", "Apartments Blueprint", "Unlocks denser residential housing.", 200.0, Vector2(-200, 0), ["root"], 1, "Unlocks Apartments", 1)
+	_add_node("unlock_lab", "Research Lab Blueprint", "Unlocks scientific research facilities.", 300.0, Vector2(0, 100), ["root"], 1, "Unlocks Research Lab", 1)
 
 	# Tier 2 (connecting from T1 nodes)
 	_add_node("credit_boost", "Market Integration", "Integrates residential areas with local credit exchanges.", 500.0, Vector2(-110, -130), ["solar_efficiency", "mine_speed"], 2, "+25% Residential Block / Apartments credit payout", 1)
-	_add_node("deep_mining", "Seismic Sensors", "Deep scans tectonic plates to output higher yields.", 600.0, Vector2(0, 130), ["mine_speed", "generator_efficiency"], 2, "+25% Mine & Deep Drill output amount", 1)
+	_add_node("deep_mining", "Seismic Sensors", "Deep scans tectonic plates to output higher yields.", 600.0, Vector2(0, -180), ["mine_speed", "generator_efficiency"], 2, "+25% Mine & Deep Drill output amount", 1)
 	_add_node("power_transmission", "Superconducting Grid", "Reduces losses inside energy lines.", 650.0, Vector2(110, -130), ["solar_efficiency", "generator_efficiency"], 2, "-15% Energy consumption on all buildings", 1)
+	
+	_add_node("unlock_power_plant", "Power Plant Blueprint", "Unlocks massive industrial Power Plants.", 600.0, Vector2(300, 0), ["unlock_generator"], 2, "Unlocks Power Plant", 1)
+	_add_node("unlock_refinery", "Refinery Blueprint", "Unlocks ore-to-mineral Refineries.", 400.0, Vector2(200, 100), ["unlock_generator"], 2, "Unlocks Refinery", 1)
+	_add_node("unlock_deep_drill", "Deep Drill Blueprint", "Unlocks high-yield Deep Drills.", 450.0, Vector2(-100, 150), ["mine_speed"], 2, "Unlocks Deep Drill", 1)
+	_add_node("unlock_commercial", "Commercial Blueprint", "Unlocks Trade Hubs for high income.", 500.0, Vector2(-300, 0), ["unlock_apartments"], 2, "Unlocks Commercial Center", 1)
+	_add_node("unlock_spaceport", "SpacePort Blueprint", "Unlocks Orbital SpacePorts.", 800.0, Vector2(0, 200), ["unlock_lab"], 2, "Unlocks SpacePort", 1)
 
 	# Tier 3 (connecting from T2 nodes)
-	_add_node("omega_core", "Supercharged Grid", "Syncs all colony grids into a single self-correcting neural system.", 1200.0, Vector2(0, -220), ["credit_boost", "power_transmission"], 3, "+20% production speed globally", 1)
+	_add_node("omega_core", "Supercharged Grid", "Syncs all colony grids into a single self-correcting neural system.", 1200.0, Vector2(0, -250), ["credit_boost", "power_transmission"], 3, "+20% production speed globally", 1)
+	
+	_add_node("unlock_luxury_complex", "Luxury Complex Blueprint", "Unlocks premium housing for elites.", 1000.0, Vector2(-400, 0), ["unlock_commercial"], 3, "Unlocks Luxury Complex", 1)
 
 func _add_node(id: String, name: String, desc: String, cost: float, pos: Vector2, parents: Array[String], tier: int, eff: String, max_lv: int = 1) -> void:
 	nodes[id] = SkillNode.new(id, name, desc, cost, pos, parents, tier, eff, max_lv)
@@ -110,6 +122,9 @@ func purchase_skill(id: String) -> bool:
 		if cur_lv == 0:
 			unlocked_skills.append(id)
 			skill_levels[id] = 1
+			
+			if id.begins_with("unlock_"):
+				GameState.unlock_building(id.trim_prefix("unlock_"))
 		else:
 			skill_levels[id] = cur_lv + 1
 			

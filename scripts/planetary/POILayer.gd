@@ -211,6 +211,20 @@ func _input(event: InputEvent) -> void:
 			poi_clicked.emit(idx, _pois[idx]["data"])
 			get_viewport().set_input_as_handled()
 
+## Returns the global screen position of the POI with the given label, or Vector2.ZERO.
+func get_poi_screen_pos(label: String) -> Vector2:
+	for poi: Dictionary in _pois:
+		if poi["label"] == label:
+			return poi["screen"]
+	return Vector2.ZERO
+
+## Returns the (lon, lat) in radians for the given label, or Vector2.ZERO.
+func get_poi_lon_lat(label: String) -> Vector2:
+	for poi: Dictionary in _pois:
+		if poi["label"] == label:
+			return Vector2(poi["lon"], poi["lat"])
+	return Vector2.ZERO
+
 func _get_poi_at(global_pos: Vector2) -> int:
 	for i in _pois.size():
 		var poi: Dictionary = _pois[i]

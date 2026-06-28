@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="DistrictDef" load_steps=2 format=3 uid="uid://d_1_75561557"]
+
+[ext_resource type="Script" path="res://scripts/game/DistrictDef.gd" id="1_def"]
+
+[resource]
+script = ExtResource("1_def")
+id = 1
+display_name = "Generator Facility"
+description = "Power plant complex. Produces energy for the colony grid."
+icon = "⚡"
+placement = 1
+base_cost = 300.0
+allowed_planet_types = Array[int]([])
+building_ids = Array[String](["solar_panel", "generator", "power_plant"])
+name_pool = Array[String](["Prometheus Array", "Grid Station Alpha", "Helios Platform", "Solara Base", "Arc Station", "Photon Plant", "Voltex Hub", "Enerion Core", "Tesla Relay", "Surge Complex", "Dawn Array"])
