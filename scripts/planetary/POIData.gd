@@ -5,12 +5,13 @@ enum POIType {
 	CITY,       # general buildings, city districts
 	MINING,     # extraction, raw minerals
 	ENERGY,     # generators, power distribution
-	OUTPOST,    # military, defense, spaceport
+	OUTPOST,    # military, defense
 	SCIENCE,    # research, anomaly study
+	SPACEPORT,  # launch pads, orbital logistics — one per planet
 }
 
-static var TYPE_LABELS: Array[String] = ["City", "Mining", "Energy", "Outpost", "Science"]
-static var TYPE_ICONS:  Array[String] = ["⬡", "⛏", "⚡", "⬡", "⬡"]
+static var TYPE_LABELS: Array[String] = ["City", "Mining", "Energy", "Outpost", "Science", "Spaceport"]
+static var TYPE_ICONS:  Array[String] = ["⬡", "⛏", "⚡", "⬡", "⬡", "🚀"]
 
 @export var label:         String  = "Site"
 @export var poi_type:      POIType = POIType.CITY

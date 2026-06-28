@@ -106,6 +106,12 @@ func _seed_starting_resources() -> void:
 		home_pd.mineral_densities[r1t1.resource_id()] = 0.80
 		home_pd.mineral_densities[r2t1.resource_id()] = 0.10
 
+	# Seed a test ship in orbit for visual testing
+	if has_node("/root/ShipManager"):
+		var sm := get_node("/root/ShipManager")
+		if sm.ships_for(home_planet_seed).is_empty():
+			sm.launch(home_planet_seed, "Pioneer I", {r1t1.resource_id(): 25.0})
+
 func _build_home_solar() -> SolarData:
 	# Use the galaxy star's own seed so the system matches what the galaxy would generate
 	var solar_seed: int
@@ -268,6 +274,7 @@ func save() -> void:
 		"home_planet_idx":      home_planet_idx,
 		"unlocked_skills":      get_node("/root/SkillTree").unlocked_skills if has_node("/root/SkillTree") else ["root"],
 		"skill_levels":         get_node("/root/SkillTree").skill_levels if has_node("/root/SkillTree") else {},
+		"ships":                get_node("/root/ShipManager").serialize() if has_node("/root/ShipManager") else [],
 		"planet_progress":      {},
 	}
 	for seed_val in _planet_progress:
@@ -309,7 +316,10 @@ func load_save() -> bool:
 		get_node("/root/SkillTree").skill_levels = data["skill_levels"]
 	else:
 		get_node("/root/SkillTree").skill_levels = {}
-		
+
+	if has_node("/root/ShipManager"):
+		get_node("/root/ShipManager").deserialize(data.get("ships", []))
+
 	for key in data.get("planet_progress", {}).keys():
 		var seed_val: int    = int(key)
 		var d: Dictionary    = data["planet_progress"][key]

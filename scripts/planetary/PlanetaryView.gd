@@ -27,6 +27,7 @@ const LIGHT_SPEED: float = 0.04   # radians per second
 ## Used by _on_building_constructed to refresh panel without DOM traversal.
 var _active_district_poi: POIData = null
 var _overview_energy_val: Label = null   # kept for live energy updates
+var _orbital_layer: OrbitalLayer = null
 ## Toast log container — created lazily, anchored bottom-left.
 var _toast_container: VBoxContainer = null
 ## Maps building pm_key -> bool indicating if its mineral switcher tray is expanded
@@ -165,6 +166,7 @@ func load_planet(data: PlanetData) -> void:
 	_build_details_panel(data)
 	poi_layer.setup(planet_renderer)
 	poi_layer.clear_pois()
+	_setup_orbital_layer(data.seed)
 
 	var pois: Array[Dictionary] = []
 	if data.custom_pois.size() > 0:
@@ -1189,6 +1191,42 @@ func _on_resize() -> void:
 	await get_tree().process_frame
 	_update_aspect()
 
+func _setup_orbital_layer(planet_seed: int) -> void:
+	# Remove old layer if switching planets
+	if _orbital_layer != null and is_instance_valid(_orbital_layer):
+		_orbital_layer.queue_free()
+	var layer := OrbitalLayer.new()
+	layer.z_index = 5   # above planet, below HUD rings
+	layer.mouse_filter = Control.MOUSE_FILTER_STOP
+	planet_renderer.get_parent().add_child(layer)
+	layer.setup(planet_seed)
+	layer.ship_hovered.connect(func(ship: ShipData, _pos: Vector2) -> void:
+		# Title includes status inline: "Pioneer I  · in orbit"
+		var title: String
+		if ship.is_travelling():
+			var dest_pd := GameState.get_planet_data(ship.dest_seed)
+			var dest_name: String = dest_pd.planet_name if dest_pd != null else "Unknown"
+			title = ship.ship_name + "  · → " + dest_name + "  eta %.0fs" % ship.eta_seconds()
+		else:
+			title = ship.ship_name + "  · in orbit"
+		# Body: icon + ×amount only (like inventory card, no repeated name)
+		var body: Array = []
+		if not ship.cargo.is_empty():
+			var first := true
+			for rid: String in ship.cargo:
+				var rd: ResourceData = GameState.known_resources.get(rid, null)
+				if rd == null:
+					continue
+				if not first:
+					body.append("\n")
+				first = false
+				body.append(MineralIcon.make(rd.tier, rd.display_color))
+				body.append("  ×%.0f" % ship.cargo[rid])
+		TooltipManager.show_tip(title, body))
+	layer.ship_unhovered.connect(func() -> void:
+		TooltipManager.hide_tip())
+	_orbital_layer = layer
+
 func _process(delta: float) -> void:
 	_update_aspect()
 	if _ring_back != null or _ring_front != null:
@@ -1199,6 +1237,10 @@ func _process(delta: float) -> void:
 	_light_angle = fposmod(_light_angle + delta * LIGHT_SPEED, TAU)
 	_apply_light_angle()
 	_update_cursor()
+	if _orbital_layer != null and is_instance_valid(_orbital_layer):
+		_orbital_layer._planet_radius   = planet_renderer._planet_radius_px
+		_orbital_layer._planet_rotation = planet_renderer.get_rotation_offset()
+		_orbital_layer.queue_redraw()
 
 func _update_cursor() -> void:
 	if planet_renderer == null or planet_renderer._planet_radius_px <= 0:
@@ -2124,16 +2166,18 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 			Color(0.9, 0.82, 0.25, 0.55) if etick > 0 else Color(0.75, 0.48, 0.28, 0.55))
 		info_row.add_child(e_lbl)
 
-	# ── Dynamic Mineral Selection Tray for Mine / Generator ───────────────────
-	# Mine chooses output RAW_MINERAL. Generator chooses input RAW_MINERAL.
-	var is_mine := def.output_type == BuildingDef.OutputType.RAW_MINERAL
-	var is_generator := def.input_type == BuildingDef.OutputType.RAW_MINERAL
+	var is_mine := def.output_type == BuildingDef.OutputType.RAW_MINERAL and def.input_type == BuildingDef.OutputType.NONE
+	var is_generator := def.input_type == BuildingDef.OutputType.RAW_MINERAL and def.output_type == BuildingDef.OutputType.ENERGY
 
-	if is_mine or is_generator:
+	# ── Dynamic Mineral Selection Tray for Generator / Refinery ───────────────────
+	# Generator/Refinery chooses input RAW_MINERAL. Mines now auto-mix, so no tray.
+	var is_consumer := def.input_type == BuildingDef.OutputType.RAW_MINERAL
+
+	if is_consumer:
 		var br := GameState.get_body_resources_for(planet)
 		var raw_list := br.get_by_tag(ResourceData.Tag.RAW_MINERAL)
 		if not raw_list.is_empty():
-			var target_key := "target_mineral" if is_mine else "input_mineral"
+			var target_key := "input_mineral"
 			var tgt: String = entry.get(target_key, "")
 			if tgt == "":
 				tgt = (raw_list[0] as ResourceData).resource_id()
@@ -2191,9 +2235,9 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 			chip_btn.add_child(icon_rect)
 			icon_rect.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 
-			var action_desc := "Digging" if is_mine else "Burning"
+			var action_desc := "Refining" if def.output_type == BuildingDef.OutputType.REFINED_MINERAL else "Burning"
 			var tip_str := "%s: %s" % [action_desc, current_rd.unique_name]
-			if is_generator and def.input_amount > 0.0:
+			if def.input_amount > 0.0:
 				tip_str += "\nConsumes: %.0f per cycle" % (def.input_amount * count)
 			if raw_list.size() > 1:
 				tip_str += "\n(Click to switch alternative mineral)"

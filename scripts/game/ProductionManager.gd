@@ -222,10 +222,34 @@ func _on_tick_complete(pp: PlanetProgress, def: BuildingDef,
 						if refined.mineral_name == rd.mineral_name and refined.tier == rd.tier + 1:
 							rid = refined.resource_id()
 							break
+				pp.add_resource(rid, def.output_amount * amount * mult)
+			elif def.input_type == BuildingDef.OutputType.NONE and def.output_type == BuildingDef.OutputType.RAW_MINERAL:
+				# Basic extractor -> Mix of all minerals based on PlanetData
+				var pd := GameState.get_planet_data(pp.planet_seed)
+				var raw_list := GameState.get_body_resources_for(pd).get_by_tag(ResourceData.Tag.RAW_MINERAL)
+				var total_density: float = 0.0
+				var densities: Array[float] = []
+				var rng := RandomNumberGenerator.new()
+				
+				for rd in raw_list:
+					var r_id := rd.resource_id()
+					var d: float
+					if pd.mineral_densities.has(r_id):
+						d = float(pd.mineral_densities[r_id])
+					else:
+						rng.seed = pd.seed ^ (rd.rarity * 0x4E3D)
+						d = pd.deposit_density * rng.randf_range(0.75, 1.25)
+					densities.append(d)
+					total_density += d
+					
+				var total_out := def.output_amount * amount * mult
+				if total_density > 0.0:
+					for i in raw_list.size():
+						var share := total_out * (densities[i] / total_density)
+						pp.add_resource((raw_list[i] as ResourceData).resource_id(), share)
 			else:
 				rid = _resource_key(def.output_type, pp.planet_seed, entry)
-
-			pp.add_resource(rid, def.output_amount * amount * mult)
+				pp.add_resource(rid, def.output_amount * amount * mult)
 
 func _planet_energy(pp: PlanetProgress) -> float:
 	if _energy.has(pp.planet_seed):

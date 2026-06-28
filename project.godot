@@ -25,6 +25,7 @@ TooltipManager="*res://scripts/system/TooltipManager.gd"
 HUDManager="*res://scripts/system/HUDManager.gd"
 DevConsole="*res://scripts/system/DevConsole.gd"
 SkillTree="*res://scripts/game/SkillTree.gd"
+ShipManager="*res://scripts/game/ShipManager.gd"
 
 [display]
 
