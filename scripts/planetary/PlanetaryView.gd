@@ -2095,26 +2095,52 @@ func _finish_rocket_anim() -> void:
 	var orbit_inc:   float
 	var orbit_node:  float
 
-	if sweep_s >= 0.0:
-		orbit_angle = -PI * 0.5
-		orbit_inc   = asin(clampf(-ty, -1.0, 1.0))
-		var cos_inc: float = cos(orbit_inc)
-		var sin_R:   float = clampf(-tx / maxf(absf(cos_inc), 0.001), -1.0, 1.0)
-		orbit_node  = asin(sin_R) - rot_now
-	else:
-		orbit_angle = PI * 0.5
-		orbit_inc   = asin(clampf(ty, -1.0, 1.0))
-		var cos_inc: float = cos(orbit_inc)
-		var sin_R:   float = clampf(tx / maxf(absf(cos_inc), 0.001), -1.0, 1.0)
-		orbit_node  = asin(sin_R) - rot_now
+	# Full analytical 3-DOF solve: orbit_angle, orbit_inc, orbit_node
+	# such that position = (tx,ty) AND tangent direction = (rdx,rdy) simultaneously.
+	#
+	# Rocket's 2D screen velocity at t=1 (ease-in² peaked):
+	var lon_eff_f: float = d["poi_lon"] + d["sweep_target"] - rot_now
+	var lat_f:     float = d["lat_target"]
+	var dlon:      float = d["sweep_target"] * 2.0
+	var dlat:      float = (d["lat_target"] - d["poi_lat"]) * 2.0
+	var rdx_raw:   float = cos(lon_eff_f) * cos(lat_f) * dlon - sin(lon_eff_f) * sin(lat_f) * dlat
+	var rdy_raw:   float = -cos(lat_f) * dlat
+	var rlen:      float = maxf(sqrt(rdx_raw * rdx_raw + rdy_raw * rdy_raw), 0.001)
+	var rdx:       float = rdx_raw / rlen
+	var rdy:       float = rdy_raw / rlen
 
-	# Verify tangent direction at insertion matches sweep — orbit_node can flip apparent motion
-	var eff_rot:    float   = rot_now + orbit_node
-	const DA:       float   = 0.002
-	var p_ins:      Vector2 = _orbital_project_2d(orbit_angle,      orbit_inc, orbit_r, eff_rot)
-	var p_next:     Vector2 = _orbital_project_2d(orbit_angle + DA, orbit_inc, orbit_r, eff_rot)
-	var tang_x:     float   = (p_next - p_ins).x
-	var speed_sign: float   = 1.0 if tang_x * sweep_s >= 0.0 else -1.0
+	# Solution (derived from P⊥V on circular orbit):
+	#   sin_inc has same sign as ty (orbit tilts to match hemisphere)
+	#   |sin_inc| = sqrt(ty²+rdy²),  a = atan2(ty, rdy)
+	#   cos(R)         = (tx·rdy - rdx·ty) / sin_inc
+	#   cos_inc·sin(R) = (tx·ty  + rdx·rdy) / sin_inc
+	var inc_sign:   float = 1.0 if ty >= 0.0 else -1.0
+	var sin_inc_sq: float = clampf(ty * ty + rdy * rdy, 0.0, 1.0)
+	var sin_inc:    float = inc_sign * sqrt(sin_inc_sq)   # signed
+	var cos_inc:    float = sqrt(maxf(0.0, 1.0 - sin_inc_sq))
+
+	orbit_angle = atan2(ty, rdy)
+	orbit_inc   = asin(clampf(sin_inc, -1.0, 1.0))   # signed inclination
+
+	var cos_R:     float
+	var cosinc_sinR: float
+	if sin_inc_sq > 0.0001:
+		cos_R       = clampf((tx * rdy - rdx * ty) / sin_inc, -1.0, 1.0)
+		cosinc_sinR = (tx * ty + rdx * rdy) / sin_inc
+	else:
+		# Near-equatorial + horizontal motion: orbit is flat, just match x position
+		cos_R       = clampf(tx, -1.0, 1.0)
+		cosinc_sinR = 0.0
+	# Recover sin(R) from cos_inc*sin(R); cos_inc >= 0 always
+	var sin_R: float = clampf(cosinc_sinR / maxf(cos_inc, 0.001), -1.0, 1.0)
+	orbit_node = atan2(sin_R, cos_R) - rot_now
+
+	# Tangent at orbit_angle is (rdx, rdy) for speed_sign=+1 by construction.
+	# Verify sign against sweep direction to handle any degenerate edge case.
+	var eff_rot2: float   = rot_now + orbit_node
+	var p1:       Vector2 = _orbital_project_2d(orbit_angle,       orbit_inc, orbit_r, eff_rot2)
+	var p2:       Vector2 = _orbital_project_2d(orbit_angle + 0.002, orbit_inc, orbit_r, eff_rot2)
+	var speed_sign: float = 1.0 if (p2 - p1).dot(Vector2(rdx_raw, rdy_raw)) >= 0.0 else -1.0
 
 	var ship := ShipManager.launch(d["planet_seed"], "Shuttle")
 	ship.orbit_angle       = orbit_angle
