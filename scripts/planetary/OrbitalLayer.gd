@@ -17,6 +17,7 @@ var _reveal: Dictionary = {}
 signal ship_hovered(ship: ShipData, screen_pos: Vector2)
 signal ship_unhovered()
 signal ship_clicked(ship: ShipData)
+signal ship_right_clicked(ship: ShipData, screen_pos: Vector2)
 signal ship_deselected()
 
 func setup(planet_seed: int) -> void:
@@ -273,8 +274,6 @@ func _unhandled_input(event: InputEvent) -> void:
 				queue_redraw()
 				ship_clicked.emit(clicked)
 				accept_event()
-			elif _selected_ship != null:
-				deselect()
 
 func _ship_at(global_pos: Vector2) -> ShipData:
 	if _planet_seed < 0 or _planet_radius <= 0.0:

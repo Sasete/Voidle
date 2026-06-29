@@ -37,6 +37,7 @@ var _rocket_anims: Array[Dictionary] = []
 ## Toast log container — created lazily, anchored bottom-left.
 var _toast_container: VBoxContainer = null
 var _ship_panel: PanelContainer = null
+var _radial_menu: Control = null
 ## Maps building pm_key -> bool indicating if its mineral switcher tray is expanded
 var _open_mineral_switchers: Dictionary = {}
 
@@ -124,6 +125,14 @@ func _refresh_solar_btn() -> void:
 var _back_charge: int = 0
 
 func _input(event: InputEvent) -> void:
+	# ESC closes radial menu if open
+	if event is InputEventKey:
+		var ke := event as InputEventKey
+		if ke.pressed and ke.keycode == KEY_ESCAPE and _radial_menu != null:
+			_close_radial_menu()
+			get_viewport().set_input_as_handled()
+			return
+
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		# Close slot dropdown on any click outside it
@@ -134,13 +143,22 @@ func _input(event: InputEvent) -> void:
 				_active_slot_dropdown.queue_free()
 				_active_slot_dropdown = null
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT:
+			# Check if right-clicking on a ship → ship radial menu
+			if _orbital_layer != null and is_instance_valid(_orbital_layer):
+				var ship_hit := _orbital_layer._ship_at(mb.global_position)
+				if ship_hit != null:
+					if _orbital_layer._selected_ship != ship_hit:
+						_orbital_layer.select_ship(ship_hit)
+					_show_radial_menu(ship_hit, mb.global_position, _orbital_layer)
+					get_viewport().set_input_as_handled()
+					return
+			# Right-click on planet → planet command menu (or go back)
 			if poi_layer._selected_index >= 0:
 				poi_layer.deselect_all()
 				_build_planet_overview(current_data)
 				get_viewport().set_input_as_handled()
 			else:
-				CursorManager.set_state(CursorManager.State.EXIT)
-				_go_back()
+				_show_planet_radial_menu(mb.global_position)
 				get_viewport().set_input_as_handled()
 		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
 			_back_charge += 1
@@ -1236,9 +1254,21 @@ func _setup_orbital_layer(planet_seed: int) -> void:
 		_show_ship_panel(ship, layer))
 	layer.ship_deselected.connect(func() -> void:
 		layer.suppress_label = false
-		_close_ship_panel())
+		_close_ship_panel()
+		_close_radial_menu())
+	layer.ship_right_clicked.connect(func(ship: ShipData, gpos: Vector2) -> void:
+		_show_radial_menu(ship, gpos, layer))
 	_orbital_layer = layer
 	_add_orbit_toggle(planet_renderer.get_parent(), layer)
+	_register_ship_commands(layer)
+
+func _register_ship_commands(layer: OrbitalLayer) -> void:
+	ShipCommandRegistry.register_callable("deselect",
+		func(ship: ShipData, _l: OrbitalLayer) -> void: layer.deselect())
+	ShipCommandRegistry.register_callable("solar_view",
+		func() -> void:
+			CursorManager.set_state(CursorManager.State.EXIT)
+			_go_back())
 
 ## Ship info panel — appears at bottom-left of planet view when a ship is selected.
 func _show_ship_panel(ship: ShipData, layer: OrbitalLayer) -> void:
@@ -1301,45 +1331,13 @@ func _show_ship_panel(ship: ShipData, layer: OrbitalLayer) -> void:
 	sep2.add_theme_color_override("color", Color(1, 1, 1, 0.10))
 	vbox.add_child(sep2)
 
-	# Action buttons row
-	var btn_row := HBoxContainer.new()
-	btn_row.add_theme_constant_override("separation", 6)
-	vbox.add_child(btn_row)
-
-	var dbg_btn := Button.new()
-	dbg_btn.text = "Debug"
-	_apply_orbitron(dbg_btn, 8)
-	var dbg_style := StyleBoxFlat.new()
-	dbg_style.bg_color     = Color(0.10, 0.18, 0.35, 0.85)
-	dbg_style.border_color = Color(1.0, 0.92, 0.30, 0.45)
-	dbg_style.set_border_width_all(1)
-	dbg_style.set_corner_radius_all(3)
-	dbg_style.content_margin_left = 8; dbg_style.content_margin_right  = 8
-	dbg_style.content_margin_top  = 3; dbg_style.content_margin_bottom = 3
-	dbg_btn.add_theme_stylebox_override("normal",  dbg_style)
-	dbg_btn.add_theme_stylebox_override("hover",   dbg_style)
-	dbg_btn.add_theme_stylebox_override("pressed", dbg_style)
-	dbg_btn.add_theme_color_override("font_color", Color(1.0, 0.92, 0.30, 0.80))
-	dbg_btn.pressed.connect(func() -> void:
-		print("Ship: %s | type: %s | orbit_angle: %.3f | speed: %.4f" % [
-			ship.ship_name, ship.ship_type, ship.orbit_angle, ship.orbit_speed]))
-	dbg_btn.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
-	dbg_btn.mouse_exited.connect(func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
-	btn_row.add_child(dbg_btn)
-
-	# Close button
-	var close_btn := Button.new()
-	close_btn.text = "✕"
-	_apply_orbitron(close_btn, 9)
-	close_btn.add_theme_stylebox_override("normal",  dbg_style)
-	close_btn.add_theme_stylebox_override("hover",   dbg_style)
-	close_btn.add_theme_stylebox_override("pressed", dbg_style)
-	close_btn.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
-	close_btn.mouse_exited.connect(func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
-	close_btn.add_theme_color_override("font_color", Color(0.85, 0.45, 0.35, 0.80))
-	close_btn.pressed.connect(func() -> void:
-		layer.deselect())
-	btn_row.add_child(close_btn)
+	# Hint: right-click for actions
+	var hint_lbl := Label.new()
+	hint_lbl.text = "right-click for actions"
+	_apply_orbitron(hint_lbl, 7)
+	hint_lbl.add_theme_color_override("font_color", Color(0.4, 0.5, 0.7, 0.5))
+	hint_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	vbox.add_child(hint_lbl)
 
 	panel.anchor_left = 0; panel.anchor_top = 0
 	panel.anchor_right = 0; panel.anchor_bottom = 0
@@ -1351,6 +1349,165 @@ func _close_ship_panel() -> void:
 		_ship_panel.queue_free()
 	_ship_panel = null
 
+func _close_radial_menu() -> void:
+	if _radial_menu != null and is_instance_valid(_radial_menu):
+		_radial_menu.queue_free()
+	_radial_menu = null
+	CursorManager.set_state(CursorManager.State.NORMAL)
+
+func _show_planet_radial_menu(global_pos: Vector2) -> void:
+	var defs := ShipCommandRegistry.get_planet_commands()
+	var actions: Array[Dictionary] = []
+	for def: ShipCommandDef in defs:
+		if not ShipCommandRegistry.has_callable(def.command_id):
+			continue
+		var cb: Callable = ShipCommandRegistry.get_callable(def.command_id)
+		actions.append({
+			"icon":   def.icon,
+			"label":  def.label,
+			"color":  def.color,
+			"action": func() -> void: cb.call(),
+		})
+	if actions.is_empty():
+		_go_back()
+		return
+	_show_radial_menu_at(actions, global_pos)
+
+func _show_radial_menu(ship: ShipData, global_pos: Vector2, layer: OrbitalLayer) -> void:
+	var defs := ShipCommandRegistry.get_ship_commands(ship.ship_type)
+	var actions: Array[Dictionary] = []
+	for def: ShipCommandDef in defs:
+		if not ShipCommandRegistry.has_callable(def.command_id):
+			continue
+		var cb: Callable = ShipCommandRegistry.get_callable(def.command_id)
+		actions.append({
+			"icon":   def.icon,
+			"label":  def.label,
+			"color":  def.color,
+			"action": func() -> void: cb.call(ship, layer),
+		})
+	if actions.is_empty():
+		return
+	_show_radial_menu_at(actions, global_pos)
+
+func _show_radial_menu_at(actions: Array[Dictionary], global_pos: Vector2) -> void:
+	_close_radial_menu()
+	var container: Control = planet_renderer.get_parent()
+	var local_pos: Vector2 = global_pos - container.get_global_rect().position
+
+	const RADIUS:   float = 52.0
+	const BTN_R:    float = 16.0
+	const FADE_DUR: float = 0.12
+
+	var menu := Control.new()
+	menu.mouse_filter = Control.MOUSE_FILTER_STOP
+	menu.z_index = 20
+	menu.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	container.add_child(menu)
+	_radial_menu = menu
+
+	# Full-screen backdrop: click outside closes menu
+	var backdrop := Control.new()
+	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
+	backdrop.gui_input.connect(func(ev: InputEvent) -> void:
+		if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed:
+			_close_radial_menu())
+	menu.add_child(backdrop)
+
+	# ESC is handled in _input when _radial_menu != null
+
+	# Connector line from ship center to each button
+	var lines_ctrl := Control.new()
+	lines_ctrl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	lines_ctrl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var line_fade: Array[float] = [0.0]
+	var line_endpoints: Array[Vector2] = []
+	lines_ctrl.draw.connect(func() -> void:
+		for ep: Vector2 in line_endpoints:
+			lines_ctrl.draw_line(local_pos, ep,
+				Color(0.5, 0.6, 0.9, 0.25 * line_fade[0]), 1.0, true))
+	menu.add_child(lines_ctrl)
+
+	var n: int = actions.size()
+	for i in n:
+		var angle: float = -PI * 0.5 + (float(i) / maxf(float(n), 1.0)) * TAU if n > 1 else -PI * 0.5
+		var btn_center: Vector2 = local_pos + Vector2(cos(angle), sin(angle)) * RADIUS
+		line_endpoints.append(btn_center)
+
+		var btn_ctrl := Control.new()
+		btn_ctrl.position = btn_center - Vector2(BTN_R, BTN_R)
+		btn_ctrl.custom_minimum_size = Vector2(BTN_R * 2.0, BTN_R * 2.0)
+		btn_ctrl.size                = Vector2(BTN_R * 2.0, BTN_R * 2.0)
+		btn_ctrl.mouse_filter = Control.MOUSE_FILTER_STOP
+		btn_ctrl.z_index = 2
+
+		var ac: Dictionary        = actions[i]
+		var btn_color: Color      = ac["color"]
+		var btn_hovered: Array[bool]  = [false]
+		var fade_ref: Array[float]    = [0.0]
+
+		btn_ctrl.draw.connect(func() -> void:
+			var f: float = fade_ref[0]
+			var h: bool  = btn_hovered[0]
+			# Background circle
+			btn_ctrl.draw_circle(Vector2(BTN_R, BTN_R), BTN_R,
+				Color(0.06, 0.08, 0.18, 0.93 * f))
+			if h:
+				btn_ctrl.draw_circle(Vector2(BTN_R, BTN_R), BTN_R,
+					Color(btn_color, 0.18 * f))
+			# Border ring
+			var pts := PackedVector2Array()
+			for k in 24:
+				var a: float = float(k) / 24.0 * TAU
+				pts.append(Vector2(BTN_R + cos(a) * (BTN_R - 1.0),
+								   BTN_R + sin(a) * (BTN_R - 1.0)))
+			pts.append(pts[0])
+			btn_ctrl.draw_polyline(pts, Color(btn_color, (0.75 if h else 0.40) * f), 1.5, true)
+			# Icon
+			var font: Font = ThemeDB.fallback_font
+			var txt: String = ac["icon"]
+			var tsz := font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12)
+			var tp := Vector2(BTN_R - tsz.x * 0.5, BTN_R + tsz.y * 0.38)
+			btn_ctrl.draw_string(font, tp + Vector2(0, 1), txt,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0, 0, 0, 0.55 * f))
+			btn_ctrl.draw_string(font, tp, txt,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(btn_color, f)))
+
+		# Label below
+		var lbl := Label.new()
+		lbl.text = ac["label"]
+		_apply_orbitron(lbl, 7)
+		lbl.add_theme_color_override("font_color", Color(btn_color, 0.70))
+		var font_tmp: Font = ThemeDB.fallback_font
+		var lsz := font_tmp.get_string_size(ac["label"], HORIZONTAL_ALIGNMENT_LEFT, -1, 7)
+		lbl.position = Vector2(BTN_R - lsz.x * 0.5, BTN_R * 2.0 + 3.0)
+		btn_ctrl.add_child(lbl)
+
+		btn_ctrl.mouse_entered.connect(func() -> void:
+			btn_hovered[0] = true
+			btn_ctrl.queue_redraw()
+			CursorManager.set_state(CursorManager.State.POINTER))
+		btn_ctrl.mouse_exited.connect(func() -> void:
+			btn_hovered[0] = false
+			btn_ctrl.queue_redraw()
+			CursorManager.set_state(CursorManager.State.NORMAL))
+		btn_ctrl.gui_input.connect(func(ev: InputEvent) -> void:
+			if ev is InputEventMouseButton:
+				var mb2 := ev as InputEventMouseButton
+				if mb2.button_index == MOUSE_BUTTON_LEFT and mb2.pressed:
+					_close_radial_menu()
+					(ac["action"] as Callable).call())
+
+		menu.add_child(btn_ctrl)
+
+		# Fade-in tween
+		var tw := create_tween().set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		tw.tween_method(func(v: float) -> void:
+			fade_ref[0] = v
+			line_fade[0] = v
+			btn_ctrl.queue_redraw()
+			lines_ctrl.queue_redraw(), 0.0, 1.0, FADE_DUR)
 
 ## Orbit visibility toggle — bottom-right corner of planet view.
 func _add_orbit_toggle(planet_cont: Control, layer: OrbitalLayer) -> void:
@@ -1506,6 +1663,11 @@ func _rotate_to_lon(lon_deg: float, duration: float = 0.45) -> void:
 		current, current + diff, duration)
 
 func _on_planet_clicked(_screen_pos: Vector2) -> void:
+	if _orbital_layer != null and is_instance_valid(_orbital_layer):
+		_orbital_layer.deselect()
+	if current_data != null:
+		_build_planet_overview(current_data)
+	
 	var center := planet_renderer.size * 0.5
 	var local_click := _screen_pos - center
 	var ar: float = planet_renderer.size.x / planet_renderer.size.y if planet_renderer.size.y > 0 else 1.0

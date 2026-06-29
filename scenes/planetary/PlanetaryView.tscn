@@ -1,11 +1,46 @@
 [gd_scene format=3 uid="uid://dpv4hbro7t72p"]
 
 [ext_resource type="Script" uid="uid://c1253iik86pas" path="res://scripts/planetary/PlanetaryView.gd" id="1_aaaa"]
+[ext_resource type="Shader" uid="uid://bqhrljb2f5jv1" path="res://shaders/planet_rocky.gdshader" id="2_5jl86"]
 [ext_resource type="Script" uid="uid://djlsg3p7ukbka" path="res://scripts/planetary/PlanetRenderer.gd" id="2_bbbb"]
 [ext_resource type="Script" uid="uid://iiqjcdhvuo6" path="res://scripts/planetary/POILayer.gd" id="3_cccc"]
 [ext_resource type="FontFile" uid="uid://ddi2q6ifb6h45" path="res://Fonts/Orbitron-VariableFont_wght.ttf" id="4_orbitron"]
 [ext_resource type="Script" uid="uid://b76xs20oqudpd" path="res://scripts/game/DebugGameState.gd" id="7_5jl86"]
 [ext_resource type="Script" uid="uid://cyy0t2bkegr6q" path="res://scripts/game/DebugResourceGen.gd" id="8_o0343"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_o0343"]
+shader = ExtResource("2_5jl86")
+shader_parameter/rotation_offset = 0.0
+shader_parameter/cloud_speed = 0.04
+shader_parameter/cloud_coverage = 0.55
+shader_parameter/has_clouds = 1.0
+shader_parameter/atmosphere_density = 1.0
+shader_parameter/terrain_roughness = 1.0
+shader_parameter/continent_scale = 1.0
+shader_parameter/sea_level = 0.0
+shader_parameter/specular_strength = 0.4
+shader_parameter/city_lights = 0.0
+shader_parameter/planet_radius = 0.42
+shader_parameter/pixel_count = 140.0
+shader_parameter/aspect_ratio = 1.0
+shader_parameter/seed = 42
+shader_parameter/poi_lights_0 = Vector4(0, 0, 0, 0)
+shader_parameter/poi_lights_1 = Vector4(0, 0, 0, 0)
+shader_parameter/poi_lights_2 = Vector4(0, 0, 0, 0)
+shader_parameter/poi_lights_3 = Vector4(0, 0, 0, 0)
+shader_parameter/poi_lights_4 = Vector4(0, 0, 0, 0)
+shader_parameter/poi_count = 0
+shader_parameter/light_direction = Vector3(0.88378793, -0.4678877, 0)
+shader_parameter/color_deep_ocean = Vector3(0.05, 0.13, 0.3)
+shader_parameter/color_ocean = Vector3(0.08, 0.2, 0.46)
+shader_parameter/color_shallow = Vector3(0.12, 0.33, 0.5)
+shader_parameter/color_sand = Vector3(0.52, 0.46, 0.26)
+shader_parameter/color_grass = Vector3(0.18, 0.4, 0.15)
+shader_parameter/color_forest = Vector3(0.09, 0.26, 0.11)
+shader_parameter/color_mountain = Vector3(0.36, 0.32, 0.26)
+shader_parameter/color_snow = Vector3(0.86, 0.89, 0.93)
+shader_parameter/color_cloud = Vector3(0.86, 0.89, 0.94)
+shader_parameter/color_atmosphere = Vector3(0.26, 0.5, 0.9)
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_panel"]
 content_margin_left = 20.0
@@ -42,6 +77,7 @@ grow_horizontal = 2
 grow_vertical = 2
 
 [node name="PlanetRenderer" type="ColorRect" parent="PlanetContainer" unique_id=1423969338]
+material = SubResource("ShaderMaterial_o0343")
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0

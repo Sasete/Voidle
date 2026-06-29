@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="ShipTypeDef" load_steps=3 format=3 uid="uid://shiptype_station"]
+
+[ext_resource type="Script" path="res://scripts/ships/ShipTypeDef.gd" id="1_def"]
+[ext_resource type="Resource" path="res://resources/ships/commands/cmd_deselect.tres" id="2_deselect"]
+
+[resource]
+script = ExtResource("1_def")
+type_id = "station"
+display_name = "Space Station"
+commands = Array[ShipCommandDef]([ExtResource("2_deselect")])
