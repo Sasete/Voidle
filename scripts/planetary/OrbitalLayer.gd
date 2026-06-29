@@ -14,11 +14,19 @@ var suppress_label:   bool     = false   # true when ship panel is open
 ## Per-ship orbit-reveal: ship_id -> {progress: float, spawn_angle: float}
 var _reveal: Dictionary = {}
 
+## Per-ship landing animation state
+var _landing: Dictionary = {}
+
+const _LAND_COLLAPSE_DUR: float = 1.20
+const _LAND_CURVE_DUR:    float = 2.80
+const _LAND_EXPLODE_DUR:  float = 1.40
+
 signal ship_hovered(ship: ShipData, screen_pos: Vector2)
 signal ship_unhovered()
 signal ship_clicked(ship: ShipData)
 signal ship_right_clicked(ship: ShipData, screen_pos: Vector2)
 signal ship_deselected()
+signal ship_landed(ship: ShipData)
 
 func setup(planet_seed: int) -> void:
 	_planet_seed = planet_seed
@@ -37,6 +45,33 @@ func select_ship(ship: ShipData) -> void:
 	queue_redraw()
 	ship_clicked.emit(ship)
 
+func start_landing(ship: ShipData) -> void:
+	if _landing.has(ship.ship_id):
+		return
+	var center := _planet_center if _planet_center != Vector2.ZERO else size * 0.5
+	var sv     := _project(ship, ship.orbit_angle)
+	var spos   := center + Vector2(sv.x, sv.y)
+	# Impact point on planet surface in the direction of the ship
+	var impact: Vector2 = center + (spos - center).normalized() * _planet_radius * 0.88
+	# Arc matches actual orbital speed so there's no sudden jump in velocity
+	var orb_dir: float  = sign(ship.orbit_speed) if ship.orbit_speed != 0.0 else 1.0
+	var arc: float      = ship.orbit_speed * _LAND_CURVE_DUR   # rad, preserves speed
+	_landing[ship.ship_id] = {
+		"phase":       0,
+		"progress":    0.0,
+		"ship":        ship,
+		"spos":        spos,
+		"impact":      impact,
+		"start_angle": ship.orbit_angle,
+		"start_r":     ship.orbit_radius,
+		"arc":         arc,
+		"sparks":      [],
+	}
+	if _selected_ship == ship:
+		_selected_ship = null
+		queue_redraw()
+		ship_deselected.emit()
+
 func _process(delta: float) -> void:
 	if _planet_seed < 0:
 		return
@@ -44,7 +79,54 @@ func _process(delta: float) -> void:
 		var rv: Dictionary = _reveal[ship_id]
 		if rv["progress"] < 1.0:
 			rv["progress"] = minf(rv["progress"] + delta * 1.8, 1.0)
+	_tick_landing(delta)
 	queue_redraw()
+
+func _tick_landing(delta: float) -> void:
+	var finished: Array[String] = []
+	for sid: String in _landing:
+		var ld: Dictionary = _landing[sid]
+		var dur: float
+		match int(ld["phase"]):
+			0: dur = _LAND_COLLAPSE_DUR
+			1: dur = _LAND_CURVE_DUR
+			_: dur = _LAND_EXPLODE_DUR
+		ld["progress"] = minf(ld["progress"] + delta / dur, 1.0)
+
+		# Tick spark physics — store as screen offset so planet rotation stays anchored
+		if int(ld["phase"]) == 2:
+			for spark: Dictionary in ld["sparks"]:
+				spark["offset"] = (spark["offset"] as Vector2) + (spark["vel"] as Vector2) * delta
+				spark["vel"]    = (spark["vel"] as Vector2) + Vector2(0, 40.0) * delta
+				spark["life"]   = (spark["life"] as float) - delta / _LAND_EXPLODE_DUR
+
+		if ld["progress"] >= 1.0:
+			ld["phase"]    = int(ld["phase"]) + 1
+			ld["progress"] = 0.0
+			var ls: ShipData = ld["ship"]
+			if int(ld["phase"]) == 1:
+				# Sync start_angle to actual orbit position so there's no jump
+				ld["start_angle"] = ls.orbit_angle
+				ld["start_r"]     = ls.orbit_radius
+				ld["arc"]         = ls.orbit_speed * _LAND_CURVE_DUR
+			elif int(ld["phase"]) == 2:
+				# Store impact angle/radius instead of fixed Vector2
+				ld["impact_angle"] = (ld["start_angle"] as float) + (ld["arc"] as float)
+				var sparks: Array = []
+				for _i in 3:
+					sparks.append({
+						"offset": Vector2(randf_range(-22.0, 22.0), randf_range(-26.0, -6.0)) * 0.0,
+						"vel":    Vector2(randf_range(-22.0, 22.0), randf_range(-26.0, -6.0)),
+						"life":   1.0,
+					})
+				ld["sparks"] = sparks
+			elif int(ld["phase"]) >= 3:
+				finished.append(sid)
+	for sid: String in finished:
+		var ship: ShipData = _landing[sid]["ship"]
+		_landing.erase(sid)
+		ShipManager.remove_ship(ship.orbit_seed, ship.ship_id)
+		ship_landed.emit(ship)
 
 func _on_ship_changed(ship: ShipData) -> void:
 	if ship.orbit_seed == _planet_seed:
@@ -150,6 +232,9 @@ func _draw() -> void:
 	var center := _planet_center if _planet_center != Vector2.ZERO else size * 0.5
 
 	for ship: ShipData in ShipManager.ships_for(_planet_seed):
+		if _landing.has(ship.ship_id):
+			continue  # drawn by _draw_landing below
+
 		var is_selected: bool = ship == _selected_ship
 		var is_hovered:  bool = ship == _hovered_ship
 
@@ -212,6 +297,97 @@ func _draw() -> void:
 				_draw_ship_label(spos, ship)
 		elif is_hovered:
 			_draw_hover_label(spos, ship)
+
+	# ── Landing animations ───────────────────────────────────────────────────
+	for sid: String in _landing:
+		_draw_landing(_landing[sid])
+
+func _bezier(p0: Vector2, p1: Vector2, p2: Vector2, t: float) -> Vector2:
+	var mt := 1.0 - t
+	return mt * mt * p0 + 2.0 * mt * t * p1 + t * t * p2
+
+## Like _project but with a custom orbit_radius fraction (for landing spiral).
+func _project_r(ship: ShipData, angle: float, orbit_r: float) -> Vector2:
+	var center := _planet_center if _planet_center != Vector2.ZERO else size * 0.5
+	var r: float   = _planet_radius * orbit_r
+	var inc: float = ship.orbit_inclination
+	var px: float  = r * cos(angle)
+	var py: float  = r * sin(angle) * sin(inc)
+	var pz: float  = r * sin(angle) * cos(inc)
+	var rot: float = _planet_rotation + ship.orbit_node
+	var rx: float  =  px * cos(rot) + pz * sin(rot)
+	return center + Vector2(rx, py)
+
+func _draw_landing(ld: Dictionary) -> void:
+	var phase:    int   = int(ld["phase"])
+	var progress: float = ld["progress"]
+	var ship:     ShipData = ld["ship"]
+	var center := _planet_center if _planet_center != Vector2.ZERO else size * 0.5
+
+	match phase:
+		0:
+			# ── Orbit collapse: arc shrinks from tail, HEAD stays locked to ship position
+			var dir: float    = sign(ship.orbit_speed) if ship.orbit_speed != 0.0 else 1.0
+			var remaining: float = (1.0 - progress) * TAU
+			# HEAD = ship's current angle, TAIL = head - dir * remaining
+			var head_a: float  = ship.orbit_angle
+			var tail_a: float  = head_a - dir * remaining
+			var col := Color(1, 1, 1, (1.0 - progress) * 0.30)
+			var steps := 60
+			var prev_v  := _project(ship, tail_a)
+			var prev_p  := center + Vector2(prev_v.x, prev_v.y)
+			for s in range(1, steps + 1):
+				var frac: float = float(s) / float(steps)
+				if frac * TAU > remaining:
+					break
+				var a: float = tail_a + dir * frac * TAU
+				var v        := _project(ship, a)
+				var cur_p    := center + Vector2(v.x, v.y)
+				if (s % 6) < 3 and not _is_occluded(prev_v) and not _is_occluded(v):
+					draw_line(prev_p, cur_p, col, 1.2, true)
+				prev_v = v
+				prev_p = cur_p
+			# Ship at its current orbit position
+			var sv := _project(ship, ship.orbit_angle)
+			if not _is_occluded(sv):
+				var sp := center + Vector2(sv.x, sv.y)
+				if ship.ship_type == "station":
+					_draw_pixel_station(sp, Color(1, 1, 1, 0.92))
+				else:
+					_draw_pixel_ship(sp, Color(1, 1, 1, 0.92))
+
+		1:
+			# ── Orbital spiral: follows orbit path, radius shrinks toward planet
+			var start_angle: float = ld["start_angle"]
+			var start_r: float     = ld["start_r"]
+			var arc: float         = ld["arc"]
+			var angle: float       = start_angle + arc * progress
+			# Very slight radius reduction — ship stays on its orbit, barely descends
+			var cur_r: float  = lerpf(start_r, start_r - 0.06, progress)
+			var ship_pos := _project_r(ship, angle, cur_r)
+			var col       := Color(1.0, 0.85, 0.5, 1.0 - progress * 0.3)
+			# Short trail along the same spiral
+			for ti in 5:
+				var tt: float    = maxf(0.0, progress - float(ti + 1) * 0.035)
+				var ta: float    = start_angle + arc * tt
+				var tr: float    = lerpf(start_r, start_r - 0.06, tt)
+				var tp := _project_r(ship, ta, tr)
+				var alpha: float = (1.0 - float(ti) / 5.0) * 0.45
+				draw_circle(tp, 1.2, Color(1.0, 0.6, 0.2, alpha))
+			if ship.ship_type == "station":
+				_draw_pixel_station(ship_pos, col)
+			else:
+				_draw_pixel_ship(ship_pos, col)
+
+		2:
+			# ── Explosion sparks — anchor re-projected each frame so planet rotation is tracked
+			var imp_angle: float = ld["impact_angle"]
+			var imp: Vector2     = _project_r(ship, imp_angle, (ld["start_r"] as float) - 0.06)
+			for spark: Dictionary in ld["sparks"]:
+				var life: float   = maxf(0.0, spark["life"] as float)
+				var sp: Vector2   = imp + (spark["offset"] as Vector2)
+				draw_rect(Rect2(sp.floor(), Vector2(2, 2)),
+					Color(1.0, 0.15 + life * 0.2, 0.05, life))
 
 ## Hover nameplate: leader line + name only, no bracket reticle. Like districts on hover.
 func _draw_hover_label(spos: Vector2, ship: ShipData) -> void:

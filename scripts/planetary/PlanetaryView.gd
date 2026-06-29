@@ -1265,6 +1265,10 @@ func _setup_orbital_layer(planet_seed: int) -> void:
 func _register_ship_commands(layer: OrbitalLayer) -> void:
 	ShipCommandRegistry.register_callable("deselect",
 		func(ship: ShipData, _l: OrbitalLayer) -> void: layer.deselect())
+	ShipCommandRegistry.register_callable("land",
+		func(ship: ShipData, _l: OrbitalLayer) -> void:
+			_close_ship_panel()
+			layer.start_landing(ship))
 	ShipCommandRegistry.register_callable("solar_view",
 		func() -> void:
 			CursorManager.set_state(CursorManager.State.EXIT)
