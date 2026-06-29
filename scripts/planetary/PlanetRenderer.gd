@@ -49,7 +49,7 @@ func _update_light_direction() -> void:
 	var ld := Vector3(lx, -0.45, lz).normalized()
 	(material as ShaderMaterial).set_shader_parameter("light_direction", ld)
 
-func _input(event: InputEvent) -> void:
+func _unhandled_input(event: InputEvent) -> void:
 	# Absolutely block and ignore any click, drag, or hover events if SkillTreeView is active
 	var root := get_tree().root
 	var is_tree_open := false

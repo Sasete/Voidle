@@ -33,7 +33,7 @@ var _orbital_layer: OrbitalLayer = null
 ## Keys: rocket(Control), radius(float), angle_rel(float), alpha(float),
 ##       phase(int 0=rise/1=turn/2=fade), phase_t(float), on_complete(Callable),
 ##       planet_seed(int), orbit_inc(float), insert_angle_rel(float), planet_r(float)
-var _rocket_anim: Dictionary = {}
+var _rocket_anims: Array[Dictionary] = []
 ## Toast log container — created lazily, anchored bottom-left.
 var _toast_container: VBoxContainer = null
 var _ship_panel: PanelContainer = null
@@ -51,13 +51,13 @@ func _make_system(root: PlanetData) -> Array[PlanetData]:
 
 func _ready() -> void:
 	CursorManager.set_state(CursorManager.State.NORMAL)
-	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mouse_filter = Control.MOUSE_FILTER_PASS
 	if has_node("Background"):
 		get_node("Background").mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if planet_renderer:
-		planet_renderer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		planet_renderer.mouse_filter = Control.MOUSE_FILTER_PASS
 		if planet_renderer.get_parent() is Control:
-			(planet_renderer.get_parent() as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
+			(planet_renderer.get_parent() as Control).mouse_filter = Control.MOUSE_FILTER_PASS
 	_orbitron = load("res://Fonts/Orbitron-VariableFont_wght.ttf")
 	planet_renderer.planet_clicked.connect(_on_planet_clicked)
 	poi_layer.poi_clicked.connect(_on_district_clicked)
@@ -1351,6 +1351,7 @@ func _close_ship_panel() -> void:
 		_ship_panel.queue_free()
 	_ship_panel = null
 
+
 ## Orbit visibility toggle — bottom-right corner of planet view.
 func _add_orbit_toggle(planet_cont: Control, layer: OrbitalLayer) -> void:
 	for ch: Node in planet_cont.get_children():
@@ -1402,6 +1403,9 @@ func _add_orbit_toggle(planet_cont: Control, layer: OrbitalLayer) -> void:
 				layer.visible = not layer.visible
 				visible_ref[0] = layer.visible
 				btn.queue_redraw())
+
+	btn.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
+	btn.mouse_exited.connect(func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
 
 	planet_cont.add_child(btn)
 	btn.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
@@ -1469,7 +1473,7 @@ func _process(delta: float) -> void:
 		if any_finished:
 			GameState.planet_progress_changed.emit(current_data.seed)
 
-	if not _rocket_anim.is_empty():
+	if not _rocket_anims.is_empty():
 		_tick_rocket_anim(delta)
 
 var _was_dragging: bool = false
@@ -2166,15 +2170,8 @@ func _refresh_overview_energy() -> void:
 	_overview_energy_val.add_theme_color_override("font_color",
 		Color(0.9, 0.82, 0.25) if bal >= 0.0 else Color(0.9, 0.40, 0.28))
 
-## Starts a rocket launch animation. State is ticked in _process each frame.
-func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callable) -> void:
-	# Kill any existing animation
-	if not _rocket_anim.is_empty():
-		var old: Control = _rocket_anim.get("rocket")
-		if old != null and is_instance_valid(old):
-			old.queue_free()
-		_rocket_anim.clear()
-
+## Starts a rocket launch animation. Multiple can run concurrently.
+func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callable, sp_pm_key: String = "") -> void:
 	var container: Control = planet_renderer.get_parent()
 	var planet_r:  float   = planet_renderer._planet_radius_px
 	const ORBIT_FRAC:       float = 1.06
@@ -2216,20 +2213,21 @@ func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callabl
 		if poi_global != Vector2.ZERO:
 			rocket.position = poi_global - container.get_global_rect().position
 
+	# anim_d will be set after dict creation below; use Array wrapper for closure capture
+	var anim_ref: Array[Dictionary] = []
 	rocket.draw.connect(func() -> void:
-		if _rocket_anim.is_empty():
+		if anim_ref.is_empty():
 			return
-		var flame_a:     float   = _rocket_anim.get("flame_alpha", 1.0)
-		var boosters_gone: bool = _rocket_anim.get("boosters_spawned", false)
-		# Exhaust: opposite of actual travel direction (velocity-based)
-		var travel: Vector2 = _rocket_anim.get("travel_dir", Vector2.UP)
+		var ad: Dictionary = anim_ref[0]
+		var flame_a:      float = ad.get("flame_alpha", 1.0)
+		var boosters_gone: bool = ad.get("boosters_spawned", false)
+		var travel: Vector2 = ad.get("travel_dir", Vector2.UP)
 		var exhaust_dir: Vector2 = -travel
 		if flame_a > 0.01 and not boosters_gone:
-			# 3-step exhaust trail: bright core → dimmer tail
 			var e := exhaust_dir
-			var b1 := (e * 4.0).floor()   # close — bright orange 2×2
-			var b2 := (e * 7.0).floor()   # mid   — dim orange 2×2
-			var b3 := (e * 10.0).floor()  # far   — faint 1×1 ember
+			var b1 := (e * 4.0).floor()
+			var b2 := (e * 7.0).floor()
+			var b3 := (e * 10.0).floor()
 			var hue: float = 0.45 + randf() * 0.25
 			rocket.draw_rect(Rect2(b1, Vector2(2, 2)), Color(1.0, hue, 0.05, flame_a * 0.95))
 			rocket.draw_rect(Rect2(b2, Vector2(2, 2)), Color(1.0, hue * 0.6, 0.02, flame_a * 0.55))
@@ -2237,7 +2235,6 @@ func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callabl
 		var col := Color(1, 1, 1, 0.95)
 		var p   := Vector2.ZERO
 		if boosters_gone:
-			# Post-separation: T shape
 			rocket.draw_rect(Rect2(p + Vector2(-2, -2), Vector2(2, 2)), col)
 			rocket.draw_rect(Rect2(p + Vector2( 0, -2), Vector2(2, 2)), col)
 			rocket.draw_rect(Rect2(p,                   Vector2(2, 2)), col)
@@ -2257,7 +2254,7 @@ func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callabl
 	lbl.position = Vector2(6, -5)
 	rocket.add_child(lbl)
 
-	_rocket_anim = {
+	var anim_d: Dictionary = {
 		"rocket":          rocket,
 		"container":       container,
 		"center_local":    center_local,
@@ -2278,15 +2275,27 @@ func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callabl
 		"eta_lbl":         lbl,
 		"hover_active":    false,
 		"on_complete":     on_complete,
+		"sp_pm_key":       sp_pm_key,
 	}
+	anim_ref.append(anim_d)
+	_rocket_anims.append(anim_d)
 
-## Called every _process frame while _rocket_anim is active.
+## Called every _process frame while any rocket animations are active.
 func _tick_rocket_anim(delta: float) -> void:
-	var d: Dictionary = _rocket_anim
+	var done: Array[Dictionary] = []
+	for d: Dictionary in _rocket_anims:
+		var rocket: Control = d["rocket"]
+		if not is_instance_valid(rocket):
+			done.append(d)
+			continue
+		_tick_one_rocket(d, delta)
+		if d.get("_finished", false):
+			done.append(d)
+	for d: Dictionary in done:
+		_rocket_anims.erase(d)
+
+func _tick_one_rocket(d: Dictionary, delta: float) -> void:
 	var rocket: Control = d["rocket"]
-	if not is_instance_valid(rocket):
-		_rocket_anim.clear()
-		return
 
 	var phase: int   = d["phase"]
 	var t:     float = d["phase_t"]
@@ -2451,7 +2460,7 @@ func _tick_rocket_anim(delta: float) -> void:
 		TooltipManager.hide_tip()
 
 	if finished:
-		_finish_rocket_anim()
+		_finish_rocket_anim(d)
 		return
 
 ## Same projection formula as OrbitalLayer._project, returns 2D screen offset from center.
@@ -2485,8 +2494,7 @@ func _find_orbit_angle_for_pos(target: Vector2, inc: float, r: float, rot: float
 	return best_a
 
 ## Called when fade phase ends — spawns ship and clears animation state.
-func _finish_rocket_anim() -> void:
-	var d: Dictionary = _rocket_anim
+func _finish_rocket_anim(d: Dictionary) -> void:
 	var rocket: Control = d.get("rocket")
 	var container: Control = d["container"]
 
@@ -2580,7 +2588,7 @@ func _finish_rocket_anim() -> void:
 		_orbital_layer.queue_redraw()
 
 	var cb: Callable = d["on_complete"]
-	_rocket_anim.clear()
+	d["_finished"] = true
 	cb.call()
 
 # ── Toast / build-log notification ───────────────────────────────────────────
@@ -3155,19 +3163,19 @@ func _build_spaceport_card(def: BuildingDef, pm_key: String,
 	body.custom_minimum_size = Vector2(0, 54)
 	card.add_child(body)
 
-	# Fill bar (only visible when launching)
+	# Fill bar: gold while launching (anim progress) or recharging (PM progress)
 	var prog_ref: Array = [prog]
 	var fill_ctrl := Control.new()
 	fill_ctrl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var cap_key := pm_key
 	fill_ctrl.draw.connect(func() -> void:
-		var p: float = (prog_ref as Array)[0]
 		if ProductionManager.is_user_paused(cap_key):
 			return
+		var p: float = ProductionManager.get_progress(cap_key)
 		var w: float = fill_ctrl.size.x * p
 		if w > 0.5:
-			fill_ctrl.draw_rect(Rect2(0, 0, w, fill_ctrl.size.y), Color(0.35, 0.75, 1.0, 0.18))
-			fill_ctrl.draw_rect(Rect2(w - 2.0, 0, 2.0, fill_ctrl.size.y), Color(0.5, 0.9, 1.0, 0.55)))
+			fill_ctrl.draw_rect(Rect2(0, 0, w, fill_ctrl.size.y), Color(0.72, 0.52, 0.12, 0.22))
+			fill_ctrl.draw_rect(Rect2(w - 2.0, 0, 2.0, fill_ctrl.size.y), Color(0.95, 0.75, 0.25, 0.65)))
 	body.add_child(fill_ctrl)
 
 	var margin := MarginContainer.new()
@@ -3236,19 +3244,25 @@ func _build_spaceport_card(def: BuildingDef, pm_key: String,
 
 	launch_btn.pressed.connect(func() -> void:
 		if not launch_btn.disabled:
-			launch_btn.text       = "Launching…"
-			launch_btn.disabled   = true
-			cap_entry["launching"] = true
+			launch_btn.text        = "Cooldown…"
+			launch_btn.disabled    = true
 			cap_pp.has_spaceport   = true
+			# Mark cooldown_only so SpaceportLogic.produce() skips ship creation —
+			# we create the ship ourselves at animation end via _finish_rocket_anim.
+			cap_entry["cooldown_only"] = true
+			# Start PM cooldown immediately — bar fills in parallel with animation.
+			if ProductionManager.is_user_paused(cap_pm_key):
+				ProductionManager.toggle_user_pause(cap_pm_key)
+			# Animation is purely visual; completion creates the ship orbit data.
 			_play_rocket_animation(cap_pp.planet_seed, cap_poi, func() -> void:
-				cap_entry["launching"]     = false
-				cap_entry["cooldown_only"] = true
-				# Unpause PM regardless of whether the button/panel still exists
-				if ProductionManager.is_user_paused(cap_pm_key):
-					ProductionManager.toggle_user_pause(cap_pm_key)
-				if is_instance_valid(launch_btn):
-					launch_btn.text = "Cooldown…"
-			))
+				pass  # ship already created by _finish_rocket_anim
+			, cap_pm_key))
+
+	launch_btn.mouse_entered.connect(func() -> void:
+		if not launch_btn.disabled:
+			CursorManager.set_state(CursorManager.State.POINTER))
+	launch_btn.mouse_exited.connect(func() -> void:
+		CursorManager.set_state(CursorManager.State.NORMAL))
 
 	hbox.add_child(launch_btn)
 
