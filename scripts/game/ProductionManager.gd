@@ -128,7 +128,8 @@ func _tick_all(delta: float) -> void:
 			# ── Construction phase ────────────────────────────────────────────
 			if entry.get("constructing", false):
 				var ck: String = "construct:" + key
-				var cp: float  = _construct.get(ck, 0.0) + delta / def.tick_duration
+				var cdur: float = def.construct_duration if def.construct_duration > 0.0 else def.tick_duration
+				var cp: float  = _construct.get(ck, 0.0) + delta / cdur
 				if cp >= 1.0:
 					_construct.erase(ck)
 					entry["constructing"] = false
@@ -194,7 +195,8 @@ func _tick_all(delta: float) -> void:
 			var speed_mult: float = _deposit_speed(def, planet_seed, mods) * energy_speed * get_node("/root/SkillTree").get_global_speed_mult()
 			if def.output_type == BuildingDef.OutputType.RAW_MINERAL:
 				speed_mult *= get_node("/root/SkillTree").get_mine_speed_mult()
-			var rate: float = delta / (def.tick_duration / speed_mult)
+			var eff_dur: float = entry.get("effective_duration", def.tick_duration)
+			var rate: float = delta / (eff_dur / speed_mult)
 			var next: float = prev + rate
 
 			if next >= 1.0:

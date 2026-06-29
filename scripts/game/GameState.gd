@@ -26,6 +26,7 @@ var credits: float = 500.0 :
 
 # ── Unlock flags ─────────────────────────────────────────────────────────────
 var solar_unlocked:    bool = false
+var moon_unlocked:     bool = false
 var galaxy_unlocked:   bool = false
 ## Seed of the planet currently shown in PlanetaryView. -1 when not in that scene.
 var active_planet_seed: int = -1
@@ -273,6 +274,7 @@ func save() -> void:
 	var data := {
 		"credits":              credits,
 		"solar_unlocked":       solar_unlocked,
+		"moon_unlocked":        moon_unlocked,
 		"galaxy_unlocked":      galaxy_unlocked,
 		"discovered_asteroids": discovered_asteroids,
 		"asteroid_scan_counts": asteroid_scan_counts,
@@ -307,6 +309,7 @@ func load_save() -> bool:
 	var data: Dictionary     = file.get_var()
 	credits                  = data.get("credits",              500.0)
 	solar_unlocked           = data.get("solar_unlocked",       false)
+	moon_unlocked            = data.get("moon_unlocked",        false)
 	galaxy_unlocked          = data.get("galaxy_unlocked",      false)
 	home_planet_seed         = data.get("home_planet_seed",     -1)
 	home_star_idx            = data.get("home_star_idx",        -1)

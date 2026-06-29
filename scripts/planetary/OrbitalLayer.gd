@@ -53,9 +53,8 @@ func start_landing(ship: ShipData) -> void:
 	var spos   := center + Vector2(sv.x, sv.y)
 	# Impact point on planet surface in the direction of the ship
 	var impact: Vector2 = center + (spos - center).normalized() * _planet_radius * 0.88
-	# Arc matches actual orbital speed so there's no sudden jump in velocity
-	var orb_dir: float  = sign(ship.orbit_speed) if ship.orbit_speed != 0.0 else 1.0
-	var arc: float      = ship.orbit_speed * _LAND_CURVE_DUR   # rad, preserves speed
+	# arc = 2x orbital arc → p*(1+p)/2 easing starts at orbital speed, accelerates to 2x
+	var arc: float = ship.orbit_speed * _LAND_CURVE_DUR * 6.0
 	_landing[ship.ship_id] = {
 		"phase":       0,
 		"progress":    0.0,
@@ -105,13 +104,13 @@ func _tick_landing(delta: float) -> void:
 			ld["progress"] = 0.0
 			var ls: ShipData = ld["ship"]
 			if int(ld["phase"]) == 1:
-				# Sync start_angle to actual orbit position so there's no jump
 				ld["start_angle"] = ls.orbit_angle
 				ld["start_r"]     = ls.orbit_radius
-				ld["arc"]         = ls.orbit_speed * _LAND_CURVE_DUR
+				ld["arc"]         = ls.orbit_speed * _LAND_CURVE_DUR * 6.0
 			elif int(ld["phase"]) == 2:
 				# Store impact angle/radius instead of fixed Vector2
-				ld["impact_angle"] = (ld["start_angle"] as float) + (ld["arc"] as float)
+				# ep at p=1: 1*(1+1)/2 = 1.0
+				ld["impact_angle"] = (ld["start_angle"] as float) + (ld["arc"] as float) * 1.0
 				var sparks: Array = []
 				for _i in 3:
 					sparks.append({
@@ -357,23 +356,43 @@ func _draw_landing(ld: Dictionary) -> void:
 					_draw_pixel_ship(sp, Color(1, 1, 1, 0.92))
 
 		1:
-			# ── Orbital spiral: follows orbit path, radius shrinks toward planet
+			# ── Orbital descent: accelerating spiral, projection line ahead of ship
 			var start_angle: float = ld["start_angle"]
 			var start_r: float     = ld["start_r"]
 			var arc: float         = ld["arc"]
-			var angle: float       = start_angle + arc * progress
-			# Very slight radius reduction — ship stays on its orbit, barely descends
-			var cur_r: float  = lerpf(start_r, start_r - 0.06, progress)
+			const RADIUS_DROP: float = 0.12  # total inward drop over full descent
+
+			# Easing: p*(1+p)/2 → starts at orbital speed, smoothly accelerates
+			var ep: float = progress * (1.0 + progress) / 2.0
+			var angle: float = start_angle + arc * ep
+			var cur_r: float = start_r - RADIUS_DROP * ep
+
+			# ── Projection line: dashed, shows remaining path, fades as ship advances
+			var proj_steps := 28
+			var prev_proj  := _project_r(ship, angle, cur_r)
+			for s in range(1, proj_steps + 1):
+				var pt: float  = progress + float(s) / float(proj_steps) * (1.0 - progress)
+				var pet: float = pt * (1.0 + pt) / 2.0
+				var pa: float  = start_angle + arc * pet
+				var pr: float  = start_r - RADIUS_DROP * pet
+				var pv         := _project_r(ship, pa, pr)
+				if (s % 5) < 3:
+					draw_line(prev_proj, pv,
+						Color(1.0, 0.65, 0.25, 0.35 * (1.0 - progress)), 1.0, true)
+				prev_proj = pv
+
+			# ── Trail behind ship
+			for ti in 6:
+				var tt: float  = maxf(0.0, progress - float(ti + 1) * 0.032)
+				var tet: float = tt * (1.0 + tt) / 2.0
+				var ta: float  = start_angle + arc * tet
+				var tr: float  = start_r - RADIUS_DROP * tet
+				var tp         := _project_r(ship, ta, tr)
+				var alpha: float = (1.0 - float(ti) / 6.0) * 0.50
+				draw_circle(tp, 1.3, Color(1.0, 0.55, 0.15, alpha))
+
 			var ship_pos := _project_r(ship, angle, cur_r)
-			var col       := Color(1.0, 0.85, 0.5, 1.0 - progress * 0.3)
-			# Short trail along the same spiral
-			for ti in 5:
-				var tt: float    = maxf(0.0, progress - float(ti + 1) * 0.035)
-				var ta: float    = start_angle + arc * tt
-				var tr: float    = lerpf(start_r, start_r - 0.06, tt)
-				var tp := _project_r(ship, ta, tr)
-				var alpha: float = (1.0 - float(ti) / 5.0) * 0.45
-				draw_circle(tp, 1.2, Color(1.0, 0.6, 0.2, alpha))
+			var col       := Color(1.0, 0.88, 0.55, 1.0 - progress * 0.25)
 			if ship.ship_type == "station":
 				_draw_pixel_station(ship_pos, col)
 			else:
@@ -382,7 +401,7 @@ func _draw_landing(ld: Dictionary) -> void:
 		2:
 			# ── Explosion sparks — anchor re-projected each frame so planet rotation is tracked
 			var imp_angle: float = ld["impact_angle"]
-			var imp: Vector2     = _project_r(ship, imp_angle, (ld["start_r"] as float) - 0.06)
+			var imp: Vector2     = _project_r(ship, imp_angle, (ld["start_r"] as float) - 0.12)
 			for spark: Dictionary in ld["sparks"]:
 				var life: float   = maxf(0.0, spark["life"] as float)
 				var sp: Vector2   = imp + (spark["offset"] as Vector2)

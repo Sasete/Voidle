@@ -60,7 +60,9 @@ func _init() -> void:
 	_add_node("unlock_refinery", "Refinery Blueprint", "Unlocks ore-to-mineral Refineries.", 400.0, Vector2(200, 100), ["unlock_generator"], 2, "Unlocks Refinery", 1)
 	_add_node("unlock_deep_drill", "Deep Drill Blueprint", "Unlocks high-yield Deep Drills.", 450.0, Vector2(-100, 150), ["mine_speed"], 2, "Unlocks Deep Drill", 1)
 	_add_node("unlock_commercial", "Commercial Blueprint", "Unlocks Trade Hubs for high income.", 500.0, Vector2(-300, 0), ["unlock_apartments"], 2, "Unlocks Commercial Center", 1)
-	_add_node("unlock_spaceport", "SpacePort Blueprint", "Unlocks Orbital SpacePorts.", 800.0, Vector2(0, 200), ["unlock_lab"], 2, "Unlocks SpacePort", 1)
+	_add_node("unlock_moon", "Lunar Expansion", "Provides orbital mechanics calculations required to settle on local moons.", 500.0, Vector2(0, 150), ["unlock_lab"], 2, "Unlocks Moon Colonization", 1)
+	_add_node("unlock_spaceport", "SpacePort Blueprint", "Unlocks Orbital SpacePorts.", 800.0, Vector2(0, 220), ["unlock_moon"], 3, "Unlocks SpacePort", 1)
+	_add_node("unlock_solar", "Interplanetary Travel", "Allows ships to traverse the vast distances between planets.", 1500.0, Vector2(0, 300), ["unlock_spaceport"], 4, "Unlocks Solar System Travel", 1)
 
 	# Tier 3 (connecting from T2 nodes)
 	_add_node("omega_core", "Supercharged Grid", "Syncs all colony grids into a single self-correcting neural system.", 1200.0, Vector2(0, -250), ["credit_boost", "power_transmission"], 3, "+20% production speed globally", 1)
@@ -123,7 +125,11 @@ func purchase_skill(id: String) -> bool:
 			unlocked_skills.append(id)
 			skill_levels[id] = 1
 			
-			if id.begins_with("unlock_"):
+			if id == "unlock_moon":
+				GameState.moon_unlocked = true
+			elif id == "unlock_solar":
+				GameState.solar_unlocked = true
+			elif id.begins_with("unlock_"):
 				GameState.unlock_building(id.trim_prefix("unlock_"))
 		else:
 			skill_levels[id] = cur_lv + 1

@@ -34,6 +34,8 @@ var _orbital_layer: OrbitalLayer = null
 ##       phase(int 0=rise/1=turn/2=fade), phase_t(float), on_complete(Callable),
 ##       planet_seed(int), orbit_inc(float), insert_angle_rel(float), planet_r(float)
 var _rocket_anims: Array[Dictionary] = []
+## Station deploy particle anims: {ship, ctrl, t, duration}
+var _deploy_anims: Array[Dictionary] = []
 ## Toast log container — created lazily, anchored bottom-left.
 var _toast_container: VBoxContainer = null
 var _ship_panel: PanelContainer = null
@@ -110,7 +112,7 @@ func _save_light_angle() -> void:
 	GameState.light_last_unix = Time.get_unix_time_from_system() as int
 
 func _go_back() -> void:
-	if not GameState.solar_unlocked:
+	if not GameState.solar_unlocked and not GameState.moon_unlocked:
 		return
 	_save_light_angle()
 	var sd := _system_solar if _system_solar != null else GameState.get_home_solar()
@@ -1236,6 +1238,11 @@ func _on_resize() -> void:
 	_update_aspect()
 
 func _setup_orbital_layer(planet_seed: int) -> void:
+	# Disconnect any previous ShipManager bindings to avoid accumulation
+	if ShipManager.ship_added.is_connected(_on_ship_roster_changed):
+		ShipManager.ship_added.disconnect(_on_ship_roster_changed)
+	if ShipManager.ship_arrived.is_connected(_on_ship_roster_changed):
+		ShipManager.ship_arrived.disconnect(_on_ship_roster_changed)
 	# Remove old layer if switching planets
 	if _orbital_layer != null and is_instance_valid(_orbital_layer):
 		_orbital_layer.queue_free()
@@ -1258,9 +1265,24 @@ func _setup_orbital_layer(planet_seed: int) -> void:
 		_close_radial_menu())
 	layer.ship_right_clicked.connect(func(ship: ShipData, gpos: Vector2) -> void:
 		_show_radial_menu(ship, gpos, layer))
+	layer.ship_landed.connect(func(landed_ship: ShipData) -> void:
+		# Return cargo to planet storage on landing
+		var dest_pp := GameState.get_planet(landed_ship.orbit_seed)
+		if dest_pp != null and not landed_ship.cargo.is_empty():
+			for res_id: String in landed_ship.cargo:
+				dest_pp.stored_resources[res_id] = \
+					dest_pp.stored_resources.get(res_id, 0.0) + float(landed_ship.cargo[res_id])
+			GameState.planet_progress_changed.emit(landed_ship.orbit_seed)
+		if current_data != null: _build_planet_overview(current_data))
+	ShipManager.ship_arrived.connect(_on_ship_roster_changed)
+	ShipManager.ship_added.connect(_on_ship_roster_changed)
 	_orbital_layer = layer
 	_add_orbit_toggle(planet_renderer.get_parent(), layer)
 	_register_ship_commands(layer)
+
+func _on_ship_roster_changed(ship: ShipData) -> void:
+	if current_data != null and ship.orbit_seed == current_data.seed:
+		_build_planet_overview(current_data)
 
 func _register_ship_commands(layer: OrbitalLayer) -> void:
 	ShipCommandRegistry.register_callable("deselect",
@@ -1277,6 +1299,9 @@ func _register_ship_commands(layer: OrbitalLayer) -> void:
 ## Ship info panel — appears at bottom-left of planet view when a ship is selected.
 func _show_ship_panel(ship: ShipData, layer: OrbitalLayer) -> void:
 	_close_ship_panel()
+	# Station ships also open the district panel immediately
+	if ship.ship_type == "station" and current_data != null:
+		_open_station_district(ship, planet_renderer.get_parent())
 	var planet_cont: Control = planet_renderer.get_parent()
 
 	var panel := PanelContainer.new()
@@ -1330,18 +1355,38 @@ func _show_ship_panel(ship: ShipData, layer: OrbitalLayer) -> void:
 				continue
 			cargo_grid.add_child(_mineral_grid_card(rd, ship.cargo[rid], true))
 
-	# Action separator
-	var sep2 := HSeparator.new()
-	sep2.add_theme_color_override("color", Color(1, 1, 1, 0.10))
-	vbox.add_child(sep2)
+	# ── Capacity row ─────────────────────────────────────────────────────────
+	var cap_sep := HSeparator.new()
+	cap_sep.add_theme_color_override("color", Color(1, 1, 1, 0.10))
+	vbox.add_child(cap_sep)
 
-	# Hint: right-click for actions
-	var hint_lbl := Label.new()
-	hint_lbl.text = "right-click for actions"
-	_apply_orbitron(hint_lbl, 7)
-	hint_lbl.add_theme_color_override("font_color", Color(0.4, 0.5, 0.7, 0.5))
-	hint_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	vbox.add_child(hint_lbl)
+	var cap_row := HBoxContainer.new()
+	cap_row.add_theme_constant_override("separation", 6)
+	vbox.add_child(cap_row)
+
+	var cargo_hint := Label.new()
+	cargo_hint.text = "right-click for actions"
+	cargo_hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_orbitron(cargo_hint, 7)
+	cargo_hint.add_theme_color_override("font_color", Color(0.4, 0.5, 0.7, 0.5))
+	cargo_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cap_row.add_child(cargo_hint)
+
+	# Cargo weight used / capacity — bottom right
+	var ship_cap: int = 60 if ship.ship_type == "station" else 20
+	var ship_used: int = 0
+	for rid: String in ship.cargo:
+		var rd2: ResourceData = GameState.known_resources.get(rid, null)
+		if rd2 != null:
+			ship_used += (rd2.rarity + rd2.tier - 1) * int(ship.cargo[rid])
+	var cap_lbl3 := Label.new()
+	cap_lbl3.text = "%d / %d" % [ship_used, ship_cap]
+	_apply_orbitron(cap_lbl3, 7)
+	cap_lbl3.add_theme_color_override("font_color",
+		Color(0.42, 0.88, 0.58) if ship_used <= ship_cap else Color(0.95, 0.38, 0.28))
+	cap_lbl3.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	cap_lbl3.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cap_row.add_child(cap_lbl3)
 
 	panel.anchor_left = 0; panel.anchor_top = 0
 	panel.anchor_right = 0; panel.anchor_bottom = 0
@@ -1352,6 +1397,73 @@ func _close_ship_panel() -> void:
 	if _ship_panel != null and is_instance_valid(_ship_panel):
 		_ship_panel.queue_free()
 	_ship_panel = null
+
+## Info panel for a ship that is currently launching (not yet in orbit).
+func _show_launch_info_panel(anim_d: Dictionary, container: Control) -> void:
+	_close_ship_panel()
+
+	var panel := PanelContainer.new()
+	var ps := StyleBoxFlat.new()
+	ps.bg_color     = Color(0.06, 0.08, 0.14, 0.92)
+	ps.border_color = Color(1.0, 0.92, 0.30, 0.70)
+	ps.set_border_width_all(1); ps.set_corner_radius_all(5)
+	ps.content_margin_left = 14; ps.content_margin_right  = 14
+	ps.content_margin_top  = 10; ps.content_margin_bottom = 10
+	panel.add_theme_stylebox_override("panel", ps)
+	panel.z_index = 10
+	panel.custom_minimum_size = Vector2(180, 0)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 6)
+	panel.add_child(vbox)
+
+	# Title row
+	var title_row := HBoxContainer.new()
+	title_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	vbox.add_child(title_row)
+
+	var name_lbl := Label.new()
+	name_lbl.text = anim_d.get("ship_name", "Ship")
+	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_orbitron(name_lbl, 11)
+	name_lbl.add_theme_color_override("font_color", Color(1.0, 0.92, 0.30))
+	title_row.add_child(name_lbl)
+
+	var type_lbl := Label.new()
+	type_lbl.text = anim_d.get("ship_type", "shuttle").capitalize()
+	_apply_orbitron(type_lbl, 9)
+	type_lbl.add_theme_color_override("font_color", Color(0.55, 0.75, 1.0, 0.75))
+	title_row.add_child(type_lbl)
+
+	var status_lbl := Label.new()
+	status_lbl.text = "launching to orbit"
+	_apply_orbitron(status_lbl, 8)
+	status_lbl.add_theme_color_override("font_color", Color(0.45, 0.90, 0.65, 0.80))
+	vbox.add_child(status_lbl)
+
+	# Cargo
+	var cargo: Dictionary = anim_d.get("ship_cargo", {})
+	if not cargo.is_empty():
+		var sep := HSeparator.new()
+		sep.add_theme_color_override("color", Color(1, 1, 1, 0.12))
+		vbox.add_child(sep)
+		var cargo_grid := GridContainer.new()
+		cargo_grid.columns = 4
+		cargo_grid.add_theme_constant_override("h_separation", 4)
+		cargo_grid.add_theme_constant_override("v_separation", 4)
+		vbox.add_child(cargo_grid)
+		for rid: String in cargo:
+			var rd: ResourceData = GameState.known_resources.get(rid, null)
+			if rd != null:
+				cargo_grid.add_child(_mineral_grid_card(rd, float(cargo[rid]), true))
+
+	container.add_child(panel)
+	_ship_panel = panel
+	# Store rocket ref so _process can follow it each frame
+	var rocket: Control = anim_d.get("rocket", null)
+	panel.set_meta("launch_rocket", rocket if rocket != null else Control.new())
+	if rocket != null and is_instance_valid(rocket):
+		panel.position = rocket.position + Vector2(16, -40)
 
 func _close_radial_menu() -> void:
 	if _radial_menu != null and is_instance_valid(_radial_menu):
@@ -1392,9 +1504,10 @@ func _show_radial_menu(ship: ShipData, global_pos: Vector2, layer: OrbitalLayer)
 		})
 	if actions.is_empty():
 		return
-	_show_radial_menu_at(actions, global_pos)
+	_show_radial_menu_at(actions, global_pos, ship)
 
-func _show_radial_menu_at(actions: Array[Dictionary], global_pos: Vector2) -> void:
+func _show_radial_menu_at(actions: Array[Dictionary], global_pos: Vector2,
+		follow_ship: ShipData = null) -> void:
 	_close_radial_menu()
 	var container: Control = planet_renderer.get_parent()
 	var local_pos: Vector2 = global_pos - container.get_global_rect().position
@@ -1421,22 +1534,31 @@ func _show_radial_menu_at(actions: Array[Dictionary], global_pos: Vector2) -> vo
 
 	# ESC is handled in _input when _radial_menu != null
 
-	# Connector line from ship center to each button
+	# Pivot: all radial elements live here; repositioned each frame when following a ship
+	var pivot := Control.new()
+	pivot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pivot.z_index = 1
+	pivot.position = local_pos
+	menu.add_child(pivot)
+	if follow_ship != null:
+		menu.set_meta("follow_ship", follow_ship)
+		menu.set_meta("pivot_node",  pivot)
+
+	# Connector lines — drawn in pivot-local space (origin = ship center)
 	var lines_ctrl := Control.new()
-	lines_ctrl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	lines_ctrl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var line_fade: Array[float] = [0.0]
 	var line_endpoints: Array[Vector2] = []
 	lines_ctrl.draw.connect(func() -> void:
 		for ep: Vector2 in line_endpoints:
-			lines_ctrl.draw_line(local_pos, ep,
+			lines_ctrl.draw_line(Vector2.ZERO, ep,
 				Color(0.5, 0.6, 0.9, 0.25 * line_fade[0]), 1.0, true))
-	menu.add_child(lines_ctrl)
+	pivot.add_child(lines_ctrl)
 
 	var n: int = actions.size()
 	for i in n:
 		var angle: float = -PI * 0.5 + (float(i) / maxf(float(n), 1.0)) * TAU if n > 1 else -PI * 0.5
-		var btn_center: Vector2 = local_pos + Vector2(cos(angle), sin(angle)) * RADIUS
+		var btn_center: Vector2 = Vector2(cos(angle), sin(angle)) * RADIUS
 		line_endpoints.append(btn_center)
 
 		var btn_ctrl := Control.new()
@@ -1454,13 +1576,11 @@ func _show_radial_menu_at(actions: Array[Dictionary], global_pos: Vector2) -> vo
 		btn_ctrl.draw.connect(func() -> void:
 			var f: float = fade_ref[0]
 			var h: bool  = btn_hovered[0]
-			# Background circle
 			btn_ctrl.draw_circle(Vector2(BTN_R, BTN_R), BTN_R,
 				Color(0.06, 0.08, 0.18, 0.93 * f))
 			if h:
 				btn_ctrl.draw_circle(Vector2(BTN_R, BTN_R), BTN_R,
 					Color(btn_color, 0.18 * f))
-			# Border ring
 			var pts := PackedVector2Array()
 			for k in 24:
 				var a: float = float(k) / 24.0 * TAU
@@ -1468,7 +1588,6 @@ func _show_radial_menu_at(actions: Array[Dictionary], global_pos: Vector2) -> vo
 								   BTN_R + sin(a) * (BTN_R - 1.0)))
 			pts.append(pts[0])
 			btn_ctrl.draw_polyline(pts, Color(btn_color, (0.75 if h else 0.40) * f), 1.5, true)
-			# Icon
 			var font: Font = ThemeDB.fallback_font
 			var txt: String = ac["icon"]
 			var tsz := font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12)
@@ -1478,7 +1597,6 @@ func _show_radial_menu_at(actions: Array[Dictionary], global_pos: Vector2) -> vo
 			btn_ctrl.draw_string(font, tp, txt,
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(btn_color, f)))
 
-		# Label below
 		var lbl := Label.new()
 		lbl.text = ac["label"]
 		_apply_orbitron(lbl, 7)
@@ -1503,9 +1621,8 @@ func _show_radial_menu_at(actions: Array[Dictionary], global_pos: Vector2) -> vo
 					_close_radial_menu()
 					(ac["action"] as Callable).call())
 
-		menu.add_child(btn_ctrl)
+		pivot.add_child(btn_ctrl)
 
-		# Fade-in tween
 		var tw := create_tween().set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 		tw.tween_method(func(v: float) -> void:
 			fade_ref[0] = v
@@ -1593,28 +1710,44 @@ func _process(delta: float) -> void:
 		_orbital_layer.queue_redraw()
 		# Keep ship panel glued to selected ship, on opposite side from nameplate leader
 		if _ship_panel != null and is_instance_valid(_ship_panel):
-			var sel: ShipData = _orbital_layer._selected_ship
-			if sel != null:
-				var sv := _orbital_layer._project(sel, sel.orbit_angle)
-				var spos := _orbital_layer._planet_center + Vector2(sv.x, sv.y)
-				var panel_size := _ship_panel.size
-				var cont_size  := _oc.size
-				# Nameplate leader goes toward the side AWAY from planet center;
-				# panel goes to the OPPOSITE side (toward planet center).
-				var center_x := cont_size.x * 0.5
-				var label_goes_right: bool = spos.x >= center_x
-				var px: float
-				if label_goes_right:
-					# Nameplate right → panel LEFT
-					px = spos.x - panel_size.x - 16.0
+			# Launch panel: follow rocket position
+			if _ship_panel.has_meta("launch_rocket"):
+				var lrocket: Control = _ship_panel.get_meta("launch_rocket")
+				if is_instance_valid(lrocket):
+					_ship_panel.position = lrocket.position + Vector2(16, -_ship_panel.size.y * 0.5)
 				else:
-					# Nameplate left → panel RIGHT
-					px = spos.x + 16.0
-				px = clampf(px, 8.0, cont_size.x - panel_size.x - 8.0)
-				var py: float = spos.y - panel_size.y * 0.5
-				py = clampf(py, 8.0, cont_size.y - panel_size.y - 8.0)
-				_ship_panel.position = Vector2(px, py)
-		
+					_close_ship_panel()  # rocket finished, close panel
+			else:
+				var sel: ShipData = _orbital_layer._selected_ship
+				if sel != null:
+					var sv := _orbital_layer._project(sel, sel.orbit_angle)
+					var spos := _orbital_layer._planet_center + Vector2(sv.x, sv.y)
+					var panel_size := _ship_panel.size
+					var cont_size  := _oc.size
+					var center_x := cont_size.x * 0.5
+					var label_goes_right: bool = spos.x >= center_x
+					var px: float
+					if label_goes_right:
+						px = spos.x - panel_size.x - 16.0
+					else:
+						px = spos.x + 16.0
+					px = clampf(px, 8.0, cont_size.x - panel_size.x - 8.0)
+					var py: float = spos.y - panel_size.y * 0.5
+					py = clampf(py, 8.0, cont_size.y - panel_size.y - 8.0)
+					_ship_panel.position = Vector2(px, py)
+
+		# Follow ship with radial menu pivot
+		if _radial_menu != null and is_instance_valid(_radial_menu) \
+				and _radial_menu.has_meta("follow_ship"):
+			var fship: ShipData = _radial_menu.get_meta("follow_ship")
+			var piv: Control    = _radial_menu.get_meta("pivot_node")
+			if fship != null and is_instance_valid(piv):
+				var sv := _orbital_layer._project(fship, fship.orbit_angle)
+				if _orbital_layer._is_occluded(sv):
+					_close_radial_menu()
+				else:
+					piv.position = _orbital_layer._planet_center + Vector2(sv.x, sv.y)
+
 	if current_data != null:
 		var any_finished = false
 		for poi_label in _district_pbars:
@@ -1636,6 +1769,9 @@ func _process(delta: float) -> void:
 
 	if not _rocket_anims.is_empty():
 		_tick_rocket_anim(delta)
+
+	if not _deploy_anims.is_empty():
+		_tick_deploy_anims(delta)
 
 var _was_dragging: bool = false
 func _update_cursor() -> void:
@@ -1969,8 +2105,13 @@ func _build_orbital_ship_card(ship: ShipData) -> PanelContainer:
 	sel_btn.pressed.connect(func() -> void:
 		if _orbital_layer != null and is_instance_valid(_orbital_layer):
 			_orbital_layer.select_ship(cap_ship)
-			# Rotate planet so the ship's orbit node faces the viewer
-			_rotate_to_lon(-rad_to_deg(cap_ship.orbit_node)))
+			# Rotate planet so the ship's current position faces the viewer (rz < 0)
+			# px,pz = ship position in orbit plane (normalized)
+			var px: float = cos(cap_ship.orbit_angle)
+			var pz: float = sin(cap_ship.orbit_angle) * cos(cap_ship.orbit_inclination)
+			# rot_target such that rx=0 and rz<0: atan2(-px, pz) + PI
+			var rot_target: float = atan2(-px, pz) + PI
+			_rotate_to_lon(rad_to_deg(rot_target - cap_ship.orbit_node)))
 	hbox.add_child(sel_btn)
 
 	return card
@@ -2288,6 +2429,7 @@ func _on_resource_produced(planet_seed: int, poi_label: String, text: String, co
 		if poi.label == poi_label:
 			poi_layer.spawn_floating_text(poi.lon_deg, poi.lat_deg, text, color, 14, icon)
 			break
+	_build_planet_overview(current_data)
 
 func _on_production_update(_planet_seed: int, key: String, progress: float) -> void:
 	if _district_pbars.has(key):
@@ -2304,8 +2446,9 @@ func _on_production_update(_planet_seed: int, key: String, progress: float) -> v
 	if not _bar_meta.has(key):
 		return
 	var m: Dictionary = _bar_meta[key]
-	(m["prog"] as Array)[0] = progress
-	var fc: Control = m["fill"]
+	if m.has("prog"):
+		(m["prog"] as Array)[0] = progress
+	var fc: Control = m.get("fill", null)
 	if is_instance_valid(fc):
 		fc.queue_redraw()
 	# Update percent label on construction bars only — status label updates via building_ticked
@@ -2356,8 +2499,8 @@ func _refresh_district_energy_lbl() -> void:
 func _on_building_toggled(key: String, _paused: bool) -> void:
 	if not _bar_meta.has(key):
 		return
-	var fc: Control = _bar_meta[key]["fill"]
-	if is_instance_valid(fc):
+	var fc: Control = _bar_meta[key].get("fill", null)
+	if fc != null and is_instance_valid(fc):
 		fc.queue_redraw()
 	_refresh_bar_label_status(key)
 
@@ -2367,7 +2510,23 @@ func _refresh_bar_label_status(key: String) -> void:
 	var m: Dictionary = _bar_meta[key]
 	if m.get("construction", false):
 		return
-	# Spaceport: update prog_ref + reset launch button when re-paused
+	# Spaceport (new phase system): rebuild card when phase changes
+	if m.get("spaceport", false):
+		var sp_entry: Dictionary = m.get("sp_entry", {})
+		var cur_phase: String    = sp_entry.get("phase", "idle")
+		var last_phase: String   = m.get("last_phase", "")
+		if cur_phase != last_phase:
+			m["last_phase"] = cur_phase
+			var rebuild: Callable = m.get("rebuild_sp", Callable())
+			if rebuild.is_valid():
+				rebuild.call()
+		else:
+			# Same phase — just refresh the fill bar
+			var fc: Control = m.get("fill", null)
+			if is_instance_valid(fc):
+				fc.queue_redraw()
+		return
+	# Legacy spaceport path (launch_btn based) — kept as fallback
 	if m.has("launch_btn"):
 		(m["prog"] as Array)[0] = ProductionManager.get_progress(key)
 		var btn: Button  = m["launch_btn"]
@@ -2375,7 +2534,6 @@ func _refresh_bar_label_status(key: String) -> void:
 		var sp_entry: Dictionary = m.get("sp_entry", {})
 		var is_paused    := ProductionManager.is_user_paused(key)
 		var is_launching: bool = sp_entry.get("launching", false)
-		# Only re-enable when PM re-pauses AND we're not mid-animation
 		if is_instance_valid(btn) and is_paused and not is_launching:
 			btn.text     = "Launch"
 			btn.disabled = false
@@ -2463,6 +2621,9 @@ func _on_building_constructed(planet_seed: int, key: String) -> void:
 
 	_refresh_overview_energy()
 
+	# Keep station ship.buildings in sync when construction completes
+	_sync_station_buildings()
+
 	# Refresh panel only if the player is actively viewing that specific district.
 	if _active_district_poi == null:
 		return
@@ -2484,7 +2645,9 @@ func _refresh_overview_energy() -> void:
 		Color(0.9, 0.82, 0.25) if bal >= 0.0 else Color(0.9, 0.40, 0.28))
 
 ## Starts a rocket launch animation. Multiple can run concurrently.
-func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callable, sp_pm_key: String = "") -> void:
+func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callable,
+		sp_pm_key: String = "", ship_name: String = "Pioneer", ship_type: String = "shuttle",
+		ship_cargo: Dictionary = {}) -> void:
 	var container: Control = planet_renderer.get_parent()
 	var planet_r:  float   = planet_renderer._planet_radius_px
 	const ORBIT_FRAC:       float = 1.06
@@ -2516,8 +2679,9 @@ func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callabl
 
 	# ── Rocket node ──────────────────────────────────────────────────────────────
 	var rocket := Control.new()
-	rocket.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rocket.mouse_filter = Control.MOUSE_FILTER_STOP
 	rocket.z_index      = 12
+	rocket.custom_minimum_size = Vector2(16, 16)
 	container.add_child(rocket)
 
 	# Set initial position directly from POI screen pos — no formula conversion needed
@@ -2545,18 +2709,33 @@ func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callabl
 			rocket.draw_rect(Rect2(b1, Vector2(2, 2)), Color(1.0, hue, 0.05, flame_a * 0.95))
 			rocket.draw_rect(Rect2(b2, Vector2(2, 2)), Color(1.0, hue * 0.6, 0.02, flame_a * 0.55))
 			rocket.draw_rect(Rect2(b3, Vector2(1, 1)), Color(1.0, 0.3, 0.0,  flame_a * 0.25))
-		var col := Color(1, 1, 1, 0.95)
-		var p   := Vector2.ZERO
-		if boosters_gone:
-			rocket.draw_rect(Rect2(p + Vector2(-2, -2), Vector2(2, 2)), col)
-			rocket.draw_rect(Rect2(p + Vector2( 0, -2), Vector2(2, 2)), col)
-			rocket.draw_rect(Rect2(p,                   Vector2(2, 2)), col)
+		var col  := Color(1, 1, 1, 0.95)
+		var p    := Vector2.ZERO
+		var stype: String = ad.get("ship_type", "shuttle")
+		if stype == "station":
+			# Station: 3×3 core + solar panel wings (hidden until boosters gone)
+			var core_col   := Color(0.85, 0.90, 1.0, 0.95)
+			var panel_col  := Color(0.30, 0.60, 1.0, 0.90)
+			rocket.draw_rect(Rect2(p + Vector2(-2, -2), Vector2(6, 6)), core_col)
+			if boosters_gone:
+				# Solar panels extend once boosters are dropped
+				rocket.draw_rect(Rect2(p + Vector2(-8, 0), Vector2(6, 2)), panel_col)
+				rocket.draw_rect(Rect2(p + Vector2( 4, 0), Vector2(6, 2)), panel_col)
 		else:
-			rocket.draw_rect(Rect2(p,                   Vector2(2, 2)), col)
-			rocket.draw_rect(Rect2(p + Vector2(-2,  0), Vector2(2, 2)), col)
-			rocket.draw_rect(Rect2(p + Vector2( 2,  0), Vector2(2, 2)), col)
-			rocket.draw_rect(Rect2(p + Vector2( 0, -2), Vector2(2, 2)), col)
-			rocket.draw_rect(Rect2(p + Vector2( 0,  2), Vector2(2, 2)), col))
+			# Shuttle: slightly larger cross sprite
+			if boosters_gone:
+				rocket.draw_rect(Rect2(p + Vector2(-2, -2), Vector2(2, 2)), col)
+				rocket.draw_rect(Rect2(p + Vector2( 2, -2), Vector2(2, 2)), col)
+				rocket.draw_rect(Rect2(p,                   Vector2(2, 2)), col)
+			else:
+				rocket.draw_rect(Rect2(p,                   Vector2(2, 2)), col)
+				rocket.draw_rect(Rect2(p + Vector2(-2,  0), Vector2(2, 2)), col)
+				rocket.draw_rect(Rect2(p + Vector2( 2,  0), Vector2(2, 2)), col)
+				rocket.draw_rect(Rect2(p + Vector2( 0, -2), Vector2(2, 2)), col)
+				rocket.draw_rect(Rect2(p + Vector2( 0,  2), Vector2(2, 2)), col)
+				# Extra pixel to make it feel slightly bigger than before
+				rocket.draw_rect(Rect2(p + Vector2(-2, -2), Vector2(2, 2)), Color(col, 0.55))
+				rocket.draw_rect(Rect2(p + Vector2( 2, -2), Vector2(2, 2)), Color(col, 0.55)))
 
 	var lbl := Label.new()
 	var eta_secs: int = int(ceil(launch_dur))
@@ -2589,9 +2768,20 @@ func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callabl
 		"hover_active":    false,
 		"on_complete":     on_complete,
 		"sp_pm_key":       sp_pm_key,
+		"ship_name":       ship_name,
+		"ship_type":       ship_type,
+		"ship_cargo":      ship_cargo,
 	}
 	anim_ref.append(anim_d)
 	_rocket_anims.append(anim_d)
+
+	# Make rocket clickable — show a lightweight launch info panel
+	rocket.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
+	rocket.mouse_exited.connect( func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
+	rocket.gui_input.connect(func(ev: InputEvent) -> void:
+		if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed \
+				and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+			_show_launch_info_panel(anim_ref[0], container))
 
 ## Called every _process frame while any rocket animations are active.
 func _tick_rocket_anim(delta: float) -> void:
@@ -2679,7 +2869,9 @@ func _tick_one_rocket(d: Dictionary, delta: float) -> void:
 					-cos(lat_bp)*(d["lat_target"]-d["poi_lat"])
 				).normalized()
 				var perp: Vector2 = Vector2(-vel_dir.y, vel_dir.x)
-				for sp: float in [1.0, -1.0]:
+				var is_station: bool = d.get("ship_type", "shuttle") == "station"
+				var booster_signs: Array = [1.0, -1.0, 0.0, 0.3] if is_station else [1.0, -1.0]
+				for sp: float in booster_signs:
 					# Backward + lateral spread so both boosters separate visibly
 					var vel_px: Vector2 = (-vel_dir * 0.7 + perp * sp * 0.7).normalized() * 10.0
 					var bp_angle: float = atan2(-vel_dir.y, -vel_dir.x)
@@ -2848,46 +3040,22 @@ func _finish_rocket_anim(d: Dictionary) -> void:
 	var orbit_inc:   float
 	var orbit_node:  float
 
-	# Full analytical 3-DOF solve: orbit_angle, orbit_inc, orbit_node
-	# such that position = (tx,ty) AND tangent direction matches sweep direction.
-	#
-	# rdx_raw used only for speed_sign (sweep direction, reliable).
-	var rdx_raw: float = d["sweep_sign"] * cos(lat_final)
-	var rdy_raw: float = ty - (-sin(d["poi_lat"]))   # kept for speed_sign dot product
+	# Simple position-match: orbit_angle encodes the screen position directly.
+	# orbit_node = rot_now so the ship spawns at the exact visual position of the
+	# rocket's endpoint. inc = 0 (equatorial) — avoids the ±π/2 jump from the
+	# previous 3-DOF solution which misplaced ships at low latitudes.
+	orbit_angle = atan2(-ty, tx)   # screen (tx,ty) → angle on equatorial orbit
+	orbit_inc   = 0.0
+	orbit_node  = rot_now          # keep node aligned with planet rotation
 
-	# Orbit angle fixed at ±π/2 based on hemisphere:
-	#   At a = ±π/2, the orbit is at its latitude apex/nadir and velocity is purely horizontal.
-	#   This guarantees sin_inc = |ty| ≤ 1 always — no clamping needed.
-	orbit_angle = PI * 0.5 if ty >= 0.0 else -PI * 0.5
-	var sin_inc: float = absf(ty)
-	var cos_inc: float = sqrt(maxf(0.0, 1.0 - sin_inc * sin_inc))
-	orbit_inc = asin(sin_inc)
-
-	# Solve for orbit_node from position at a = ±π/2:
-	#   rx = sin(a)*cos_inc*sin(R) = ±cos_inc*sin(R) = tx
-	#   → sin(R) = tx / (sign(a)*cos_inc) = sign(ty)*sin(lon_final)
-	# Two solutions (same screen x, opposite orbit orientation):
-	var sign_ty: float = 1.0 if ty >= 0.0 else -1.0
-	var sin_R: float = clampf(sign_ty * sin(lon_final), -1.0, 1.0)
-	var R1: float = asin(sin_R)            # ∈ [-π/2, π/2]
-	var R2: float = PI - R1                # second arc with same sin
-	# vx at a = ±π/2: -sin(a)*cos(R) = -sign_ty*cos(R)
-	# Pick branch so that vx * sweep_sign ≥ 0
-	var R: float = R1 if (-sign_ty * cos(R1) * sweep_s >= 0.0) else R2
-	orbit_node = R - rot_now
-
-	# Verify orbit direction: if (p2-p1) is in the sweep_sign direction, speed is positive.
-	var eff_rot2: float   = rot_now + orbit_node
-	var p1:       Vector2 = _orbital_project_2d(orbit_angle,       orbit_inc, orbit_r, eff_rot2)
-	var p2:       Vector2 = _orbital_project_2d(orbit_angle + 0.002, orbit_inc, orbit_r, eff_rot2)
+	var rdx_raw: float   = d["sweep_sign"] * cos(lat_final)
+	var eff_rot2: float  = rot_now
+	var p1: Vector2      = _orbital_project_2d(orbit_angle,         orbit_inc, orbit_r, eff_rot2)
+	var p2: Vector2      = _orbital_project_2d(orbit_angle + 0.002, orbit_inc, orbit_r, eff_rot2)
 	var speed_sign: float = 1.0 if (p2 - p1).x * rdx_raw >= 0.0 else -1.0
-
-
-
-	print("[ORBIT] lon_final=%.1f° ty=%.3f | a=%.3f inc=%.1f° node=%.1f° R=%.1f° rot_now=%.1f°" % [
-		rad_to_deg(lon_final), ty, orbit_angle,
-		rad_to_deg(orbit_inc), rad_to_deg(orbit_node), rad_to_deg(R), rad_to_deg(rot_now)])
-	var ship := ShipManager.launch(d["planet_seed"], "Shuttle")
+	var ship := ShipManager.launch(d["planet_seed"], d.get("ship_name", "Pioneer"))
+	ship.ship_type         = d.get("ship_type", "shuttle")
+	ship.cargo             = d.get("ship_cargo", {})
 	ship.orbit_angle       = orbit_angle
 	ship.orbit_inclination = orbit_inc
 	ship.orbit_node        = orbit_node
@@ -2900,9 +3068,80 @@ func _finish_rocket_anim(d: Dictionary) -> void:
 	if _orbital_layer != null and is_instance_valid(_orbital_layer):
 		_orbital_layer.queue_redraw()
 
+	# Station: spawn a brief solar-panel deploy animation at insertion point
+	if ship.ship_type == "station" and _orbital_layer != null:
+		_spawn_station_deploy(ship, d["container"])
+
 	var cb: Callable = d["on_complete"]
 	d["_finished"] = true
 	cb.call()
+
+# ── Station deploy animation ──────────────────────────────────────────────────
+
+## Spawns a short solar-panel deploy animation at the ship's initial orbit position.
+func _spawn_station_deploy(ship: ShipData, container: Control) -> void:
+	if _orbital_layer == null or not is_instance_valid(_orbital_layer):
+		return
+	var ctrl := Control.new()
+	ctrl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ctrl.z_index = 10
+	container.add_child(ctrl)
+	var da: Dictionary = {
+		"ship":     ship,
+		"ctrl":     ctrl,
+		"t":        0.0,
+		"duration": 2.2,
+	}
+	ctrl.draw.connect(func() -> void:
+		var sv2 := _orbital_layer._project(ship, ship.orbit_angle)
+		if _orbital_layer._is_occluded(sv2):
+			return
+		var origin: Vector2 = _orbital_layer._planet_center + Vector2(sv2.x, sv2.y)
+		var p2 := ctrl.get_global_transform().affine_inverse() * origin
+		var t2: float = da.get("t", 0.0)
+		var progress: float = clampf(t2 / da["duration"], 0.0, 1.0)
+		var ease_p: float   = ease(progress, -2.0)  # ease-out
+		var alpha: float    = 1.0 - clampf((progress - 0.7) / 0.3, 0.0, 1.0)
+
+		# Core remains visible throughout
+		var core_col := Color(0.85, 0.90, 1.0, alpha)
+		ctrl.draw_rect(Rect2(p2 + Vector2(-2,-2), Vector2(6,6)), core_col)
+
+		# Panels extend outward as progress increases
+		var panel_ext: float = ease_p * 10.0
+		var panel_col2 := Color(0.30, 0.60, 1.0, alpha * 0.85)
+		if panel_ext > 1.0:
+			ctrl.draw_rect(Rect2(p2 + Vector2(-4.0 - panel_ext, 0), Vector2(panel_ext, 2)), panel_col2)
+			ctrl.draw_rect(Rect2(p2 + Vector2( 4.0,             0), Vector2(panel_ext, 2)), panel_col2)
+
+		# Deploy sparks: 4 pixels scatter outward then fade
+		if progress < 0.5:
+			var spark_alpha: float = 1.0 - (progress / 0.5)
+			var spark_col := Color(0.70, 0.88, 1.0, spark_alpha * alpha)
+			var spread: float = ease_p * 14.0
+			for i in 4:
+				var angle: float = (i / 4.0) * TAU + progress * PI
+				var sp: Vector2  = p2 + Vector2(cos(angle), sin(angle)) * spread
+				ctrl.draw_rect(Rect2(sp, Vector2(2, 2)), spark_col)
+		)
+
+	_deploy_anims.append(da)
+
+func _tick_deploy_anims(delta: float) -> void:
+	var done: Array[Dictionary] = []
+	for da: Dictionary in _deploy_anims:
+		da["t"] = da["t"] + delta
+		var ctrl2: Control = da.get("ctrl", null)
+		if not is_instance_valid(ctrl2):
+			done.append(da)
+			continue
+		if da["t"] >= da["duration"]:
+			ctrl2.queue_free()
+			done.append(da)
+		else:
+			ctrl2.queue_redraw()
+	for da: Dictionary in done:
+		_deploy_anims.erase(da)
 
 # ── Toast / build-log notification ───────────────────────────────────────────
 
@@ -3460,26 +3699,45 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 	}
 	return card
 
-## Spaceport card: idle "READY" state with Launch button, or filling progress bar.
+## Spaceport card — phase-driven: idle → configuring → preparing → launch_ready → cooldown.
 func _build_spaceport_card(def: BuildingDef, pm_key: String,
 		pp: PlanetProgress, poi: POIData, entry: Dictionary = {}) -> PanelContainer:
-	var is_ready := ProductionManager.is_user_paused(pm_key)
-	var prog     := ProductionManager.get_progress(pm_key)
+
+	var phase: String = entry.get("phase", "idle")
 
 	var card := PanelContainer.new()
-	var s := _card_panel_style()
-	card.add_theme_stylebox_override("panel", s)
+	card.add_theme_stylebox_override("panel", _card_panel_style())
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	card.clip_contents = true
 
-	var body := MarginContainer.new()
-	body.custom_minimum_size = Vector2(0, 54)
-	card.add_child(body)
+	# Rebuild callback: replaces this card in-place when phase changes.
+	var cap_def := def; var cap_pm := pm_key; var cap_pp := pp
+	var cap_poi := poi; var cap_entry := entry
+	var rebuild_sp := func() -> void:
+		if not is_instance_valid(card):
+			return
+		var par := card.get_parent()
+		if not is_instance_valid(par):
+			return
+		var idx := card.get_index()
+		card.queue_free()
+		var nc := _build_spaceport_card(cap_def, cap_pm, cap_pp, cap_poi, cap_entry)
+		par.add_child(nc)
+		par.move_child(nc, idx)
 
-	# Fill bar: gold while launching (anim progress) or recharging (PM progress)
-	var prog_ref: Array = [prog]
+	# Fill bar — used during "preparing" (cyan) and "cooldown" (gold) phases.
 	var fill_ctrl := Control.new()
 	fill_ctrl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fill_ctrl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	var fill_color := Color(0.15, 0.82, 0.75, 0.25)  # cyan for preparing
+	if phase == "cooldown":
+		fill_color = Color(0.72, 0.52, 0.12, 0.22)
+
+	var edge_color := Color(0.15, 0.95, 0.85, 0.65)
+	if phase == "cooldown":
+		edge_color = Color(0.95, 0.75, 0.25, 0.65)
+
 	var cap_key := pm_key
 	fill_ctrl.draw.connect(func() -> void:
 		if ProductionManager.is_user_paused(cap_key):
@@ -3487,109 +3745,616 @@ func _build_spaceport_card(def: BuildingDef, pm_key: String,
 		var p: float = ProductionManager.get_progress(cap_key)
 		var w: float = fill_ctrl.size.x * p
 		if w > 0.5:
-			fill_ctrl.draw_rect(Rect2(0, 0, w, fill_ctrl.size.y), Color(0.72, 0.52, 0.12, 0.22))
-			fill_ctrl.draw_rect(Rect2(w - 2.0, 0, 2.0, fill_ctrl.size.y), Color(0.95, 0.75, 0.25, 0.65)))
-	body.add_child(fill_ctrl)
+			fill_ctrl.draw_rect(Rect2(0, 0, w, fill_ctrl.size.y), fill_color)
+			fill_ctrl.draw_rect(Rect2(w - 2.0, 0, 2.0, fill_ctrl.size.y), edge_color))
+
+	# ── Layout ────────────────────────────────────────────────────────────────
+	var stack := Control.new()  # fill bar + content overlap
+	stack.custom_minimum_size = Vector2(0, 56)
+	stack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.add_child(stack)
+
+	stack.add_child(fill_ctrl)
 
 	var margin := MarginContainer.new()
+	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	margin.add_theme_constant_override("margin_left",   10)
 	margin.add_theme_constant_override("margin_right",   8)
 	margin.add_theme_constant_override("margin_top",     7)
 	margin.add_theme_constant_override("margin_bottom",  7)
 	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	body.add_child(margin)
+	stack.add_child(margin)
 
 	var hbox := HBoxContainer.new()
 	hbox.add_theme_constant_override("separation", 8)
 	margin.add_child(hbox)
 
-	# Left: name + status
-	var vbox := VBoxContainer.new()
-	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	vbox.add_theme_constant_override("separation", 2)
-	hbox.add_child(vbox)
+	var left_vbox := VBoxContainer.new()
+	left_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left_vbox.add_theme_constant_override("separation", 2)
+	hbox.add_child(left_vbox)
 
 	var name_lbl := Label.new()
 	name_lbl.text = def.display_name
 	_apply_orbitron(name_lbl, 10)
 	name_lbl.add_theme_color_override("font_color", Color(0.85, 0.92, 1.0))
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vbox.add_child(name_lbl)
+	left_vbox.add_child(name_lbl)
 
-	var status_lbl := Label.new()
-	status_lbl.text = "–8 ⚡   Ready to launch"
-	_apply_orbitron(status_lbl, 8)
-	status_lbl.add_theme_color_override("font_color", Color(0.45, 0.65, 0.95, 0.70))
-	status_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vbox.add_child(status_lbl)
+	# ── Phase-specific content ─────────────────────────────────────────────────
+	match phase:
+		"idle":
+			_sp_build_idle(left_vbox, hbox, def, pm_key, pp, poi, entry, rebuild_sp)
+		"configuring":
+			_sp_build_config(card, stack, left_vbox, hbox, def, pm_key, pp, poi, entry, rebuild_sp)
+		"preparing":
+			_sp_build_progress(left_vbox, hbox, pm_key, entry,
+				"Preparing…", Color(0.15, 0.88, 0.75, 0.85))
+		"launch_ready":
+			_sp_build_launch_ready(left_vbox, hbox, def, pm_key, pp, poi, entry, rebuild_sp)
+		"cooldown":
+			_sp_build_progress(left_vbox, hbox, pm_key, entry,
+				"Recharging…", Color(0.85, 0.65, 0.20, 0.80))
 
-	# Right: Launch button
-	var cap_poi      := poi
-	var cap_pp       := pp
-	var launch_btn   := Button.new()
-	launch_btn.text  = "Launch"
-	_apply_orbitron(launch_btn, 9)
-	var btn_style := StyleBoxFlat.new()
-	btn_style.bg_color     = Color(0.12, 0.28, 0.55, 0.90)
-	btn_style.border_color = Color(0.35, 0.65, 1.0, 0.80)
-	btn_style.set_border_width_all(1)
-	btn_style.set_corner_radius_all(4)
-	btn_style.content_margin_left  = 10
-	btn_style.content_margin_right = 10
-	btn_style.content_margin_top   = 4
-	btn_style.content_margin_bottom = 4
-	launch_btn.add_theme_stylebox_override("normal",  btn_style)
-	launch_btn.add_theme_stylebox_override("hover",   btn_style)
-	launch_btn.add_theme_stylebox_override("pressed", btn_style)
-	launch_btn.add_theme_color_override("font_color", Color(0.65, 0.88, 1.0))
-	launch_btn.custom_minimum_size = Vector2(90, 0)
-
-	var cap_pm_key  := pm_key
-	var cap_entry   := entry
-
-	# Restore button state from persistent entry flags if panel was rebuilt mid-flight
-	if entry.get("launching", false):
-		launch_btn.text     = "Launching…"
-		launch_btn.disabled = true
-	elif not is_ready:
-		launch_btn.text     = "Cooldown…"
-		launch_btn.disabled = true
-
-	launch_btn.pressed.connect(func() -> void:
-		if not launch_btn.disabled:
-			launch_btn.text        = "Cooldown…"
-			launch_btn.disabled    = true
-			cap_pp.has_spaceport   = true
-			# Mark cooldown_only so SpaceportLogic.produce() skips ship creation —
-			# we create the ship ourselves at animation end via _finish_rocket_anim.
-			cap_entry["cooldown_only"] = true
-			# Start PM cooldown immediately — bar fills in parallel with animation.
-			if ProductionManager.is_user_paused(cap_pm_key):
-				ProductionManager.toggle_user_pause(cap_pm_key)
-			# Animation is purely visual; completion creates the ship orbit data.
-			_play_rocket_animation(cap_pp.planet_seed, cap_poi, func() -> void:
-				pass  # ship already created by _finish_rocket_anim
-			, cap_pm_key))
-
-	launch_btn.mouse_entered.connect(func() -> void:
-		if not launch_btn.disabled:
-			CursorManager.set_state(CursorManager.State.POINTER))
-	launch_btn.mouse_exited.connect(func() -> void:
-		CursorManager.set_state(CursorManager.State.NORMAL))
-
-	hbox.add_child(launch_btn)
-
-	# Register in _bar_meta so _on_building_ticked_night drives queue_redraw automatically
 	_bar_meta[pm_key] = {
+		"spaceport":   true,
 		"fill":        fill_ctrl,
-		"prog":        prog_ref,
 		"planet_seed": pp.planet_seed,
-		"launch_btn":  launch_btn,
-		"status_lbl":  status_lbl,
 		"sp_entry":    entry,
+		"rebuild_sp":  rebuild_sp,
+		"last_phase":  phase,
 	}
 
 	return card
+
+## Helper: generate next ship name (Pioneer I, II, …) based on how many ships exist.
+func _sp_next_ship_name(planet_seed: int) -> String:
+	var n := ShipManager.ships_for(planet_seed).size() + 1
+	return "Pioneer " + _roman_numeral(n)
+
+func _roman_numeral(n: int) -> String:
+	const NUMS := [1000,900,500,400,100,90,50,40,10,9,5,4,1]
+	const SYMS := ["M","CM","D","CD","C","XC","L","XL","X","IX","V","IV","I"]
+	var r := ""
+	for i in NUMS.size():
+		while n >= NUMS[i]:
+			r += SYMS[i]
+			n -= NUMS[i]
+	return r
+
+## Shared button style for spaceport actions.
+func _sp_btn_style(bg: Color, border: Color) -> StyleBoxFlat:
+	var s := StyleBoxFlat.new()
+	s.bg_color     = bg
+	s.border_color = border
+	s.set_border_width_all(1)
+	s.set_corner_radius_all(4)
+	s.content_margin_left   = 10
+	s.content_margin_right  = 10
+	s.content_margin_top    = 4
+	s.content_margin_bottom = 4
+	return s
+
+## Idle phase: "Prep Launch" button.
+func _sp_build_idle(left_vbox: VBoxContainer, hbox: HBoxContainer,
+		_def: BuildingDef, pm_key: String, pp: PlanetProgress,
+		_poi: POIData, entry: Dictionary, rebuild_sp: Callable) -> void:
+	var status := Label.new()
+	status.text = "Ready"
+	_apply_orbitron(status, 8)
+	status.add_theme_color_override("font_color", Color(0.35, 0.90, 0.55, 0.80))
+	status.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	left_vbox.add_child(status)
+
+	var btn := Button.new()
+	btn.text = "Prep Launch"
+	_apply_orbitron(btn, 9)
+	var bs := _sp_btn_style(Color(0.10, 0.22, 0.42, 0.90), Color(0.30, 0.60, 1.0, 0.75))
+	btn.add_theme_stylebox_override("normal",  bs)
+	btn.add_theme_stylebox_override("hover",   bs)
+	btn.add_theme_stylebox_override("pressed", bs)
+	btn.add_theme_color_override("font_color", Color(0.60, 0.88, 1.0))
+	btn.custom_minimum_size = Vector2(100, 0)
+	btn.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
+	btn.mouse_exited.connect( func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
+	btn.pressed.connect(func() -> void:
+		entry["phase"] = "configuring"
+		entry["ship_name"] = _sp_next_ship_name(pp.planet_seed)
+		entry["ship_type"] = "shuttle"
+		_bar_meta.erase(pm_key)  # will be replaced by rebuild
+		rebuild_sp.call())
+	hbox.add_child(btn)
+
+## Config phase: ship name + type selection.
+func _sp_cargo_capacity(ship_type: String) -> int:
+	match ship_type:
+		"station": return 60
+		_:         return 20
+
+func _sp_cargo_used(entry: Dictionary) -> int:
+	var total := 0
+	for res_id: String in entry.get("cargo", {}):
+		var rd: ResourceData = GameState.known_resources.get(res_id, null)
+		if rd != null:
+			total += (rd.rarity + rd.tier - 1) * int(entry["cargo"][res_id])
+	return total
+
+func _sp_build_config(_card: PanelContainer, stack: Control, left_vbox: VBoxContainer,
+		_hbox: HBoxContainer, _def: BuildingDef, pm_key: String, pp: PlanetProgress,
+		_poi: POIData, entry: Dictionary, rebuild_sp: Callable) -> void:
+
+	# Station limit check — 1 station per planet (SkillTree-upgradeable later)
+	var station_count: int = 0
+	for s: ShipData in ShipManager.ships_for(pp.planet_seed):
+		if s.ship_type == "station":
+			station_count += 1
+	var station_locked: bool = station_count >= 1
+	if station_locked and entry.get("ship_type", "shuttle") == "station":
+		entry["ship_type"] = "shuttle"
+
+	# Config height: title + name + type + cargo header + one grid row (56px) + bottom row
+	stack.custom_minimum_size = Vector2(0, 230)
+	left_vbox.add_theme_constant_override("separation", 4)
+
+	var sub := Label.new()
+	sub.text = "Mission Configuration"
+	_apply_orbitron(sub, 7)
+	sub.add_theme_color_override("font_color", Color(0.50, 0.70, 1.0, 0.60))
+	sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	left_vbox.add_child(sub)
+
+	# ── Name row ────────────────────────────────────────────────────────────
+	var name_row := HBoxContainer.new()
+	name_row.add_theme_constant_override("separation", 6)
+	left_vbox.add_child(name_row)
+
+	var name_hint := Label.new()
+	name_hint.text = "Name"
+	_apply_orbitron(name_hint, 7)
+	name_hint.add_theme_color_override("font_color", Color(0.50, 0.62, 0.82, 0.70))
+	name_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	name_hint.custom_minimum_size = Vector2(32, 0)
+	name_row.add_child(name_hint)
+
+	var name_edit := LineEdit.new()
+	name_edit.text = entry.get("ship_name", _sp_next_ship_name(pp.planet_seed))
+	name_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_edit.add_theme_font_size_override("font_size", 9)
+	name_edit.add_theme_color_override("font_color", Color(0.90, 0.92, 1.0))
+	var le_style := StyleBoxFlat.new()
+	le_style.bg_color = Color(0.07, 0.09, 0.18, 0.90)
+	le_style.border_color = Color(0.22, 0.42, 0.75, 0.55)
+	le_style.set_border_width_all(1); le_style.set_corner_radius_all(3)
+	le_style.content_margin_left = 5; le_style.content_margin_right = 5
+	le_style.content_margin_top = 3; le_style.content_margin_bottom = 3
+	name_edit.add_theme_stylebox_override("normal", le_style)
+	name_edit.add_theme_stylebox_override("focus",  le_style)
+	name_edit.text_changed.connect(func(t: String) -> void: entry["ship_name"] = t)
+	name_row.add_child(name_edit)
+
+	# ── Type row ─────────────────────────────────────────────────────────────
+	var type_row := HBoxContainer.new()
+	type_row.add_theme_constant_override("separation", 5)
+	left_vbox.add_child(type_row)
+
+	var type_hint := Label.new()
+	type_hint.text = "Type"
+	_apply_orbitron(type_hint, 7)
+	type_hint.add_theme_color_override("font_color", Color(0.50, 0.62, 0.82, 0.70))
+	type_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	type_hint.custom_minimum_size = Vector2(32, 0)
+	type_row.add_child(type_hint)
+
+	for ttype in ["shuttle", "station"]:
+		var tb := Button.new()
+		tb.text = ttype.capitalize()
+		_apply_orbitron(tb, 7)
+		var is_sel: bool = (entry.get("ship_type", "shuttle") == ttype)
+		var is_locked: bool = (ttype == "station" and station_locked)
+		var tbg := Color(0.10, 0.28, 0.50, 0.95) if is_sel else Color(0.05, 0.07, 0.15, 0.75)
+		if is_locked:
+			tbg = Color(0.08, 0.08, 0.12, 0.60)
+		var tbs := _sp_btn_style(tbg, Color(0.35, 0.65, 1.0, 0.65 if is_sel else (0.15 if is_locked else 0.28)))
+		tb.add_theme_stylebox_override("normal", tbs)
+		tb.add_theme_stylebox_override("hover",  tbs)
+		tb.add_theme_color_override("font_color",
+			Color(0.75, 0.92, 1.0) if is_sel else (Color(0.35, 0.38, 0.45) if is_locked else Color(0.45, 0.60, 0.80)))
+		tb.custom_minimum_size = Vector2(54, 0)
+		tb.disabled = is_locked
+		if not is_locked:
+			tb.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
+			tb.mouse_exited.connect( func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
+		var cap_t: String = ttype
+		tb.pressed.connect(func() -> void:
+			entry["ship_type"] = cap_t
+			entry.erase("cargo")  # reset cargo when type changes (capacity differs)
+			rebuild_sp.call())
+		type_row.add_child(tb)
+
+	if station_locked:
+		var lock_lbl := Label.new()
+		lock_lbl.text = " (limit 1)"
+		_apply_orbitron(lock_lbl, 6)
+		lock_lbl.add_theme_color_override("font_color", Color(0.55, 0.35, 0.35, 0.70))
+		lock_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		type_row.add_child(lock_lbl)
+
+	# ── Cargo section ────────────────────────────────────────────────────────
+	var sep := HSeparator.new()
+	left_vbox.add_child(sep)
+
+	var capacity := _sp_cargo_capacity(entry.get("ship_type", "shuttle"))
+	var used     := _sp_cargo_used(entry)
+
+	var cargo_hdr := HBoxContainer.new()
+	cargo_hdr.add_theme_constant_override("separation", 6)
+	left_vbox.add_child(cargo_hdr)
+
+	var cargo_title := Label.new()
+	cargo_title.text = "Cargo"
+	_apply_orbitron(cargo_title, 7)
+	cargo_title.add_theme_color_override("font_color", Color(0.60, 0.72, 0.92, 0.75))
+	cargo_title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cargo_hdr.add_child(cargo_title)
+
+	# Capacity bar
+	var cap_bar := Control.new()
+	cap_bar.custom_minimum_size = Vector2(55, 6)
+	cap_bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	cap_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var cap_used_ref: Array[int] = [used]; var cap_total_ref: Array[int] = [capacity]
+	cap_bar.draw.connect(func() -> void:
+		var w := cap_bar.size.x; var h := cap_bar.size.y
+		cap_bar.draw_rect(Rect2(0, 0, w, h), Color(0.10, 0.12, 0.20, 0.85))
+		var fill := minf(float(cap_used_ref[0]) / float(cap_total_ref[0]), 1.0) * w
+		var fc := Color(0.32, 0.82, 0.52) if cap_used_ref[0] <= cap_total_ref[0] else Color(0.90, 0.35, 0.25)
+		if fill > 0.5:
+			cap_bar.draw_rect(Rect2(0, 0, fill, h), Color(fc, 0.80))
+		cap_bar.draw_rect(Rect2(0, 0, w, h), Color(0.30, 0.42, 0.62, 0.45), false, 1.0))
+	cargo_hdr.add_child(cap_bar)
+
+	var cap_lbl := Label.new()
+	cap_lbl.text = "%d / %d" % [used, capacity]
+	_apply_orbitron(cap_lbl, 6)
+	cap_lbl.add_theme_color_override("font_color",
+		Color(0.45, 0.88, 0.58) if used <= capacity else Color(0.95, 0.40, 0.30))
+	cap_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cargo_hdr.add_child(cap_lbl)
+
+	# ── Cargo grid (inventory-style squares) + Add button ────────────────────
+	var cargo: Dictionary = entry.get("cargo", {})
+	var cargo_row := HBoxContainer.new()
+	cargo_row.add_theme_constant_override("separation", 4)
+	left_vbox.add_child(cargo_row)
+
+	for res_id: String in cargo:
+		var rd: ResourceData = GameState.known_resources.get(res_id, null)
+		if rd == null: continue
+		var sq := _mineral_grid_card(rd, float(cargo[res_id]), true)
+		sq.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
+		sq.mouse_exited.connect( func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
+		var cap_rid2 := res_id
+		sq.gui_input.connect(func(ev: InputEvent) -> void:
+			if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed \
+					and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_RIGHT:
+				entry["cargo"].erase(cap_rid2)
+				rebuild_sp.call())
+		# Tooltip shows name + weight
+		var rd2: ResourceData = GameState.known_resources.get(res_id, null)
+		if rd2 != null:
+			sq.tooltip_text = "%s  (%dw/unit)" % [rd2.unique_name, rd2.rarity + rd2.tier]
+		cargo_row.add_child(sq)
+
+	# "+" add button (square, same size as inventory cards)
+	if used < capacity:
+		var add_sq := Button.new()
+		add_sq.text = "+"
+		_apply_orbitron(add_sq, 14)
+		add_sq.custom_minimum_size = Vector2(52, 52)
+		var add_style := StyleBoxFlat.new()
+		add_style.bg_color     = Color(0.07, 0.10, 0.20, 0.80)
+		add_style.border_color = Color(0.28, 0.45, 0.75, 0.45)
+		add_style.set_border_width_all(2); add_style.set_corner_radius_all(5)
+		add_sq.add_theme_stylebox_override("normal", add_style)
+		add_sq.add_theme_stylebox_override("hover",  add_style)
+		add_sq.add_theme_color_override("font_color", Color(0.45, 0.72, 1.0, 0.70))
+		add_sq.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
+		add_sq.mouse_exited.connect( func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
+		add_sq.pressed.connect(func() -> void:
+			_sp_show_cargo_popup(entry, pp, capacity, rebuild_sp))
+		cargo_row.add_child(add_sq)
+
+	# ── Bottom row: Cancel / Start Prep ─────────────────────────────────────
+	var bottom_row := HBoxContainer.new()
+	bottom_row.add_theme_constant_override("separation", 6)
+	left_vbox.add_child(bottom_row)
+
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bottom_row.add_child(spacer)
+
+	var cancel_btn := Button.new()
+	cancel_btn.text = "Cancel"
+	_apply_orbitron(cancel_btn, 7)
+	var cbs := _sp_btn_style(Color(0.10, 0.07, 0.12, 0.80), Color(0.48, 0.28, 0.32, 0.55))
+	cancel_btn.add_theme_stylebox_override("normal", cbs)
+	cancel_btn.add_theme_stylebox_override("hover",  cbs)
+	cancel_btn.add_theme_color_override("font_color", Color(0.80, 0.50, 0.52))
+	cancel_btn.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
+	cancel_btn.mouse_exited.connect( func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
+	cancel_btn.pressed.connect(func() -> void:
+		entry["phase"] = "idle"
+		entry.erase("cargo")
+		_bar_meta.erase(pm_key)
+		rebuild_sp.call())
+	bottom_row.add_child(cancel_btn)
+
+	var confirm_btn := Button.new()
+	confirm_btn.text = "Start Prep"
+	_apply_orbitron(confirm_btn, 7)
+	var fbs := _sp_btn_style(Color(0.07, 0.28, 0.16, 0.92), Color(0.22, 0.78, 0.42, 0.75))
+	confirm_btn.add_theme_stylebox_override("normal", fbs)
+	confirm_btn.add_theme_stylebox_override("hover",  fbs)
+	confirm_btn.add_theme_color_override("font_color", Color(0.35, 0.95, 0.58))
+	confirm_btn.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
+	confirm_btn.mouse_exited.connect( func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
+	confirm_btn.pressed.connect(func() -> void:
+		# Deduct cargo from planet storage upfront
+		var src_pp := GameState.get_planet(pp.planet_seed)
+		if src_pp != null:
+			for res_id2: String in entry.get("cargo", {}):
+				src_pp.stored_resources[res_id2] = maxf(0.0,
+					src_pp.stored_resources.get(res_id2, 0.0) - float(entry["cargo"][res_id2]))
+		entry["phase"] = "preparing"
+		entry["effective_duration"] = 20.0
+		entry.erase("cooldown_only")
+		_bar_meta.erase(pm_key)  # erase before toggle so signal handler ignores this key
+		if ProductionManager.is_user_paused(pm_key):
+			ProductionManager.toggle_user_pause(pm_key)
+		rebuild_sp.call())
+	bottom_row.add_child(confirm_btn)
+
+## Progress bar view — used for both "preparing" and "cooldown" phases.
+func _sp_build_progress(left_vbox: VBoxContainer, _hbox: HBoxContainer,
+		_pm_key: String, entry: Dictionary, label_text: String, lbl_color: Color) -> void:
+	var ship_desc: String = entry.get("ship_name", "")
+	if ship_desc == "":
+		ship_desc = label_text
+	else:
+		ship_desc = label_text + "  " + ship_desc
+
+	var status := Label.new()
+	status.text = ship_desc
+	_apply_orbitron(status, 8)
+	status.add_theme_color_override("font_color", lbl_color)
+	status.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	left_vbox.add_child(status)
+
+## Launch-ready phase: prominent Launch button.
+func _sp_build_launch_ready(left_vbox: VBoxContainer, hbox: HBoxContainer,
+		_def: BuildingDef, pm_key: String, pp: PlanetProgress,
+		poi: POIData, entry: Dictionary, rebuild_sp: Callable) -> void:
+	var ship_name: String = entry.get("ship_name", "Shuttle")
+	var status := Label.new()
+	status.text = ship_name + " — ready"
+	_apply_orbitron(status, 8)
+	status.add_theme_color_override("font_color", Color(0.35, 0.95, 0.55, 0.90))
+	status.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	left_vbox.add_child(status)
+
+	var btn := Button.new()
+	btn.text = "Launch ▶"
+	_apply_orbitron(btn, 9)
+	var bs := _sp_btn_style(Color(0.08, 0.30, 0.15, 0.92), Color(0.20, 0.85, 0.40, 0.80))
+	btn.add_theme_stylebox_override("normal",  bs)
+	btn.add_theme_stylebox_override("hover",   bs)
+	btn.add_theme_stylebox_override("pressed", bs)
+	btn.add_theme_color_override("font_color", Color(0.35, 0.98, 0.55))
+	btn.custom_minimum_size = Vector2(90, 0)
+	btn.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
+	btn.mouse_exited.connect( func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
+
+	var cap_pp := pp; var cap_poi := poi; var cap_entry := entry
+	btn.pressed.connect(func() -> void:
+		btn.text     = "Launching…"
+		btn.disabled = true
+		cap_pp.has_spaceport = true
+		cap_entry["cooldown_only"] = true
+		cap_entry["phase"] = "cooldown"
+		cap_entry.erase("effective_duration")
+		_bar_meta.erase(pm_key)  # erase before toggle so signal handler ignores this key
+		if ProductionManager.is_user_paused(pm_key):
+			ProductionManager.toggle_user_pause(pm_key)
+		rebuild_sp.call()
+		_play_rocket_animation(cap_pp.planet_seed, cap_poi, func() -> void: pass,
+			pm_key,
+			cap_entry.get("ship_name", "Pioneer"),
+			cap_entry.get("ship_type", "shuttle"),
+			cap_entry.get("cargo", {})))
+
+	hbox.add_child(btn)
+
+## Cargo resource selector popup — floating panel over the container.
+func _sp_show_cargo_popup(entry: Dictionary, pp: PlanetProgress,
+		capacity: int, rebuild_sp: Callable) -> void:
+	var container: Control = planet_renderer.get_parent()
+
+	# Full-screen overlay
+	var overlay := Control.new()
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.z_index = 60
+	container.add_child(overlay)
+
+	var close_popup := func() -> void:
+		overlay.queue_free()
+		rebuild_sp.call()
+
+	# Dim backdrop
+	var dim := Control.new()
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	dim.draw.connect(func() -> void:
+		dim.draw_rect(Rect2(Vector2.ZERO, dim.size), Color(0, 0, 0, 0.55)))
+	dim.gui_input.connect(func(ev: InputEvent) -> void:
+		if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed:
+			close_popup.call())
+	overlay.add_child(dim)
+
+	# Popup panel
+	var panel := PanelContainer.new()
+	panel.z_index = 1
+	var ps := StyleBoxFlat.new()
+	ps.bg_color = Color(0.06, 0.08, 0.16, 0.97)
+	ps.border_color = Color(0.28, 0.48, 0.80, 0.70)
+	ps.set_border_width_all(1); ps.set_corner_radius_all(6)
+	panel.add_theme_stylebox_override("panel", ps)
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	# Center in overlay
+	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	panel.custom_minimum_size = Vector2(260, 0)
+	overlay.add_child(panel)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left",  10)
+	margin.add_theme_constant_override("margin_right", 10)
+	margin.add_theme_constant_override("margin_top",    8)
+	margin.add_theme_constant_override("margin_bottom", 8)
+	panel.add_child(margin)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 5)
+	margin.add_child(vbox)
+
+	# Header
+	var hdr := HBoxContainer.new()
+	hdr.add_theme_constant_override("separation", 6)
+	vbox.add_child(hdr)
+
+	var hdr_lbl := Label.new()
+	hdr_lbl.text = "Add Cargo"
+	_apply_orbitron(hdr_lbl, 9)
+	hdr_lbl.add_theme_color_override("font_color", Color(0.75, 0.88, 1.0))
+	hdr_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hdr_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hdr.add_child(hdr_lbl)
+
+	var used_now := _sp_cargo_used(entry)
+	var cap_lbl2 := Label.new()
+	cap_lbl2.text = "%d/%d" % [used_now, capacity]
+	_apply_orbitron(cap_lbl2, 7)
+	cap_lbl2.add_theme_color_override("font_color",
+		Color(0.40, 0.88, 0.55) if used_now <= capacity else Color(0.95, 0.38, 0.28))
+	cap_lbl2.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hdr.add_child(cap_lbl2)
+
+	vbox.add_child(HSeparator.new())
+
+	# ── Build resource list ───────────────────────────────────────────────────
+	var available_res2: Array[String] = []
+	for res_id: String in pp.stored_resources:
+		if pp.stored_resources[res_id] >= 1.0 and GameState.known_resources.has(res_id):
+			available_res2.append(res_id)
+	available_res2.sort()
+
+	if available_res2.is_empty():
+		var no_res := Label.new()
+		no_res.text = "No resources in storage"
+		_apply_orbitron(no_res, 7)
+		no_res.add_theme_color_override("font_color", Color(0.45, 0.50, 0.60, 0.65))
+		no_res.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		vbox.add_child(no_res)
+	else:
+		# ── Dropdown ─────────────────────────────────────────────────────────
+		var dropdown := OptionButton.new()
+		_apply_orbitron(dropdown, 8)
+		dropdown.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		vbox.add_child(dropdown)
+
+		for res_id: String in available_res2:
+			var rd: ResourceData = GameState.known_resources[res_id]
+			var avail_amt: int = int(pp.stored_resources.get(res_id, 0.0))
+			var wt: int = rd.rarity + rd.tier - 1
+			dropdown.add_item("%s  (stk:%d  %dw)" % [rd.unique_name, avail_amt, wt])
+
+		# ── Slider row ───────────────────────────────────────────────────────
+		var slider_row := HBoxContainer.new()
+		slider_row.add_theme_constant_override("separation", 8)
+		vbox.add_child(slider_row)
+
+		var slider := HSlider.new()
+		slider.min_value = 1
+		slider.max_value = 1
+		slider.step      = 1
+		slider.value     = 1
+		slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		slider_row.add_child(slider)
+
+		var amt_lbl3 := Label.new()
+		amt_lbl3.text = "1"
+		_apply_orbitron(amt_lbl3, 9)
+		amt_lbl3.custom_minimum_size = Vector2(28, 0)
+		amt_lbl3.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		amt_lbl3.add_theme_color_override("font_color", Color(0.92, 0.95, 1.0))
+		amt_lbl3.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		slider_row.add_child(amt_lbl3)
+
+		# Info label: stock + weight per unit
+		var info_lbl := Label.new()
+		info_lbl.text = ""
+		_apply_orbitron(info_lbl, 6)
+		info_lbl.add_theme_color_override("font_color", Color(0.42, 0.55, 0.75, 0.65))
+		info_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		vbox.add_child(info_lbl)
+
+		# Shared state for callbacks
+		var sel_res_id: Array[String] = [available_res2[0]]
+
+		var update_slider := func() -> void:
+			var rid: String = sel_res_id[0]
+			var rd2: ResourceData = GameState.known_resources.get(rid, null)
+			if rd2 == null: return
+			var avail2: int  = int(pp.stored_resources.get(rid, 0.0))
+			var wt2: int     = rd2.rarity + rd2.tier - 1
+			var cur_used2: int = _sp_cargo_used(entry)
+			var free_weight: int = capacity - cur_used2
+			var max_by_weight: int = free_weight / max(wt2, 1)
+			var max_amt: int = min(avail2, max_by_weight)
+			slider.max_value = max(max_amt, 1)
+			slider.value     = clamp(slider.value, 1, slider.max_value)
+			amt_lbl3.text = str(int(slider.value))
+			info_lbl.text = "stock: %d  |  %dw/unit  |  fits: %d" % [avail2, wt2, max_amt]
+			slider.editable = max_amt >= 1
+
+		dropdown.item_selected.connect(func(idx: int) -> void:
+			sel_res_id[0] = available_res2[idx]
+			update_slider.call())
+
+		slider.value_changed.connect(func(_v: float) -> void:
+			amt_lbl3.text = str(int(slider.value)))
+
+		update_slider.call()
+
+		vbox.add_child(HSeparator.new())
+
+		# ── Add button ────────────────────────────────────────────────────────
+		var add_btn2 := Button.new()
+		add_btn2.text = "Add to Cargo"
+		_apply_orbitron(add_btn2, 8)
+		var abs3 := _sp_btn_style(Color(0.07, 0.22, 0.12, 0.92), Color(0.22, 0.72, 0.38, 0.75))
+		add_btn2.add_theme_stylebox_override("normal", abs3)
+		add_btn2.add_theme_stylebox_override("hover",  abs3)
+		add_btn2.add_theme_color_override("font_color", Color(0.38, 0.95, 0.55))
+		add_btn2.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
+		add_btn2.mouse_exited.connect( func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
+		add_btn2.pressed.connect(func() -> void:
+			var rid2: String = sel_res_id[0]
+			var amt2: int    = int(slider.value)
+			if not entry.has("cargo"): entry["cargo"] = {}
+			entry["cargo"][rid2] = entry["cargo"].get(rid2, 0) + amt2
+			close_popup.call())
+		vbox.add_child(add_btn2)
 
 ## Empty slot card — shows "+" and opens a build dropdown on click.
 func _build_slot_card(poi: POIData, planet: PlanetData, pp: PlanetProgress,
@@ -4085,6 +4850,50 @@ func _build_district_panel(poi: POIData, planet: PlanetData) -> void:
 		root.add_child(_build_slot_card(poi, planet, pp, root, si))
 
 	panel_content.add_child(root)
+
+## Opens a district-style build panel for an orbiting station.
+func _open_station_district(ship: ShipData, _planet_cont: Control) -> void:
+	if current_data == null: return
+	# Build a synthetic POI that represents the station
+	var poi := POIData.new()
+	poi.label    = ship.ship_name
+	poi.poi_type = POIData.POIType.STATION
+	poi.level    = 1
+
+	# Ensure ship buildings are mirrored into pp.buildings under this district id
+	var pp := GameState.get_planet(ship.orbit_seed)
+	if pp == null: return
+
+	# Remove any stale entries for this station district, then re-add from ship.buildings
+	var kept: Array[Dictionary] = []
+	for b2: Dictionary in pp.buildings:
+		if b2.get("district_id", "") != ship.ship_name:
+			kept.append(b2)
+	pp.buildings = kept
+	for b in ship.buildings:
+		if b is Dictionary:
+			var entry: Dictionary = (b as Dictionary).duplicate()
+			entry["district_id"] = ship.ship_name
+			pp.buildings.append(entry)
+
+	# Hook: keep ship.buildings in sync when the district panel modifies pp.buildings
+	# (handled by storing ship ref in _active_station_ship and syncing in _on_building_constructed)
+	_active_station_ship = ship
+
+	_build_district_panel(poi, current_data)
+
+var _active_station_ship: ShipData = null
+
+func _sync_station_buildings() -> void:
+	if _active_station_ship == null or not is_instance_valid(_active_station_ship):
+		return
+	var pp := GameState.get_planet(_active_station_ship.orbit_seed)
+	if pp == null: return
+	var dist_id: String = _active_station_ship.ship_name
+	_active_station_ship.buildings.clear()
+	for b: Dictionary in pp.buildings:
+		if b.get("district_id", "") == dist_id:
+			_active_station_ship.buildings.append(b)
 
 func _on_seed_clicked(event: InputEvent, s: int) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:

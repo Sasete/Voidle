@@ -12,7 +12,8 @@ enum OutputType { NONE, ENERGY, CREDITS, RAW_MINERAL, REFINED_MINERAL }
 @export var min_planet_lv:     int      = 1
 
 ## Production
-@export var tick_duration:     float      = 30.0   # seconds to fill bar
+@export var construct_duration: float     = 0.0    # build time; 0 = use tick_duration
+@export var tick_duration:     float      = 30.0   # seconds to fill production bar
 @export var energy_per_tick:   float      = 0.0    # negative = consume, positive = produce
 @export var output_type:       OutputType = OutputType.NONE
 @export var output_amount:     float      = 0.0

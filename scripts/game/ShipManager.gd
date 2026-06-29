@@ -4,6 +4,7 @@ extends Node
 
 signal ship_changed(ship: ShipData)   # orbit angle updated or state changed
 signal ship_arrived(ship: ShipData)   # reached destination
+signal ship_added(ship: ShipData)     # new ship placed in orbit
 
 ## { planet_seed -> Array[ShipData] }
 var _ships: Dictionary = {}
@@ -47,6 +48,7 @@ func add_ship(ship: ShipData) -> void:
 		_ships[ship.orbit_seed] = []
 	(_ships[ship.orbit_seed] as Array).append(ship)
 	ship_changed.emit(ship)
+	ship_added.emit(ship)
 
 func remove_ship(planet_seed: int, ship_id: String) -> void:
 	if not _ships.has(planet_seed):

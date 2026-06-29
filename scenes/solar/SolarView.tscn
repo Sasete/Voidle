@@ -41,7 +41,8 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="RightPanel" type="PanelContainer" parent="." unique_id=401181337]
+[node name="UICanvas" type="CanvasLayer" parent="."]
+[node name="RightPanel" type="PanelContainer" parent="UICanvas" unique_id=401181337]
 layout_mode = 1
 anchors_preset = -1
 anchor_left = 0.72
@@ -52,28 +53,28 @@ z_as_relative = false
 z_index = 200
 theme_override_styles/panel = SubResource("StyleBoxFlat_panel")
 
-[node name="PanelContent" type="VBoxContainer" parent="RightPanel" unique_id=1342141614]
+[node name="PanelContent" type="VBoxContainer" parent="UICanvas/RightPanel" unique_id=1342141614]
 layout_mode = 2
 theme_override_constants/separation = 3
 
-[node name="SystemName" type="Label" parent="RightPanel/PanelContent" unique_id=473665898]
+[node name="SystemName" type="Label" parent="UICanvas/RightPanel/PanelContent" unique_id=473665898]
 layout_mode = 2
 theme_override_fonts/font = ExtResource("2_orbitron")
 theme_override_font_sizes/font_size = 18
 text = "System Name"
 
-[node name="StarType" type="Label" parent="RightPanel/PanelContent" unique_id=226972663]
+[node name="StarType" type="Label" parent="UICanvas/RightPanel/PanelContent" unique_id=226972663]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.55, 0.60, 0.75, 0.8)
 theme_override_fonts/font = ExtResource("2_orbitron")
 theme_override_font_sizes/font_size = 11
 text = "Yellow Dwarf"
 
-[node name="PlanetList" type="VBoxContainer" parent="RightPanel/PanelContent" unique_id=52620883]
+[node name="PlanetList" type="VBoxContainer" parent="UICanvas/RightPanel/PanelContent" unique_id=52620883]
 layout_mode = 2
 visible = false
 
-[node name="Spacer" type="Control" parent="RightPanel/PanelContent" unique_id=724419288]
+[node name="Spacer" type="Control" parent="UICanvas/RightPanel/PanelContent" unique_id=724419288]
 layout_mode = 2
 size_flags_vertical = 3
 

@@ -168,6 +168,7 @@ func _build_moons(data: PlanetData) -> void:
 		var node := MoonOrbitNode.new()
 		add_child(node)
 		node.setup(data.moons[i], moon_rx, start)
+		node.clicked.connect(func(md: PlanetData) -> void: clicked.emit(md))
 		_moon_nodes.append(node)
 		_moon_base_pos.append(node.position)
 

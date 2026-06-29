@@ -8,10 +8,10 @@ signal back_pressed
 @export var debug_seed: int = 99999
 
 @onready var _space:        Control      = $SpaceContainer
-@onready var _system_name:  Label        = $RightPanel/PanelContent/SystemName
-@onready var _star_type:    Label        = $RightPanel/PanelContent/StarType
-@onready var _planet_list:  VBoxContainer = $RightPanel/PanelContent/PlanetList
-@onready var _panel_content: VBoxContainer = $RightPanel/PanelContent
+@onready var _system_name:  Label        = $UICanvas/RightPanel/PanelContent/SystemName
+@onready var _star_type:    Label        = $UICanvas/RightPanel/PanelContent/StarType
+@onready var _planet_list:  VBoxContainer = $UICanvas/RightPanel/PanelContent/PlanetList
+@onready var _panel_content: VBoxContainer = $UICanvas/RightPanel/PanelContent
 
 var _survey_btn: Button = null
 
@@ -36,6 +36,10 @@ var _active_orbit:    PlanetOrbitNode = null   # tracks which orbit node is hove
 var _enter_charge:    int        = 0   # scroll-in on hovered planet
 var _back_charge:     int        = 0   # scroll-out to go back to galaxy
 
+var _camera:       Camera2D
+var _target_zoom:  float = 1.0
+var _target_pos:   Vector2 = Vector2.ZERO
+
 const ORBIT_Y_RATIO := 0.38   # must match OrbitLines.y_ratio and PlanetOrbitNode
 
 # visual diameter in pixels per star type (corona included)
@@ -47,7 +51,21 @@ const STAR_PX: Dictionary = {
 	SolarData.StarType.BLUE_GIANT:      340,
 }
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	if _camera:
+		# Track active orbit if significantly zoomed in
+		if _target_zoom > 1.2 and _active_orbit != null:
+			_target_pos = _active_orbit.global_position
+
+		_camera.zoom = _camera.zoom.lerp(Vector2(_target_zoom, _target_zoom), 12.0 * delta)
+		_camera.position = _camera.position.lerp(_target_pos, 12.0 * delta)
+		
+		# LOD: Fade out moons and their orbits when zoomed out
+		var lod_alpha := clampf((_camera.zoom.x - 1.2) * 2.0, 0.0, 1.0)
+		for node in _orbits:
+			for moon in node._moon_nodes:
+				moon.modulate.a = lod_alpha
+
 	if _dragging or _right_dragging:
 		CursorManager.set_state(CursorManager.State.GRAB)
 		return
@@ -58,6 +76,12 @@ func _process(_delta: float) -> void:
 
 func _ready() -> void:
 	CursorManager.set_state(CursorManager.State.NORMAL)
+	
+	_camera = Camera2D.new()
+	_camera.position = size * 0.5
+	_target_pos = _camera.position
+	add_child(_camera)
+
 	# back button removed — right-click navigates back
 	get_tree().root.size_changed.connect(_on_resize)
 	planet_selected.connect(_on_planet_selected)
@@ -103,7 +127,28 @@ func _go_to_galaxy() -> void:
 		gd = GameState.home_galaxy
 	SceneTransition.go("res://scenes/galaxy/GalaxyView.tscn", gd)
 
+func _can_access(pd: PlanetData) -> bool:
+	if pd.planet_type == PlanetData.Type.MOON:
+		if not GameState.moon_unlocked:
+			return false
+		if not GameState.solar_unlocked:
+			var home_pd: PlanetData = null
+			if _current != null:
+				for p in _current.planets:
+					if p.seed == GameState.home_planet_seed:
+						home_pd = p
+						break
+			if home_pd != null and not home_pd.moons.has(pd):
+				return false
+	else:
+		if not GameState.solar_unlocked and pd.seed != GameState.home_planet_seed:
+			return false
+	return true
+
 func _on_planet_selected(pd: PlanetData) -> void:
+	if not _can_access(pd):
+		print("[SolarView] Access denied to planet/moon: ", pd.planet_name)
+		return
 	_save_view_angle()
 	pd.set_meta("__solar_data", _current)
 	SceneTransition.go("res://scenes/planetary/PlanetaryView.tscn", pd)
@@ -323,11 +368,15 @@ func _update_panel(data: SolarData) -> void:
 	_star_type.text   = SolarData.get_star_type_name(data.star_type)
 
 	for i in data.planets.size():
+		var pd: PlanetData = data.planets[i]
 		var btn := Button.new()
-		btn.text        = "%d. %s" % [i + 1, data.planets[i].planet_name]
+		btn.text        = "%d. %s" % [i + 1, pd.planet_name]
 		btn.flat        = true
 		btn.alignment   = HORIZONTAL_ALIGNMENT_LEFT
-		btn.pressed.connect(func() -> void: planet_selected.emit(data.planets[i]))
+		if not _can_access(pd):
+			btn.disabled = true
+			btn.modulate.a = 0.5
+		btn.pressed.connect(func() -> void: planet_selected.emit(pd))
 		_planet_list.add_child(btn)
 
 	# remove old survey button if any
@@ -393,45 +442,74 @@ func _input(event: InputEvent) -> void:
 					planet_selected.emit(_hovered_planet)
 				_dragging = false
 		elif mb.button_index == MOUSE_BUTTON_WHEEL_UP and mb.pressed:
-			if _hovered_planet != null:
+			var old_zoom := _target_zoom
+			_target_zoom = clampf(_target_zoom + 0.4, 1.0, 3.5)
+			if _hovered_planet != null and _active_orbit != null:
+				_target_pos = _active_orbit.global_position
+			if _target_zoom >= 3.5 and old_zoom >= 3.5 and _hovered_planet != null:
 				_enter_charge += 1
 				_back_charge   = 0
-				if _enter_charge >= 3:
+				if _enter_charge >= 2:
 					_enter_charge = 0
 					planet_selected.emit(_hovered_planet)
 		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
 			_enter_charge  = 0
-			_back_charge  += 1
-			if _back_charge >= 4:
-				_back_charge = 0
-				_go_to_galaxy()
+			var old_zoom := _target_zoom
+			_target_zoom = clampf(_target_zoom - 0.4, 1.0, 3.5)
+			if _target_zoom <= 1.0:
+				_target_pos = size * 0.5
+				if old_zoom <= 1.0:
+					_back_charge  += 1
+					if _back_charge >= 3:
+						_back_charge = 0
+						_go_to_galaxy()
 	elif event is InputEventMagnifyGesture:
-		if event.factor > 1.0 and _hovered_planet != null:
-			_enter_charge += 1
-			_back_charge   = 0
-			if _enter_charge >= 3:
-				_enter_charge = 0
-				planet_selected.emit(_hovered_planet)
+		if event.factor > 1.0:
+			var old_zoom := _target_zoom
+			_target_zoom = clampf(_target_zoom + 0.2, 1.0, 3.5)
+			if _hovered_planet != null and _active_orbit != null:
+				_target_pos = _active_orbit.global_position
+			if _target_zoom >= 3.5 and old_zoom >= 3.5 and _hovered_planet != null:
+				_enter_charge += 1
+				_back_charge   = 0
+				if _enter_charge >= 2:
+					_enter_charge = 0
+					planet_selected.emit(_hovered_planet)
 		elif event.factor < 1.0:
 			_enter_charge  = 0
-			_back_charge  += 1
-			if _back_charge >= 4:
-				_back_charge = 0
-				_go_to_galaxy()
+			var old_zoom := _target_zoom
+			_target_zoom = clampf(_target_zoom - 0.2, 1.0, 3.5)
+			if _target_zoom <= 1.0:
+				_target_pos = size * 0.5
+				if old_zoom <= 1.0:
+					_back_charge  += 1
+					if _back_charge >= 3:
+						_back_charge = 0
+						_go_to_galaxy()
 	elif event is InputEventPanGesture:
 		var dy: float = event.delta.y
-		if dy < -0.5 and _hovered_planet != null:   # scroll up = zoom in
-			_enter_charge += 1
-			_back_charge   = 0
-			if _enter_charge >= 3:
-				_enter_charge = 0
-				planet_selected.emit(_hovered_planet)
+		if dy < -0.5:   # scroll up = zoom in
+			var old_zoom := _target_zoom
+			_target_zoom = clampf(_target_zoom + 0.3, 1.0, 3.5)
+			if _hovered_planet != null and _active_orbit != null:
+				_target_pos = _active_orbit.global_position
+			if _target_zoom >= 3.5 and old_zoom >= 3.5 and _hovered_planet != null:
+				_enter_charge += 1
+				_back_charge   = 0
+				if _enter_charge >= 2:
+					_enter_charge = 0
+					planet_selected.emit(_hovered_planet)
 		elif dy > 0.5:                               # scroll down = zoom out
 			_enter_charge  = 0
-			_back_charge  += 1
-			if _back_charge >= 4:
-				_back_charge = 0
-				_go_to_galaxy()
+			var old_zoom := _target_zoom
+			_target_zoom = clampf(_target_zoom - 0.3, 1.0, 3.5)
+			if _target_zoom <= 1.0:
+				_target_pos = size * 0.5
+				if old_zoom <= 1.0:
+					_back_charge  += 1
+					if _back_charge >= 3:
+						_back_charge = 0
+						_go_to_galaxy()
 	elif event is InputEventMouseMotion and (_dragging or _right_dragging):
 		var mm  := event as InputEventMouseMotion
 		if mm.relative.length() < 1.5:

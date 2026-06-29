@@ -30,6 +30,10 @@ extends Resource
 ## Cargo: resource_id -> amount
 @export var cargo:        Dictionary = {}
 
+## Station buildings — same format as PlanetProgress.buildings entries.
+## Only used when ship_type == "station".
+@export var buildings:    Array      = []
+
 ## Destination planet seed (-1 = parked in orbit).
 @export var dest_seed:    int    = -1
 
