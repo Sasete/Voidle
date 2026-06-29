@@ -36,7 +36,11 @@ func _on_arrived(ship: ShipData) -> void:
 # ── Public API ────────────────────────────────────────────────────────────────
 
 func ships_for(planet_seed: int) -> Array[ShipData]:
-	return _ships.get(planet_seed, []) as Array[ShipData]
+	if not _ships.has(planet_seed):
+		return []
+	var result: Array[ShipData] = []
+	result.assign(_ships[planet_seed])
+	return result
 
 func add_ship(ship: ShipData) -> void:
 	if not _ships.has(ship.orbit_seed):

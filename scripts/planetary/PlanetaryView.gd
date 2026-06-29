@@ -1527,6 +1527,33 @@ func _on_planet_clicked(_screen_pos: Vector2) -> void:
 	poi_layer.deselect_all()
 	_build_planet_overview(current_data)
 
+func _make_overview_tab_btn(label: String, is_active: bool) -> Button:
+	var btn := Button.new()
+	btn.text = label
+	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	btn.toggle_mode    = true
+	btn.button_pressed = is_active
+	btn.focus_mode     = Control.FOCUS_NONE
+	_apply_orbitron(btn, 8)
+	var s_on := StyleBoxFlat.new()
+	s_on.bg_color            = Color(0.12, 0.18, 0.35, 0.95)
+	s_on.border_color        = Color(1.0, 0.92, 0.30, 0.55)
+	s_on.border_width_bottom = 2
+	s_on.content_margin_top  = 5; s_on.content_margin_bottom = 5
+	var s_off := StyleBoxFlat.new()
+	s_off.bg_color            = Color(0.06, 0.08, 0.14, 0.0)
+	s_off.border_color        = Color(0.3, 0.35, 0.55, 0.25)
+	s_off.border_width_bottom = 1
+	s_off.content_margin_top  = 5; s_off.content_margin_bottom = 5
+	btn.add_theme_stylebox_override("normal",          s_off)
+	btn.add_theme_stylebox_override("hover",           s_off)
+	btn.add_theme_stylebox_override("pressed",         s_on)
+	btn.add_theme_stylebox_override("hover_pressed",   s_on)
+	btn.add_theme_color_override("font_color",         Color(0.45, 0.52, 0.75))
+	btn.add_theme_color_override("font_pressed_color", Color(1.0, 0.92, 0.30))
+	btn.add_theme_color_override("font_hover_color",   Color(0.75, 0.82, 1.0))
+	return btn
+
 func _build_planet_overview(data: PlanetData) -> void:
 	if data == null:
 		return
@@ -1638,29 +1665,149 @@ func _build_planet_overview(data: PlanetData) -> void:
 
 	_build_resources_section(root, data, pp)
 
-	# POI list
-	if not data.custom_pois.is_empty():
-		var sep := HSeparator.new()
-		var sep_s := StyleBoxFlat.new()
-		sep_s.bg_color = Color(0.2, 0.25, 0.4, 0.35)
-		sep.add_theme_stylebox_override("separator", sep_s)
-		root.add_child(sep)
-		var poi_title := Label.new()
-		poi_title.text = "DISTRICTS"
-		_apply_orbitron(poi_title, 8)
-		poi_title.add_theme_color_override("font_color", Color(0.40, 0.45, 0.65))
-		root.add_child(poi_title)
+	# ── Tab bar: DISTRICTS + ORBITAL (only when ships present) ───────────────
+	var ships := ShipManager.ships_for(data.seed)
+	var has_orbital := not ships.is_empty()
 
+	var tab_sep := HSeparator.new()
+	var tab_sep_s := StyleBoxFlat.new()
+	tab_sep_s.bg_color = Color(0.2, 0.25, 0.4, 0.35)
+	tab_sep.add_theme_stylebox_override("separator", tab_sep_s)
+	root.add_child(tab_sep)
+
+	var tab_row := HBoxContainer.new()
+	tab_row.add_theme_constant_override("separation", 0)
+	root.add_child(tab_row)
+
+	# Tab content containers (only one visible at a time)
+	var districts_page := VBoxContainer.new()
+	districts_page.add_theme_constant_override("separation", 8)
+	var orbital_page := VBoxContainer.new()
+	orbital_page.add_theme_constant_override("separation", 6)
+	orbital_page.visible = false
+
+	var dist_btn: Button    = _make_overview_tab_btn("DISTRICTS", true)
+	tab_row.add_child(dist_btn)
+
+	var orbital_btn: Button = null
+	if has_orbital:
+		orbital_btn = _make_overview_tab_btn("ORBITAL", false)
+		tab_row.add_child(orbital_btn)
+
+	# Switch logic
+	var cap_dist_btn:    Button      = dist_btn
+	var cap_orbital_btn: Button      = orbital_btn
+	var cap_dist_page:   VBoxContainer = districts_page
+	var cap_orb_page:    VBoxContainer = orbital_page
+
+	dist_btn.pressed.connect(func() -> void:
+		cap_dist_page.visible = true
+		cap_orb_page.visible  = false
+		cap_dist_btn.button_pressed = true
+		if cap_orbital_btn != null:
+			cap_orbital_btn.button_pressed = false)
+
+	if orbital_btn != null:
+		orbital_btn.pressed.connect(func() -> void:
+			cap_dist_page.visible = false
+			cap_orb_page.visible  = true
+			cap_dist_btn.button_pressed = false
+			cap_orbital_btn.button_pressed = true)
+
+	root.add_child(districts_page)
+	root.add_child(orbital_page)
+
+	# ── DISTRICTS page content ────────────────────────────────────────────────
+	if not data.custom_pois.is_empty():
 		for poi: POIData in data.custom_pois:
 			var poi_card := _build_district_overview_card(poi, data, pp, panel_content, root)
-			root.add_child(poi_card)
+			districts_page.add_child(poi_card)
 
-	# ADD DISTRICT card (always shown when slots remain)
 	var can_add_district := data.custom_pois.size() < pp.max_districts
 	var add_dist_card := _build_add_district_card(data, can_add_district)
-	root.add_child(add_dist_card)
+	districts_page.add_child(add_dist_card)
+
+	# ── ORBITAL page content ──────────────────────────────────────────────────
+	if has_orbital:
+		for ship: ShipData in ships:
+			var ship_card := _build_orbital_ship_card(ship)
+			orbital_page.add_child(ship_card)
 
 	panel_content.add_child(root)
+
+## Compact card for a ship in the Orbital tab.
+func _build_orbital_ship_card(ship: ShipData) -> PanelContainer:
+	var card := PanelContainer.new()
+	var s := StyleBoxFlat.new()
+	s.bg_color     = Color(0.07, 0.10, 0.18, 0.85)
+	s.border_color = Color(0.35, 0.42, 0.70, 0.40)
+	s.set_border_width_all(1)
+	s.set_corner_radius_all(4)
+	s.content_margin_left = 10; s.content_margin_right  = 10
+	s.content_margin_top  =  7; s.content_margin_bottom =  7
+	card.add_theme_stylebox_override("panel", s)
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.mouse_filter = Control.MOUSE_FILTER_STOP
+
+	var hbox := HBoxContainer.new()
+	hbox.add_theme_constant_override("separation", 8)
+	card.add_child(hbox)
+
+	# Name + status column
+	var vbox := VBoxContainer.new()
+	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vbox.add_theme_constant_override("separation", 2)
+	hbox.add_child(vbox)
+
+	var name_lbl := Label.new()
+	name_lbl.text = ship.ship_name
+	_apply_orbitron(name_lbl, 10)
+	name_lbl.add_theme_color_override("font_color", Color(1.0, 0.92, 0.30))
+	vbox.add_child(name_lbl)
+
+	var status_lbl := Label.new()
+	status_lbl.text = "En route…" if ship.is_travelling() else "In orbit"
+	_apply_orbitron(status_lbl, 8)
+	status_lbl.add_theme_color_override("font_color", Color(0.50, 0.68, 0.95, 0.75))
+	vbox.add_child(status_lbl)
+
+	# Cargo summary (icon count)
+	if not ship.cargo.is_empty():
+		var cargo_row := HBoxContainer.new()
+		cargo_row.add_theme_constant_override("separation", 3)
+		vbox.add_child(cargo_row)
+		for rid: String in ship.cargo:
+			var rd: ResourceData = GameState.known_resources.get(rid, null)
+			if rd == null: continue
+			cargo_row.add_child(_mineral_grid_card(rd, ship.cargo[rid], true))
+
+	# Select button
+	var sel_btn := Button.new()
+	sel_btn.text = "Select"
+	_apply_orbitron(sel_btn, 8)
+	var bs := StyleBoxFlat.new()
+	bs.bg_color     = Color(0.10, 0.18, 0.35, 0.85)
+	bs.border_color = Color(1.0, 0.92, 0.30, 0.45)
+	bs.set_border_width_all(1)
+	bs.set_corner_radius_all(3)
+	bs.content_margin_left = 8; bs.content_margin_right  = 8
+	bs.content_margin_top  = 3; bs.content_margin_bottom = 3
+	sel_btn.add_theme_stylebox_override("normal",  bs)
+	sel_btn.add_theme_stylebox_override("hover",   bs)
+	sel_btn.add_theme_stylebox_override("pressed", bs)
+	sel_btn.add_theme_color_override("font_color", Color(1.0, 0.92, 0.30, 0.85))
+	sel_btn.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
+	sel_btn.mouse_exited.connect(func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
+
+	var cap_ship := ship
+	sel_btn.pressed.connect(func() -> void:
+		if _orbital_layer != null and is_instance_valid(_orbital_layer):
+			_orbital_layer.select_ship(cap_ship)
+			# Rotate planet so the ship's orbit node faces the viewer
+			_rotate_to_lon(-rad_to_deg(cap_ship.orbit_node)))
+	hbox.add_child(sel_btn)
+
+	return card
 
 func _build_resources_section(parent: VBoxContainer, data: PlanetData, pp: PlanetProgress) -> void:
 	var sep := HSeparator.new()

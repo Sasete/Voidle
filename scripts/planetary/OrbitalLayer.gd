@@ -31,6 +31,11 @@ func deselect() -> void:
 		queue_redraw()
 		ship_deselected.emit()
 
+func select_ship(ship: ShipData) -> void:
+	_selected_ship = ship
+	queue_redraw()
+	ship_clicked.emit(ship)
+
 func _process(delta: float) -> void:
 	if _planet_seed < 0:
 		return
