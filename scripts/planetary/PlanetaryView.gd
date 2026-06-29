@@ -1244,6 +1244,11 @@ func _setup_orbital_layer(planet_seed: int) -> void:
 		TooltipManager.show_tip(title, body))
 	layer.ship_unhovered.connect(func() -> void:
 		TooltipManager.hide_tip())
+	layer.ship_clicked.connect(func(ship: ShipData) -> void:
+		poi_layer.deselect_all()
+		TooltipManager.hide_tip())
+	layer.ship_deselected.connect(func() -> void:
+		pass)
 	_orbital_layer = layer
 
 func _process(delta: float) -> void:
@@ -1322,6 +1327,8 @@ func _rotate_to_lon(lon_deg: float, duration: float = 0.45) -> void:
 		current, current + diff, duration)
 
 func _on_planet_clicked(_screen_pos: Vector2) -> void:
+	if _orbital_layer != null and is_instance_valid(_orbital_layer):
+		_orbital_layer.deselect()
 	var center := planet_renderer.size * 0.5
 	var local_click := _screen_pos - center
 	var ar: float = planet_renderer.size.x / planet_renderer.size.y if planet_renderer.size.y > 0 else 1.0
@@ -1871,14 +1878,23 @@ func _refresh_bar_label_status(key: String) -> void:
 	# Spaceport: update prog_ref + reset launch button when re-paused
 	if m.has("launch_btn"):
 		(m["prog"] as Array)[0] = ProductionManager.get_progress(key)
-		var btn: Button = m["launch_btn"]
-		var slbl: Label = m.get("status_lbl", null)
-		var is_paused := ProductionManager.is_user_paused(key)
-		if is_instance_valid(btn) and is_paused:
+		var btn: Button  = m["launch_btn"]
+		var slbl: Label  = m.get("status_lbl", null)
+		var sp_entry: Dictionary = m.get("sp_entry", {})
+		var is_paused    := ProductionManager.is_user_paused(key)
+		var is_launching: bool = sp_entry.get("launching", false)
+		# Only re-enable when PM re-pauses AND we're not mid-animation
+		if is_instance_valid(btn) and is_paused and not is_launching:
 			btn.text     = "Launch"
 			btn.disabled = false
+			sp_entry["cooldown_only"] = false
 		if is_instance_valid(slbl):
-			slbl.text = "–8 ⚡   Ready to launch" if is_paused else "–8 ⚡   Recharging…"
+			if is_launching:
+				slbl.text = "–8 ⚡   Launching…"
+			elif is_paused:
+				slbl.text = "–8 ⚡   Ready to launch"
+			else:
+				slbl.text = "–8 ⚡   Recharging…"
 		return
 	var out_lbl: Label = m.get("out_lbl", null)
 	var def: BuildingDef = m.get("def", null)
@@ -2044,12 +2060,10 @@ func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callabl
 		var col := Color(1, 1, 1, 0.95)
 		var p   := Vector2.ZERO
 		if _rocket_anim.get("boosters_spawned", false):
-			# Post-separation: T shape (horizontal bar on top, stem below)
+			# Post-separation: smaller T — 4px wide bar on top + 1 stem block below
 			rocket.draw_rect(Rect2(p + Vector2(-2, -2), Vector2(2, 2)), col)
 			rocket.draw_rect(Rect2(p + Vector2( 0, -2), Vector2(2, 2)), col)
-			rocket.draw_rect(Rect2(p + Vector2( 2, -2), Vector2(2, 2)), col)
 			rocket.draw_rect(Rect2(p,                   Vector2(2, 2)), col)
-			rocket.draw_rect(Rect2(p + Vector2( 0,  2), Vector2(2, 2)), col)
 		else:
 			rocket.draw_rect(Rect2(p,                   Vector2(2, 2)), col)
 			rocket.draw_rect(Rect2(p + Vector2(-2,  0), Vector2(2, 2)), col)
@@ -2592,7 +2606,7 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 
 	# ── Spaceport: custom launch card ────────────────────────────────────────────
 	if def.building_id == "spaceport":
-		return _build_spaceport_card(def, pm_key, pp, poi)
+		return _build_spaceport_card(def, pm_key, pp, poi, entry)
 
 	# Outer card
 	var card := PanelContainer.new()
@@ -2956,7 +2970,7 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 
 ## Spaceport card: idle "READY" state with Launch button, or filling progress bar.
 func _build_spaceport_card(def: BuildingDef, pm_key: String,
-		pp: PlanetProgress, poi: POIData) -> PanelContainer:
+		pp: PlanetProgress, poi: POIData, entry: Dictionary = {}) -> PanelContainer:
 	var is_ready := ProductionManager.is_user_paused(pm_key)
 	var prog     := ProductionManager.get_progress(pm_key)
 
@@ -3038,23 +3052,31 @@ func _build_spaceport_card(def: BuildingDef, pm_key: String,
 	launch_btn.add_theme_color_override("font_color", Color(0.65, 0.88, 1.0))
 	launch_btn.custom_minimum_size = Vector2(90, 0)
 
-	var cap_pm_key := pm_key
+	var cap_pm_key  := pm_key
+	var cap_entry   := entry
+
+	# Restore button state from persistent entry flags if panel was rebuilt mid-flight
+	if entry.get("launching", false):
+		launch_btn.text     = "Launching…"
+		launch_btn.disabled = true
+	elif not is_ready:
+		launch_btn.text     = "Cooldown…"
+		launch_btn.disabled = true
+
 	launch_btn.pressed.connect(func() -> void:
 		if not launch_btn.disabled:
-			launch_btn.text     = "Launching…"
-			launch_btn.disabled = true
-			cap_pp.has_spaceport = true
+			launch_btn.text       = "Launching…"
+			launch_btn.disabled   = true
+			cap_entry["launching"] = true
+			cap_pp.has_spaceport   = true
 			_play_rocket_animation(cap_pp.planet_seed, cap_poi, func() -> void:
-				if not is_instance_valid(launch_btn):
-					return
-				launch_btn.text = "Cooldown…"
-				# Mark that the next produce() is a cooldown completion, not a real launch
-				if def.logic is SpaceportLogic:
-					(def.logic as SpaceportLogic).skip_next_launch = true
-				# Unpause PM → bar starts filling as cooldown
+				cap_entry["launching"]     = false
+				cap_entry["cooldown_only"] = true
+				# Unpause PM regardless of whether the button/panel still exists
 				if ProductionManager.is_user_paused(cap_pm_key):
 					ProductionManager.toggle_user_pause(cap_pm_key)
-				# Button re-enabled automatically by _refresh_bar_label_status when PM re-pauses
+				if is_instance_valid(launch_btn):
+					launch_btn.text = "Cooldown…"
 			))
 
 	hbox.add_child(launch_btn)
@@ -3066,6 +3088,7 @@ func _build_spaceport_card(def: BuildingDef, pm_key: String,
 		"planet_seed": pp.planet_seed,
 		"launch_btn":  launch_btn,
 		"status_lbl":  status_lbl,
+		"sp_entry":    entry,
 	}
 
 	return card

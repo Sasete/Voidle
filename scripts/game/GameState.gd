@@ -116,7 +116,8 @@ func _seed_starting_resources() -> void:
 	if has_node("/root/ShipManager"):
 		var sm := get_node("/root/ShipManager")
 		if sm.ships_for(home_planet_seed).is_empty():
-			sm.launch(home_planet_seed, "Pioneer I", {r1t1.resource_id(): 25.0})
+			var _test_ship: ShipData = sm.launch(home_planet_seed, "Pioneer I", {r1t1.resource_id(): 25.0})
+			_test_ship.ship_type = "station"
 
 func _build_home_solar() -> SolarData:
 	# Use the galaxy star's own seed so the system matches what the galaxy would generate

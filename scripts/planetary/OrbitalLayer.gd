@@ -8,12 +8,15 @@ var _planet_radius:   float   = 0.0
 var _planet_rotation: float   = 0.0   # Y-axis rotation (longitude) from planet drag
 var _planet_center:   Vector2 = Vector2.ZERO   # actual planet center in local coords
 var _hovered_ship:    ShipData = null
+var _selected_ship:   ShipData = null
 
 ## Per-ship orbit-reveal: ship_id -> {progress: float, spawn_angle: float}
 var _reveal: Dictionary = {}
 
 signal ship_hovered(ship: ShipData, screen_pos: Vector2)
 signal ship_unhovered()
+signal ship_clicked(ship: ShipData)
+signal ship_deselected()
 
 func setup(planet_seed: int) -> void:
 	_planet_seed = planet_seed
@@ -21,19 +24,20 @@ func setup(planet_seed: int) -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	ShipManager.ship_changed.connect(_on_ship_changed)
 
+func deselect() -> void:
+	if _selected_ship != null:
+		_selected_ship = null
+		queue_redraw()
+		ship_deselected.emit()
+
 func _process(delta: float) -> void:
 	if _planet_seed < 0:
 		return
-	var needs_redraw := false
 	for ship_id: String in _reveal:
 		var rv: Dictionary = _reveal[ship_id]
 		if rv["progress"] < 1.0:
 			rv["progress"] = minf(rv["progress"] + delta * 1.8, 1.0)
-			needs_redraw = true
-	if needs_redraw:
-		queue_redraw()
-	else:
-		queue_redraw()
+	queue_redraw()
 
 func _on_ship_changed(ship: ShipData) -> void:
 	if ship.orbit_seed == _planet_seed:
@@ -49,41 +53,89 @@ func _project(ship: ShipData, angle: float) -> Vector3:
 	var px: float  = r * cos(angle)
 	var py: float  = r * sin(angle) * sin(inc)
 	var pz: float  = r * sin(angle) * cos(inc)
-	var rot: float = _planet_rotation + ship.orbit_node   # node rotates orbital plane around Y
+	var rot: float = _planet_rotation + ship.orbit_node
 	var rx: float  =  px * cos(rot) + pz * sin(rot)
 	var rz: float  = -px * sin(rot) + pz * cos(rot)
 	return Vector3(rx, py, rz)
 
 func _is_occluded(proj: Vector3) -> bool:
-	# Use full radius (not 0.96) so ships disappear right at the planet edge
 	return proj.z > 0.0 and Vector2(proj.x, proj.y).length() < _planet_radius
 
-## Pixel-art cross: shuttle shape.
+## Pixel-art shuttle: T shape (post-booster-separation look).
 func _draw_pixel_ship(pos: Vector2, col: Color) -> void:
 	var p  := (pos - Vector2.ONE).floor()
 	var sz := Vector2(2, 2)
-	draw_rect(Rect2(p,                   sz), col)
-	draw_rect(Rect2(p + Vector2(-2,  0), sz), col)
-	draw_rect(Rect2(p + Vector2( 2,  0), sz), col)
+	draw_rect(Rect2(p + Vector2(-2, -2), sz), col)
 	draw_rect(Rect2(p + Vector2( 0, -2), sz), col)
-	draw_rect(Rect2(p + Vector2( 0,  2), sz), col)
+	draw_rect(Rect2(p,                   sz), col)
 
 ## Pixel-art ISS: horizontal truss + solar panels + center node.
 func _draw_pixel_station(pos: Vector2, col: Color) -> void:
 	var p  := (pos - Vector2.ONE).floor()
 	var sz := Vector2(2, 2)
-	# Main truss (horizontal bar, 5 blocks)
 	for ox: int in [-4, -2, 0, 2, 4]:
 		draw_rect(Rect2(p + Vector2(ox, 0), sz), col)
-	# Center vertical node
 	draw_rect(Rect2(p + Vector2(0, -2), sz), col)
 	draw_rect(Rect2(p + Vector2(0,  2), sz), col)
-	# Left solar panels (top + bottom)
 	draw_rect(Rect2(p + Vector2(-6, -2), sz), col)
 	draw_rect(Rect2(p + Vector2(-6,  2), sz), col)
-	# Right solar panels (top + bottom)
 	draw_rect(Rect2(p + Vector2( 6, -2), sz), col)
 	draw_rect(Rect2(p + Vector2( 6,  2), sz), col)
+
+## Leader line + name label, like POILayer districts.
+func _draw_ship_label(spos: Vector2, ship: ShipData) -> void:
+	var font: Font = ThemeDB.fallback_font
+	const FONT_SIZE: int = 10
+	const DIAG_LEN:  float = 14.0
+	const HORIZ_LEN: float = 20.0
+
+	# Pick direction away from planet center
+	var center := _planet_center if _planet_center != Vector2.ZERO else size * 0.5
+	var horiz_dir: float = 1.0 if spos.x >= center.x else -1.0
+	var vert_dir:  float = -1.0 if spos.y >= center.y else 1.0
+
+	var diag_end  := spos + Vector2(horiz_dir * DIAG_LEN * 0.7, vert_dir * DIAG_LEN)
+	var horiz_end := diag_end + Vector2(horiz_dir * HORIZ_LEN, 0.0)
+
+	var accent := Color(1.0, 0.92, 0.30, 1.0)   # gold, matches district hover
+	var line_col := Color(accent, 0.75)
+
+	# Corner bracket reticle — only the 4 corners, ship sprite stays visible
+	const R: float = 10.0   # half-size of bracket box
+	const C: float = 4.0    # corner arm length
+	const W: float = 1.5    # line width
+	var shadow := Color(0, 0, 0, 0.55)
+	for ox: int in [-1, 1]:
+		for oy: int in [-1, 1]:
+			var cx: float = spos.x + ox * R
+			var cy: float = spos.y + oy * R
+			# Horizontal arm
+			draw_line(Vector2(cx, cy), Vector2(cx - ox * C, cy), shadow, W + 1.0, true)
+			draw_line(Vector2(cx, cy), Vector2(cx - ox * C, cy), accent, W, true)
+			# Vertical arm
+			draw_line(Vector2(cx, cy), Vector2(cx, cy - oy * C), shadow, W + 1.0, true)
+			draw_line(Vector2(cx, cy), Vector2(cx, cy - oy * C), accent, W, true)
+
+	# Leader lines
+	draw_line(spos, diag_end,  line_col, 1.0, true)
+	draw_line(diag_end, horiz_end, line_col, 1.0, true)
+
+	# Label
+	var label := ship.ship_name
+	var text_size := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE)
+	var label_pos := horiz_end + Vector2(horiz_dir * 3.0, text_size.y * 0.35)
+	if horiz_dir < 0.0:
+		label_pos.x -= text_size.x
+
+	# Shadow
+	for ox: int in [-1, 0, 1]:
+		for oy: int in [-1, 0, 1]:
+			if ox == 0 and oy == 0:
+				continue
+			draw_string(font, label_pos + Vector2(ox, oy), label,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE, Color(0, 0, 0, 0.85))
+	draw_string(font, label_pos, label,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE, accent)
 
 func _draw() -> void:
 	if _planet_seed < 0 or _planet_radius <= 0.0:
@@ -91,9 +143,21 @@ func _draw() -> void:
 	var center := _planet_center if _planet_center != Vector2.ZERO else size * 0.5
 
 	for ship: ShipData in ShipManager.ships_for(_planet_seed):
-		# ── Orbit path — reveal animates in the direction of travel ─────────────
-		var steps := 90   # divisible by 6 for clean dash repeat
-		var alpha: float = 0.30 if not ship.is_travelling() else 0.45
+		var is_selected: bool = ship == _selected_ship
+		var is_hovered:  bool = ship == _hovered_ship
+
+		# ── Orbit path ───────────────────────────────────────────────────────────
+		var steps := 90
+		var orbit_col: Color
+		if is_selected:
+			orbit_col = Color(1.0, 0.92, 0.30, 0.75)   # gold, matches district hover
+		elif is_hovered:
+			orbit_col = Color(1.0, 0.95, 0.5, 0.55)    # warm gold
+		elif ship.is_travelling():
+			orbit_col = Color(1, 1, 1, 0.45)
+		else:
+			orbit_col = Color(1, 1, 1, 0.30)
+
 		var rv: Dictionary = _reveal.get(ship.ship_id, {})
 		var arc_frac:    float = rv.get("progress",    1.0)
 		var spawn_angle: float = rv.get("spawn_angle", 0.0)
@@ -110,20 +174,31 @@ func _draw() -> void:
 			var cur_pos  := center + Vector2(v.x, v.y)
 			var in_dash: bool = (s % 6) < 3
 			if in_dash and not _is_occluded(prev_v) and not _is_occluded(v):
-				draw_line(prev_pos, cur_pos, Color(1, 1, 1, alpha), 1.5, true)
+				draw_line(prev_pos, cur_pos, orbit_col, 1.5 if is_selected else 1.2, true)
 			prev_v   = v
 			prev_pos = cur_pos
 
-		# ── Ship (pixel cross) ────────────────────────────────────────────────────
+		# ── Ship pixel art ───────────────────────────────────────────────────────
 		var sv := _project(ship, ship.orbit_angle)
 		if _is_occluded(sv):
 			continue
 		var spos := center + Vector2(sv.x, sv.y)
-		var col  := Color(1.0, 0.92, 0.40) if ship == _hovered_ship else Color(1, 1, 1, 0.92)
+		var col: Color
+		if is_selected:
+			col = Color(1.0, 0.92, 0.30, 1.0)   # gold
+		elif is_hovered:
+			col = Color(1.0, 0.92, 0.40)
+		else:
+			col = Color(1, 1, 1, 0.92)
+
 		if ship.ship_type == "station":
 			_draw_pixel_station(spos, col)
 		else:
 			_draw_pixel_ship(spos, col)
+
+		# ── Selected: name label with leader line ────────────────────────────────
+		if is_selected:
+			_draw_ship_label(spos, ship)
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
@@ -135,6 +210,18 @@ func _input(event: InputEvent) -> void:
 				ship_hovered.emit(_hovered_ship, event.global_position)
 			else:
 				ship_unhovered.emit()
+
+	elif event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed:
+			var clicked := _ship_at(mb.global_position)
+			if clicked != null:
+				_selected_ship = clicked
+				queue_redraw()
+				ship_clicked.emit(clicked)
+				get_viewport().set_input_as_handled()
+			elif _selected_ship != null:
+				deselect()
 
 func _ship_at(global_pos: Vector2) -> ShipData:
 	if _planet_seed < 0 or _planet_radius <= 0.0:
