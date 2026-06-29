@@ -10,6 +10,8 @@ var _history:  Array[String] = []
 var _hist_idx: int = -1
 var _open:     bool = false
 
+var show_planet_coords: bool = true
+
 const MAX_LINES := 200
 
 func _ready() -> void:
@@ -173,7 +175,8 @@ func _exec(line: String) -> void:
 
 [color=#55cc77]DEBUG[/color]
   state                          — print current game state summary
-  clear                          — clear console log""")
+  clear                          — clear console log
+  debug coords                   — toggle planetary click coordinates""")
 
 		# ── Credits ─────────────────────────────────────────────────────────
 		"credits":
@@ -232,6 +235,16 @@ func _exec(line: String) -> void:
 					_log_ok("Everything unlocked.")
 				_:
 					_log_err("Unknown unlock target: '%s'. Try: solar, galaxy, moon, all" % target)
+
+		# ── Debug ───────────────────────────────────────────────────────────
+		"debug":
+			var target := parts[1].to_lower() if parts.size() > 1 else ""
+			match target:
+				"coords":
+					show_planet_coords = not show_planet_coords
+					_log_ok("Planet click coordinates: [b]%s[/b]" % ("ON" if show_planet_coords else "OFF"))
+				_:
+					_log_err("Unknown debug target. Try: coords")
 
 		"lock":
 			var target := parts[1].to_lower() if parts.size() > 1 else ""

@@ -9,6 +9,7 @@ var _planet_rotation: float   = 0.0   # Y-axis rotation (longitude) from planet 
 var _planet_center:   Vector2 = Vector2.ZERO   # actual planet center in local coords
 var _hovered_ship:    ShipData = null
 var _selected_ship:   ShipData = null
+var suppress_label:   bool     = false   # true when ship panel is open
 
 ## Per-ship orbit-reveal: ship_id -> {progress: float, spawn_angle: float}
 var _reveal: Dictionary = {}
@@ -196,11 +197,56 @@ func _draw() -> void:
 		else:
 			_draw_pixel_ship(spos, col)
 
-		# ── Selected: name label with leader line ────────────────────────────────
+		# ── Selected: bracket reticle + label (suppressed when panel open)
+		# ── Hovered (not selected): leader line + name, like districts
 		if is_selected:
-			_draw_ship_label(spos, ship)
+			if suppress_label:
+				_draw_brackets_only(spos)
+			else:
+				_draw_ship_label(spos, ship)
+		elif is_hovered:
+			_draw_hover_label(spos, ship)
 
-func _input(event: InputEvent) -> void:
+## Hover nameplate: leader line + name only, no bracket reticle. Like districts on hover.
+func _draw_hover_label(spos: Vector2, ship: ShipData) -> void:
+	var font: Font = ThemeDB.fallback_font
+	const FONT_SIZE: int = 10
+	var center := _planet_center if _planet_center != Vector2.ZERO else size * 0.5
+	var horiz_dir: float = 1.0 if spos.x >= center.x else -1.0
+	var vert_dir:  float = -1.0 if spos.y >= center.y else 1.0
+	var diag_end  := spos + Vector2(horiz_dir * 9.8,   vert_dir * 14.0)
+	var horiz_end := diag_end + Vector2(horiz_dir * 20.0, 0.0)
+	var accent := Color(1.0, 0.95, 0.55, 0.85)
+	draw_line(spos, diag_end,  Color(accent, 0.65), 1.0, true)
+	draw_line(diag_end, horiz_end, Color(accent, 0.65), 1.0, true)
+	var label := ship.ship_name
+	var text_size := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE)
+	var label_pos := horiz_end + Vector2(horiz_dir * 3.0, text_size.y * 0.35)
+	if horiz_dir < 0.0:
+		label_pos.x -= text_size.x
+	for ox: int in [-1, 0, 1]:
+		for oy: int in [-1, 0, 1]:
+			if ox == 0 and oy == 0: continue
+			draw_string(font, label_pos + Vector2(ox, oy), label,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE, Color(0, 0, 0, 0.75))
+	draw_string(font, label_pos, label, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE, accent)
+
+func _draw_brackets_only(spos: Vector2) -> void:
+	const R: float = 10.0
+	const C: float = 4.0
+	const W: float = 1.5
+	var accent := Color(1.0, 0.92, 0.30, 1.0)
+	var shadow := Color(0, 0, 0, 0.55)
+	for ox: int in [-1, 1]:
+		for oy: int in [-1, 1]:
+			var cx: float = spos.x + ox * R
+			var cy: float = spos.y + oy * R
+			draw_line(Vector2(cx, cy), Vector2(cx - ox * C, cy), shadow, W + 1.0, true)
+			draw_line(Vector2(cx, cy), Vector2(cx - ox * C, cy), accent, W, true)
+			draw_line(Vector2(cx, cy), Vector2(cx, cy - oy * C), shadow, W + 1.0, true)
+			draw_line(Vector2(cx, cy), Vector2(cx, cy - oy * C), accent, W, true)
+
+func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		var prev := _hovered_ship
 		_hovered_ship = _ship_at(event.global_position)
@@ -208,8 +254,10 @@ func _input(event: InputEvent) -> void:
 			queue_redraw()
 			if _hovered_ship != null:
 				ship_hovered.emit(_hovered_ship, event.global_position)
+				CursorManager.set_state(CursorManager.State.POINTER)
 			else:
 				ship_unhovered.emit()
+				CursorManager.set_state(CursorManager.State.NORMAL)
 
 	elif event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
@@ -219,7 +267,7 @@ func _input(event: InputEvent) -> void:
 				_selected_ship = clicked
 				queue_redraw()
 				ship_clicked.emit(clicked)
-				get_viewport().set_input_as_handled()
+				accept_event()
 			elif _selected_ship != null:
 				deselect()
 

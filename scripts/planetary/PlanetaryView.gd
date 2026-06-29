@@ -36,6 +36,7 @@ var _orbital_layer: OrbitalLayer = null
 var _rocket_anim: Dictionary = {}
 ## Toast log container — created lazily, anchored bottom-left.
 var _toast_container: VBoxContainer = null
+var _ship_panel: PanelContainer = null
 ## Maps building pm_key -> bool indicating if its mineral switcher tray is expanded
 var _open_mineral_switchers: Dictionary = {}
 
@@ -50,11 +51,17 @@ func _make_system(root: PlanetData) -> Array[PlanetData]:
 
 func _ready() -> void:
 	CursorManager.set_state(CursorManager.State.NORMAL)
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if has_node("Background"):
+		get_node("Background").mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if planet_renderer:
+		planet_renderer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		if planet_renderer.get_parent() is Control:
+			(planet_renderer.get_parent() as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_orbitron = load("res://Fonts/Orbitron-VariableFont_wght.ttf")
 	planet_renderer.planet_clicked.connect(_on_planet_clicked)
 	poi_layer.poi_clicked.connect(_on_district_clicked)
 	get_tree().root.size_changed.connect(_on_resize)
-	pass  # cursor handled per-element, not per-panel
 	# back button removed — navigation handled via system dock / unlock flow
 	GameState.unlock_changed.connect(_on_unlock_changed)
 	GameState.planet_progress_changed.connect(func(_s: int) -> void:
@@ -174,10 +181,10 @@ func load_planet(data: PlanetData) -> void:
 	_build_companion_moons(data)
 	_build_rings(data)
 	_build_system_panel()
-	_build_details_panel(data)
 	poi_layer.setup(planet_renderer)
 	poi_layer.clear_pois()
 	_setup_orbital_layer(data.seed)
+	_build_details_panel(data)
 
 	var pois: Array[Dictionary] = []
 	if data.custom_pois.size() > 0:
@@ -479,7 +486,7 @@ func _build_details_panel(data: PlanetData) -> void:
 	var root := Control.new()
 	root.mouse_filter    = Control.MOUSE_FILTER_IGNORE
 	root.z_as_relative   = false
-	root.z_index         = 120
+	root.z_index         = 200
 	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	container.add_child(root)
 	_details_panel = root
@@ -534,7 +541,7 @@ func _build_details_panel(data: PlanetData) -> void:
 		panel.visible = _details_open)
 
 	toggle_btn.mouse_entered.connect(func() -> void:
-		if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER))
+		CursorManager.set_state(CursorManager.State.POINTER))
 	toggle_btn.mouse_exited.connect(func()  -> void: CursorManager.set_state(CursorManager.State.NORMAL))
 
 func _make_hud_style(col: Color, radius: int) -> StyleBoxFlat:
@@ -1109,7 +1116,7 @@ func _build_system_panel() -> void:
 		var cap_callout := callout
 		var cap_active  := is_active
 		rect.mouse_entered.connect(func() -> void:
-			if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER)
+			CursorManager.set_state(CursorManager.State.POINTER)
 			var tw := rect.create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 			tw.tween_property(rect, "scale", Vector2(1.22, 1.22), 0.12)
 			cap_lbl.modulate = Color(1.0, 1.0, 1.0)
@@ -1216,40 +1223,192 @@ func _setup_orbital_layer(planet_seed: int) -> void:
 		_orbital_layer.queue_free()
 	var layer := OrbitalLayer.new()
 	layer.z_index = 5   # above planet, below HUD rings
-	layer.mouse_filter = Control.MOUSE_FILTER_STOP
+	layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	planet_renderer.get_parent().add_child(layer)
 	layer.setup(planet_seed)
-	layer.ship_hovered.connect(func(ship: ShipData, _pos: Vector2) -> void:
-		# Title includes status inline: "Pioneer I  · in orbit"
-		var title: String
-		if ship.is_travelling():
-			var dest_pd := GameState.get_planet_data(ship.dest_seed)
-			var dest_name: String = dest_pd.planet_name if dest_pd != null else "Unknown"
-			title = ship.ship_name + "  · → " + dest_name + "  eta %.0fs" % ship.eta_seconds()
-		else:
-			title = ship.ship_name + "  · in orbit"
-		# Body: icon + ×amount only (like inventory card, no repeated name)
-		var body: Array = []
-		if not ship.cargo.is_empty():
-			var first := true
-			for rid: String in ship.cargo:
-				var rd: ResourceData = GameState.known_resources.get(rid, null)
-				if rd == null:
-					continue
-				if not first:
-					body.append("\n")
-				first = false
-				body.append(MineralIcon.make(rd.tier, rd.display_color))
-				body.append("  ×%.0f" % ship.cargo[rid])
-		TooltipManager.show_tip(title, body))
+	layer.ship_hovered.connect(func(_ship: ShipData, _pos: Vector2) -> void:
+		pass)   # Name drawn directly on OrbitalLayer canvas (like districts)
 	layer.ship_unhovered.connect(func() -> void:
-		TooltipManager.hide_tip())
-	layer.ship_clicked.connect(func(ship: ShipData) -> void:
-		poi_layer.deselect_all()
-		TooltipManager.hide_tip())
-	layer.ship_deselected.connect(func() -> void:
 		pass)
+	layer.ship_clicked.connect(func(ship: ShipData) -> void:
+		TooltipManager.hide_tip()
+		layer.suppress_label = true
+		_show_ship_panel(ship, layer))
+	layer.ship_deselected.connect(func() -> void:
+		layer.suppress_label = false
+		_close_ship_panel())
 	_orbital_layer = layer
+	_add_orbit_toggle(planet_renderer.get_parent(), layer)
+
+## Ship info panel — appears at bottom-left of planet view when a ship is selected.
+func _show_ship_panel(ship: ShipData, layer: OrbitalLayer) -> void:
+	_close_ship_panel()
+	var planet_cont: Control = planet_renderer.get_parent()
+
+	var panel := PanelContainer.new()
+	var ps := StyleBoxFlat.new()
+	ps.bg_color     = Color(0.06, 0.08, 0.14, 0.92)
+	ps.border_color = Color(1.0, 0.92, 0.30, 0.70)
+	ps.set_border_width_all(1)
+	ps.set_corner_radius_all(5)
+	ps.content_margin_left = 14; ps.content_margin_right  = 14
+	ps.content_margin_top  = 10; ps.content_margin_bottom = 10
+	panel.add_theme_stylebox_override("panel", ps)
+	panel.z_index = 10
+	panel.custom_minimum_size = Vector2(180, 0)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 6)
+	panel.add_child(vbox)
+
+	# Name + status on the same row (name left, status right)
+	var title_row := HBoxContainer.new()
+	title_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	vbox.add_child(title_row)
+
+	var name_lbl := Label.new()
+	name_lbl.text = ship.ship_name
+	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_orbitron(name_lbl, 11)
+	name_lbl.add_theme_color_override("font_color", Color(1.0, 0.92, 0.30))
+	title_row.add_child(name_lbl)
+
+	var status_lbl := Label.new()
+	status_lbl.text = "In orbit" if not ship.is_travelling() else "En route…"
+	status_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_apply_orbitron(status_lbl, 9)
+	status_lbl.add_theme_color_override("font_color", Color(0.6, 0.75, 0.95, 0.80))
+	title_row.add_child(status_lbl)
+
+	# Cargo — inventory card style matching PlanetOverview
+	if not ship.cargo.is_empty():
+		var sep := HSeparator.new()
+		sep.add_theme_color_override("color", Color(1, 1, 1, 0.12))
+		vbox.add_child(sep)
+		var cargo_grid := GridContainer.new()
+		cargo_grid.columns = 4
+		cargo_grid.add_theme_constant_override("h_separation", 4)
+		cargo_grid.add_theme_constant_override("v_separation", 4)
+		vbox.add_child(cargo_grid)
+		for rid: String in ship.cargo:
+			var rd: ResourceData = GameState.known_resources.get(rid, null)
+			if rd == null:
+				continue
+			cargo_grid.add_child(_mineral_grid_card(rd, ship.cargo[rid], true))
+
+	# Action separator
+	var sep2 := HSeparator.new()
+	sep2.add_theme_color_override("color", Color(1, 1, 1, 0.10))
+	vbox.add_child(sep2)
+
+	# Action buttons row
+	var btn_row := HBoxContainer.new()
+	btn_row.add_theme_constant_override("separation", 6)
+	vbox.add_child(btn_row)
+
+	var dbg_btn := Button.new()
+	dbg_btn.text = "Debug"
+	_apply_orbitron(dbg_btn, 8)
+	var dbg_style := StyleBoxFlat.new()
+	dbg_style.bg_color     = Color(0.10, 0.18, 0.35, 0.85)
+	dbg_style.border_color = Color(1.0, 0.92, 0.30, 0.45)
+	dbg_style.set_border_width_all(1)
+	dbg_style.set_corner_radius_all(3)
+	dbg_style.content_margin_left = 8; dbg_style.content_margin_right  = 8
+	dbg_style.content_margin_top  = 3; dbg_style.content_margin_bottom = 3
+	dbg_btn.add_theme_stylebox_override("normal",  dbg_style)
+	dbg_btn.add_theme_stylebox_override("hover",   dbg_style)
+	dbg_btn.add_theme_stylebox_override("pressed", dbg_style)
+	dbg_btn.add_theme_color_override("font_color", Color(1.0, 0.92, 0.30, 0.80))
+	dbg_btn.pressed.connect(func() -> void:
+		print("Ship: %s | type: %s | orbit_angle: %.3f | speed: %.4f" % [
+			ship.ship_name, ship.ship_type, ship.orbit_angle, ship.orbit_speed]))
+	dbg_btn.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
+	dbg_btn.mouse_exited.connect(func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
+	btn_row.add_child(dbg_btn)
+
+	# Close button
+	var close_btn := Button.new()
+	close_btn.text = "✕"
+	_apply_orbitron(close_btn, 9)
+	close_btn.add_theme_stylebox_override("normal",  dbg_style)
+	close_btn.add_theme_stylebox_override("hover",   dbg_style)
+	close_btn.add_theme_stylebox_override("pressed", dbg_style)
+	close_btn.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
+	close_btn.mouse_exited.connect(func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
+	close_btn.add_theme_color_override("font_color", Color(0.85, 0.45, 0.35, 0.80))
+	close_btn.pressed.connect(func() -> void:
+		layer.deselect())
+	btn_row.add_child(close_btn)
+
+	panel.anchor_left = 0; panel.anchor_top = 0
+	panel.anchor_right = 0; panel.anchor_bottom = 0
+	planet_cont.add_child(panel)
+	_ship_panel = panel
+
+func _close_ship_panel() -> void:
+	if _ship_panel != null and is_instance_valid(_ship_panel):
+		_ship_panel.queue_free()
+	_ship_panel = null
+
+## Orbit visibility toggle — bottom-right corner of planet view.
+func _add_orbit_toggle(planet_cont: Control, layer: OrbitalLayer) -> void:
+	for ch: Node in planet_cont.get_children():
+		if ch.get_meta("orbit_toggle", false):
+			ch.queue_free()
+
+	const SIZE := 36.0
+	var btn := Control.new()
+	btn.set_meta("orbit_toggle", true)
+	btn.custom_minimum_size = Vector2(SIZE, SIZE)
+	btn.z_index = 12
+	btn.mouse_filter = Control.MOUSE_FILTER_STOP
+	btn.tooltip_text = "Toggle orbits"
+
+	var visible_ref: Array = [true]   # [0] = orbits visible
+	btn.draw.connect(func() -> void:
+		var is_vis: bool = visible_ref[0]
+		var bg    := Color(0.06, 0.08, 0.14, 0.82)
+		var border := Color(0.35, 0.55, 0.90, 0.55 if is_vis else 0.30)
+		var icon_c := Color(0.55, 0.78, 1.0, 1.0 if is_vis else 0.35)
+		var c      := Vector2(SIZE * 0.5, SIZE * 0.5)
+		# Background rounded rect
+		btn.draw_rect(Rect2(1, 1, SIZE - 2, SIZE - 2), bg)
+		btn.draw_rect(Rect2(1, 1, SIZE - 2, SIZE - 2), border, false, 1.5)
+		# Orbit ellipse: wide ellipse around center
+		var pts: PackedVector2Array = []
+		for i in 32:
+			var a: float = (float(i) / 32.0) * TAU
+			pts.append(c + Vector2(cos(a) * 12.0, sin(a) * 5.0))
+		btn.draw_polyline(pts + PackedVector2Array([pts[0]]), Color(icon_c, 0.70), 1.2, true)
+		# Small satellite: cross at orbit's right side
+		var sp := c + Vector2(12.0, 0.0)
+		btn.draw_rect(Rect2(sp + Vector2(-1, -1), Vector2(2, 2)), icon_c)
+		btn.draw_rect(Rect2(sp + Vector2(-3, 0),  Vector2(2, 1)), icon_c)
+		btn.draw_rect(Rect2(sp + Vector2( 2, 0),  Vector2(2, 1)), icon_c)
+		# Eye shape in center
+		if is_vis:
+			btn.draw_arc(c, 5.0, -PI * 0.55, PI * 0.55, 12, icon_c, 1.2, true)
+			btn.draw_arc(c, 5.0,  PI * 0.45, PI * 1.55, 12, icon_c, 1.2, true)
+			btn.draw_circle(c, 2.0, icon_c)
+		else:
+			# Crossed-out eye
+			btn.draw_line(c + Vector2(-5, -5), c + Vector2(5, 5), icon_c, 1.5, true))
+
+	btn.gui_input.connect(func(ev: InputEvent) -> void:
+		if ev is InputEventMouseButton:
+			var mb := ev as InputEventMouseButton
+			if mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed:
+				layer.visible = not layer.visible
+				visible_ref[0] = layer.visible
+				btn.queue_redraw())
+
+	planet_cont.add_child(btn)
+	btn.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+	btn.offset_bottom = -12
+	btn.offset_right  = -12
+	btn.offset_top    = btn.offset_bottom - SIZE
+	btn.offset_left   = btn.offset_right  - SIZE
 
 func _process(delta: float) -> void:
 	_update_aspect()
@@ -1264,10 +1423,32 @@ func _process(delta: float) -> void:
 	if _orbital_layer != null and is_instance_valid(_orbital_layer):
 		_orbital_layer._planet_radius   = planet_renderer._planet_radius_px
 		_orbital_layer._planet_rotation = planet_renderer.get_rotation_offset()
-		# Keep orbital center in sync with actual planet renderer center
 		var _oc: Control = planet_renderer.get_parent()
 		_orbital_layer._planet_center   = planet_renderer.global_position + planet_renderer.size * 0.5 - _oc.get_global_rect().position
 		_orbital_layer.queue_redraw()
+		# Keep ship panel glued to selected ship, on opposite side from nameplate leader
+		if _ship_panel != null and is_instance_valid(_ship_panel):
+			var sel: ShipData = _orbital_layer._selected_ship
+			if sel != null:
+				var sv := _orbital_layer._project(sel, sel.orbit_angle)
+				var spos := _orbital_layer._planet_center + Vector2(sv.x, sv.y)
+				var panel_size := _ship_panel.size
+				var cont_size  := _oc.size
+				# Nameplate leader goes toward the side AWAY from planet center;
+				# panel goes to the OPPOSITE side (toward planet center).
+				var center_x := cont_size.x * 0.5
+				var label_goes_right: bool = spos.x >= center_x
+				var px: float
+				if label_goes_right:
+					# Nameplate right → panel LEFT
+					px = spos.x - panel_size.x - 16.0
+				else:
+					# Nameplate left → panel RIGHT
+					px = spos.x + 16.0
+				px = clampf(px, 8.0, cont_size.x - panel_size.x - 8.0)
+				var py: float = spos.y - panel_size.y * 0.5
+				py = clampf(py, 8.0, cont_size.y - panel_size.y - 8.0)
+				_ship_panel.position = Vector2(px, py)
 		
 	if current_data != null:
 		var any_finished = false
@@ -1291,22 +1472,16 @@ func _process(delta: float) -> void:
 	if not _rocket_anim.is_empty():
 		_tick_rocket_anim(delta)
 
+var _was_dragging: bool = false
 func _update_cursor() -> void:
 	if planet_renderer == null or planet_renderer._planet_radius_px <= 0:
 		return
-	var mouse := get_viewport().get_mouse_position()
-	var vp    := get_viewport().get_visible_rect().size
-
-	# Drag takes highest priority
 	if planet_renderer._dragging:
-		_hovering_ui = false
 		CursorManager.set_state(CursorManager.State.GRAB)
-		return
-	# POI hover
-	if poi_layer._hovered_index >= 0:
-		CursorManager.set_state(CursorManager.State.POINTER)
-		return
-	CursorManager.set_state(CursorManager.State.NORMAL)
+		_was_dragging = true
+	elif _was_dragging:
+		CursorManager.set_state(CursorManager.State.NORMAL)
+		_was_dragging = false
 
 func _apply_light_angle() -> void:
 	if planet_renderer == null:
@@ -1327,8 +1502,6 @@ func _rotate_to_lon(lon_deg: float, duration: float = 0.45) -> void:
 		current, current + diff, duration)
 
 func _on_planet_clicked(_screen_pos: Vector2) -> void:
-	if _orbital_layer != null and is_instance_valid(_orbital_layer):
-		_orbital_layer.deselect()
 	var center := planet_renderer.size * 0.5
 	var local_click := _screen_pos - center
 	var ar: float = planet_renderer.size.x / planet_renderer.size.y if planet_renderer.size.y > 0 else 1.0
@@ -1342,8 +1515,10 @@ func _on_planet_clicked(_screen_pos: Vector2) -> void:
 		
 		var lat_d := rad_to_deg(lat_rad)
 		var lon_d := rad_to_deg(actual_lon)
-		var text := "%.1f, %.1f" % [lon_d, lat_d]
-		poi_layer.spawn_floating_text(lon_d, lat_d, text, Color(0.4, 1.0, 0.4), 7)
+		
+		if DevConsole.show_planet_coords:
+			var text := "%.1f : %.1f" % [lon_d, lat_d]
+			poi_layer.spawn_floating_text(lon_d, lat_d, text, Color(0.4, 1.0, 0.4), 7)
 
 	poi_layer.deselect_all()
 	_build_planet_overview(current_data)
@@ -1603,7 +1778,7 @@ func _build_district_overview_card(poi: POIData, planet: PlanetData, pp: PlanetP
 		cap_card.add_theme_stylebox_override("panel", hov_s2)
 		if cap_poi.constructing:
 			TooltipManager.show_tip("Constructing", "This District is not fully operational yet.")
-		if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER))
+		CursorManager.set_state(CursorManager.State.POINTER))
 	card.mouse_exited.connect(func() -> void:
 		cap_card.add_theme_stylebox_override("panel", norm_s2)
 		TooltipManager.hide_tip()
@@ -1670,7 +1845,7 @@ func _build_add_district_card(data: PlanetData, enabled: bool) -> VBoxContainer:
 
 	if enabled:
 		card.mouse_entered.connect(func() -> void:
-			if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER))
+			CursorManager.set_state(CursorManager.State.POINTER))
 		card.mouse_exited.connect(func() -> void:
 			CursorManager.set_state(CursorManager.State.NORMAL))
 		# Dropdown panel — appended to wrapper, appears below card
@@ -1739,7 +1914,7 @@ func _build_district_type_row(data: PlanetData, def: DistrictDef,
 
 	var cost_str := HUDManager.fmt_credits(cost)
 	btn.mouse_entered.connect(func() -> void:
-		if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER)
+		CursorManager.set_state(CursorManager.State.POINTER)
 		var t_title = def.display_name
 		var t_desc = def.description
 		if not can_afford:
@@ -2044,23 +2219,25 @@ func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callabl
 	rocket.draw.connect(func() -> void:
 		if _rocket_anim.is_empty():
 			return
-		var flame_a:    float   = _rocket_anim.get("flame_alpha", 1.0)
-		var cl:         Vector2 = _rocket_anim.get("center_local", Vector2.ZERO)
-		var rocket_off: Vector2 = rocket.position - cl
-		var exhaust_dir: Vector2 = -rocket_off.normalized() if rocket_off.length() > 1.0 else Vector2.DOWN
-		if flame_a > 0.01:
-			var back: Vector2 = exhaust_dir * 4.0
-			for fi: int in 5:
-				var fa: float = flame_a * (0.35 + randf() * 0.65)
-				var fc: Color
-				if fi < 2:   fc = Color(1.0, 0.35 + randf() * 0.5, 0.05, fa)
-				elif fi < 4: fc = Color(1.0, 0.80, 0.20, fa * 0.6)
-				else:        fc = Color(0.9, 0.4, 0.1, fa * 0.35)
-				rocket.draw_rect(Rect2((back + Vector2(randf_range(-2,2), randf_range(-2,2))).floor(), Vector2.ONE), fc)
+		var flame_a:     float   = _rocket_anim.get("flame_alpha", 1.0)
+		var boosters_gone: bool = _rocket_anim.get("boosters_spawned", false)
+		# Exhaust: opposite of actual travel direction (velocity-based)
+		var travel: Vector2 = _rocket_anim.get("travel_dir", Vector2.UP)
+		var exhaust_dir: Vector2 = -travel
+		if flame_a > 0.01 and not boosters_gone:
+			# 3-step exhaust trail: bright core → dimmer tail
+			var e := exhaust_dir
+			var b1 := (e * 4.0).floor()   # close — bright orange 2×2
+			var b2 := (e * 7.0).floor()   # mid   — dim orange 2×2
+			var b3 := (e * 10.0).floor()  # far   — faint 1×1 ember
+			var hue: float = 0.45 + randf() * 0.25
+			rocket.draw_rect(Rect2(b1, Vector2(2, 2)), Color(1.0, hue, 0.05, flame_a * 0.95))
+			rocket.draw_rect(Rect2(b2, Vector2(2, 2)), Color(1.0, hue * 0.6, 0.02, flame_a * 0.55))
+			rocket.draw_rect(Rect2(b3, Vector2(1, 1)), Color(1.0, 0.3, 0.0,  flame_a * 0.25))
 		var col := Color(1, 1, 1, 0.95)
 		var p   := Vector2.ZERO
-		if _rocket_anim.get("boosters_spawned", false):
-			# Post-separation: smaller T — 4px wide bar on top + 1 stem block below
+		if boosters_gone:
+			# Post-separation: T shape
 			rocket.draw_rect(Rect2(p + Vector2(-2, -2), Vector2(2, 2)), col)
 			rocket.draw_rect(Rect2(p + Vector2( 0, -2), Vector2(2, 2)), col)
 			rocket.draw_rect(Rect2(p,                   Vector2(2, 2)), col)
@@ -2205,7 +2382,7 @@ func _tick_rocket_anim(delta: float) -> void:
 							var a: float = bp_ref["angle"]
 							bp_node.draw_set_transform(Vector2.ZERO, a, Vector2.ONE)
 							bp_node.draw_rect(Rect2(Vector2(-3, -1), Vector2(6, 2)),
-								Color(1.0, 0.8, 0.3, bp_ref["alpha"]))
+								Color(1.0, 1.0, 1.0, bp_ref["alpha"]))
 							bp_node.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE))
 					d["booster_particles"].append(bp_data)
 
@@ -2245,7 +2422,13 @@ func _tick_rocket_anim(delta: float) -> void:
 		- d["container"].get_global_rect().position
 	d["center_local"] = center
 	var offset:  Vector2 = Vector2(sin(lon_eff) * cos(lat), -sin(lat)) * r
+	var prev_rpos: Vector2 = d.get("prev_rocket_pos", center + offset)
 	rocket.position = center + offset
+	# Travel direction: from previous position to current (velocity vector)
+	var travel_delta: Vector2 = rocket.position - prev_rpos
+	if travel_delta.length() > 0.1:
+		d["travel_dir"] = travel_delta.normalized()
+	d["prev_rocket_pos"] = rocket.position
 
 	# ── Occlusion: hide when behind planet ────────────────────────────────────────
 	var depth: float = cos(lon_eff) * cos(lat)
@@ -2260,9 +2443,11 @@ func _tick_rocket_anim(delta: float) -> void:
 	var near: bool    = mp.distance_to(rp) < 12.0
 	if near and not d["hover_active"]:
 		d["hover_active"] = true
+		CursorManager.set_state(CursorManager.State.POINTER)
 		TooltipManager.show_tip("Shuttle", "· launching to orbit")
 	elif not near and d["hover_active"]:
 		d["hover_active"] = false
+		CursorManager.set_state(CursorManager.State.NORMAL)
 		TooltipManager.hide_tip()
 
 	if finished:
@@ -2308,6 +2493,7 @@ func _finish_rocket_anim() -> void:
 	if rocket != null and is_instance_valid(rocket):
 		rocket.queue_free()
 	TooltipManager.hide_tip()
+	CursorManager.set_state(CursorManager.State.NORMAL)
 
 	var rot_now: float = planet_renderer.get_rotation_offset()
 	var orbit_r: float = planet_renderer._planet_radius_px * 1.06
@@ -2344,57 +2530,42 @@ func _finish_rocket_anim() -> void:
 	# Full analytical 3-DOF solve: orbit_angle, orbit_inc, orbit_node
 	# such that position = (tx,ty) AND tangent direction matches sweep direction.
 	#
-	# Velocity direction at insertion: use sweep_sign (not position delta).
-	# Position delta (end - start) fails for large sweeps (>180°) where the chord
-	# points AGAINST the travel direction, selecting the wrong orbit branch.
-	var rdx_raw: float  = d["sweep_sign"] * cos(lat_final)   # screen tangent x ∝ sweep_sign·cos(lat)
-	var rdy_raw: float  = d["lat_target"] - d["poi_lat"]      # lat change gives tangent y sign
-	var rlen:      float = maxf(sqrt(rdx_raw * rdx_raw + rdy_raw * rdy_raw), 0.001)
-	var rdx:       float = rdx_raw / rlen
-	var rdy:       float = rdy_raw / rlen
+	# rdx_raw used only for speed_sign (sweep direction, reliable).
+	var rdx_raw: float = d["sweep_sign"] * cos(lat_final)
+	var rdy_raw: float = ty - (-sin(d["poi_lat"]))   # kept for speed_sign dot product
 
-	# Solution (derived from P⊥V on circular orbit):
-	#   sin_inc = sqrt(ty²+rdy²)  [always positive — sign comes from a and node]
-	#   a = atan2(ty, rdy)
-	var sin_inc_sq: float = clampf(ty * ty + rdy * rdy, 0.0, 1.0)
-	var sin_inc:    float = sqrt(sin_inc_sq)
-	var cos_inc:    float = sqrt(maxf(0.0, 1.0 - sin_inc_sq))
+	# Orbit angle fixed at ±π/2 based on hemisphere:
+	#   At a = ±π/2, the orbit is at its latitude apex/nadir and velocity is purely horizontal.
+	#   This guarantees sin_inc = |ty| ≤ 1 always — no clamping needed.
+	orbit_angle = PI * 0.5 if ty >= 0.0 else -PI * 0.5
+	var sin_inc: float = absf(ty)
+	var cos_inc: float = sqrt(maxf(0.0, 1.0 - sin_inc * sin_inc))
+	orbit_inc = asin(sin_inc)
 
-	orbit_angle = atan2(ty, rdy)
-	orbit_inc   = asin(clampf(sin_inc, 0.0, 1.0))
-
-	# Solve for orbit_node (R) from the position equation only:
-	#   cos(a)*cos(R) + sin(a)*cos_inc*sin(R) = tx
-	#   amplitude = sqrt(cos²a + sin²a*cos²_inc) = cos(lat_final)
-	# Two valid solutions — pick the one whose orbit tangent x matches sweep_sign.
-	var sa: float = sin(orbit_angle)
-	var ca: float = cos(orbit_angle)
-	var amp: float = sqrt(maxf(0.0, 1.0 - ty * ty))   # = cos(lat_final)
-	var phase: float = atan2(sa * cos_inc, ca)
-	var R: float
-	if amp > 0.001:
-		var delta: float = acos(clampf(tx / amp, -1.0, 1.0))
-		var R1: float = phase + delta
-		var R2: float = phase - delta
-		# Tangent x at each candidate: -sa*cos(R) + ca*cos_inc*sin(R)
-		var t1: float = -sa * cos(R1) + ca * cos_inc * sin(R1)
-		var t2: float = -sa * cos(R2) + ca * cos_inc * sin(R2)
-		# Pick branch matching sweep direction (sweep_sign is reliable; position delta is not)
-		R = R1 if (t1 * d["sweep_sign"] >= 0.0) else R2
-	else:
-		# High-latitude insertion: sweep_sign determines left/right node
-		R = (PI * 0.5 if d["sweep_sign"] >= 0.0 else -PI * 0.5) + atan2(ty * cos_inc, 0.001)
+	# Solve for orbit_node from position at a = ±π/2:
+	#   rx = sin(a)*cos_inc*sin(R) = ±cos_inc*sin(R) = tx
+	#   → sin(R) = tx / (sign(a)*cos_inc) = sign(ty)*sin(lon_final)
+	# Two solutions (same screen x, opposite orbit orientation):
+	var sign_ty: float = 1.0 if ty >= 0.0 else -1.0
+	var sin_R: float = clampf(sign_ty * sin(lon_final), -1.0, 1.0)
+	var R1: float = asin(sin_R)            # ∈ [-π/2, π/2]
+	var R2: float = PI - R1                # second arc with same sin
+	# vx at a = ±π/2: -sin(a)*cos(R) = -sign_ty*cos(R)
+	# Pick branch so that vx * sweep_sign ≥ 0
+	var R: float = R1 if (-sign_ty * cos(R1) * sweep_s >= 0.0) else R2
 	orbit_node = R - rot_now
 
-	# Tangent at orbit_angle is (rdx, rdy) for speed_sign=+1 by construction.
-	# Verify sign against sweep direction to handle any degenerate edge case.
+	# Verify orbit direction: if (p2-p1) is in the sweep_sign direction, speed is positive.
 	var eff_rot2: float   = rot_now + orbit_node
 	var p1:       Vector2 = _orbital_project_2d(orbit_angle,       orbit_inc, orbit_r, eff_rot2)
 	var p2:       Vector2 = _orbital_project_2d(orbit_angle + 0.002, orbit_inc, orbit_r, eff_rot2)
-	var speed_sign: float = 1.0 if (p2 - p1).dot(Vector2(rdx_raw, rdy_raw)) >= 0.0 else -1.0
+	var speed_sign: float = 1.0 if (p2 - p1).x * rdx_raw >= 0.0 else -1.0
 
 
 
+	print("[ORBIT] lon_final=%.1f° ty=%.3f | a=%.3f inc=%.1f° node=%.1f° R=%.1f° rot_now=%.1f°" % [
+		rad_to_deg(lon_final), ty, orbit_angle,
+		rad_to_deg(orbit_inc), rad_to_deg(orbit_node), rad_to_deg(R), rad_to_deg(rot_now)])
 	var ship := ShipManager.launch(d["planet_seed"], "Shuttle")
 	ship.orbit_angle       = orbit_angle
 	ship.orbit_inclination = orbit_inc
@@ -2822,7 +2993,7 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 				tip_str += "\n(Click to switch alternative mineral)"
 
 			chip_btn.mouse_entered.connect(func() -> void:
-				if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER)
+				CursorManager.set_state(CursorManager.State.POINTER)
 				TooltipManager.show_tip(current_rd.unique_name, tip_str))
 			chip_btn.mouse_exited.connect(func() -> void:
 				CursorManager.set_state(CursorManager.State.NORMAL)
@@ -2900,7 +3071,7 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 	else:
 		tip_add = "Stack one more %s\n%.0f cr · %d slot" % [def.display_name, def.base_cost, def.slot_cost]
 	add_btn.mouse_entered.connect(func() -> void:
-		if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER)
+		CursorManager.set_state(CursorManager.State.POINTER)
 		TooltipManager.show_tip("＋ " + def.display_name, tip_add))
 	add_btn.mouse_exited.connect(func() -> void:
 		CursorManager.set_state(CursorManager.State.NORMAL)
@@ -2930,7 +3101,7 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 	rem_btn.add_theme_color_override("font_color", Color(0.90, 0.45, 0.45))
 	var tip_rem := "Remove one %s" % def.display_name if count > 1 else "Demolish %s" % def.display_name
 	rem_btn.mouse_entered.connect(func() -> void:
-		if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER)
+		CursorManager.set_state(CursorManager.State.POINTER)
 		TooltipManager.show_tip("−", tip_rem))
 	rem_btn.mouse_exited.connect(func() -> void:
 		CursorManager.set_state(CursorManager.State.NORMAL)
@@ -3120,7 +3291,7 @@ func _build_slot_card(poi: POIData, planet: PlanetData, pp: PlanetProgress,
 	card.add_child(plus)
 
 	card.mouse_entered.connect(func() -> void:
-		if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER)
+		CursorManager.set_state(CursorManager.State.POINTER)
 		plus.add_theme_color_override("font_color", Color(0.55, 0.65, 1.0, 0.9)))
 	card.mouse_exited.connect(func() -> void:
 		CursorManager.set_state(CursorManager.State.NORMAL)
@@ -3422,7 +3593,7 @@ func _toggle_mineral_dropdown(btn: Control, raw_list: Array, target_key: String,
 			_build_district_panel(cap_poi, cap_planet))
 		
 		alt_btn.mouse_entered.connect(func() -> void:
-			if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER)
+			CursorManager.set_state(CursorManager.State.POINTER)
 			TooltipManager.show_tip("Switch to:", cap_alternative.unique_name))
 		alt_btn.mouse_exited.connect(func() -> void:
 			CursorManager.set_state(CursorManager.State.NORMAL)
@@ -3524,7 +3695,7 @@ func _build_district_panel(poi: POIData, planet: PlanetData) -> void:
 	upg_btn.add_theme_color_override("font_color",
 		Color(0.9, 0.82, 0.45) if GameState.credits >= upg_cost else Color(0.35, 0.38, 0.50))
 	upg_btn.mouse_entered.connect(func() -> void:
-		if not _is_at_edge(): CursorManager.set_state(CursorManager.State.POINTER)
+		CursorManager.set_state(CursorManager.State.POINTER)
 		TooltipManager.show_tip("Upgrade District",
 			"Increases slot capacity by 2.", "%d cr" % upg_cost))
 	upg_btn.mouse_exited.connect(func() -> void:
