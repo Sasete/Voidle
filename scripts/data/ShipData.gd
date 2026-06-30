@@ -39,6 +39,17 @@ extends Resource
 ## Speed before rendezvous override (restored on arrival/cancel).
 @export var rendezvous_base_speed: float  = 0.0
 
+## Active mission task chain and current execution index.
+@export var mission_tasks:      Array = []
+@export var mission_task_index: int   = 0
+
+## Mission: "deliver" | "pickup" | ""
+@export var transfer_dir:      String = ""
+## Resource to pick up (pickup only; deliver uses cargo).
+@export var transfer_resource: String = ""
+## Amount to pick up (pickup only).
+@export var transfer_amount:   int    = 0
+
 ## Destination planet seed (-1 = parked in orbit).
 @export var dest_seed:    int    = -1
 

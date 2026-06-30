@@ -28,6 +28,7 @@ const LIGHT_SPEED: float = 0.04   # radians per second
 var _active_district_poi: POIData = null
 var _overview_energy_val: Label = null   # kept for live energy updates
 var _orbital_layer: OrbitalLayer = null
+var _mission_builder_overlay: Control = null  # non-null while Mission Builder is open
 
 ## Active rocket launch animation state. Empty when no launch in progress.
 ## Keys: rocket(Control), radius(float), angle_rel(float), alpha(float),
@@ -45,6 +46,8 @@ var _open_mineral_switchers: Dictionary = {}
 
 ## Live district construction progress bars.
 var _district_pbars: Dictionary = {}
+var _planet_upgrade_pbar: ProgressBar = null
+
 func _make_system(root: PlanetData) -> Array[PlanetData]:
 	var arr: Array[PlanetData] = [root]
 	for m in root.moons:
@@ -76,6 +79,7 @@ func _ready() -> void:
 			else:
 				_build_district_panel(_active_district_poi, current_data))
 	_refresh_solar_btn()
+	_register_mission_tasks()
 
 	# load from transition if navigating from SolarView or first launch
 	var planet_to_load: PlanetData = SceneTransition.pending_data as PlanetData
@@ -1130,8 +1134,54 @@ func _register_ship_commands(layer: OrbitalLayer) -> void:
 	ShipCommandRegistry.register_callable("rendezvous",
 		func(ship: ShipData, _l: OrbitalLayer) -> void:
 			_show_rendezvous_picker(ship, layer))
-	layer.rendezvous_reached.connect(func(ship: ShipData, target: ShipData) -> void:
-		_show_transfer_panel(ship, target, layer))
+	if layer.rendezvous_reached.get_connections().is_empty():
+		layer.rendezvous_reached.connect(func(ship: ShipData, target: ShipData) -> void:
+			# rendezvous reached
+			# Floating text at meeting point
+			var sv := layer._project(ship, ship.orbit_angle)
+			var r: float = layer._planet_radius * ship.orbit_radius
+			var nx: float = sv.x / r; var ny: float = sv.y / r
+			var lat_r: float = -asin(clampf(ny, -1.0, 1.0))
+			var lon_r: float = asin(clampf(nx / maxf(cos(lat_r), 0.01), -1.0, 1.0))
+			poi_layer.spawn_floating_text(
+				rad_to_deg(lon_r + layer._planet_rotation), rad_to_deg(lat_r),
+				"Rendezvous", Color(0.30, 0.92, 1.0, 1.0), 12)
+			# Execute rendezvous_tasks from the current move_station entry
+			var lon_deg2: float = rad_to_deg(lon_r + layer._planet_rotation)
+			var lat_deg2: float = rad_to_deg(lat_r) + 2.0
+			var ms_task: Dictionary = ship.mission_tasks[ship.mission_task_index]
+			ship.mission_task_index += 1  # past move_station
+			for t: Dictionary in ms_task.get("rendezvous_tasks", []):
+				var ttype: String = t.get("type", "")
+				if ttype == "deliver":
+					for res_id: String in ship.cargo:
+						target.cargo[res_id] = target.cargo.get(res_id, 0) + ship.cargo[res_id]
+					ship.cargo.clear()
+					poi_layer.spawn_floating_text(lon_deg2, lat_deg2, "Delivered!", Color(0.35, 1.0, 0.50, 1.0), 11)
+				elif ttype == "pickup":
+					var res_id: String = t.get("transfer_resource", "")
+					var want: int      = t.get("transfer_amount", 0)
+					var avail: int     = int(target.cargo.get(res_id, 0))
+					var take: int      = mini(want, avail)
+					if take > 0:
+						target.cargo[res_id] = avail - take
+						ship.cargo[res_id]   = ship.cargo.get(res_id, 0) + take
+					poi_layer.spawn_floating_text(lon_deg2, lat_deg2, "Loaded x%d!" % take, Color(0.35, 1.0, 0.50, 1.0), 11)
+			# Normalize orbit_node for clean landing trajectory
+			if ship.orbit_node != 0.0:
+				var anchor: Vector2 = layer._project_2d(ship, ship.orbit_angle)
+				ship.orbit_node = 0.0
+				var a: float = ship.orbit_angle
+				for _i: int in 16:
+					var p0: Vector2 = layer._project_2d(ship, a)
+					var p1: Vector2 = layer._project_2d(ship, a + 0.005)
+					var tangent: Vector2 = (p1 - p0) / 0.005
+					var err: Vector2 = p0 - anchor
+					if tangent.length_squared() < 0.0001:
+						break
+					a -= err.dot(tangent) / tangent.length_squared()
+				ship.orbit_angle = a
+			_advance_mission(ship))
 
 ## Ship info panel — appears at bottom-left of planet view when a ship is selected.
 func _show_ship_panel(ship: ShipData, layer: OrbitalLayer) -> void:
@@ -1586,6 +1636,10 @@ func _process(delta: float) -> void:
 					piv.position = _orbital_layer._planet_center + Vector2(sv.x, sv.y)
 
 	if current_data != null:
+		var pp := GameState.get_planet(current_data.seed)
+		if pp != null and _planet_upgrade_pbar != null and is_instance_valid(_planet_upgrade_pbar):
+			_planet_upgrade_pbar.value = pp.upgrade_progress * 100.0
+
 		var any_finished = false
 		for poi_label in _district_pbars:
 			var pbar: ProgressBar = _district_pbars[poi_label]
@@ -1665,6 +1719,204 @@ func _on_planet_clicked(_screen_pos: Vector2) -> void:
 
 	poi_layer.deselect_all()
 	_build_planet_overview(current_data)
+
+func _show_level_up_popup(pp: PlanetProgress) -> void:
+	if pp.is_upgrading:
+		return
+		
+	# Full-screen dim overlay
+	var overlay := ColorRect.new()
+	overlay.color = Color(0.0, 0.0, 0.0, 0.6)
+	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	overlay.z_index = 250
+	
+	var popup := PanelContainer.new()
+	var ps := StyleBoxFlat.new()
+	ps.bg_color = Color(0.06, 0.09, 0.18, 0.97)
+	ps.border_color = Color(0.25, 0.45, 0.80, 0.55)
+	ps.set_border_width_all(1)
+	ps.set_corner_radius_all(6)
+	ps.content_margin_left = 20; ps.content_margin_right = 20
+	ps.content_margin_top = 20; ps.content_margin_bottom = 20
+	popup.add_theme_stylebox_override("panel", ps)
+	
+	# Center popup inside overlay
+	popup.set_anchors_preset(Control.PRESET_CENTER)
+	popup.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	popup.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 16)
+	
+	var req_title := Label.new()
+	req_title.text = "Level Up to %d" % (pp.level + 1)
+	req_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_apply_orbitron(req_title, 14)
+	req_title.add_theme_color_override("font_color", Color(0.85, 0.90, 1.0))
+	vbox.add_child(req_title)
+	
+	var cost := pp.get_upgrade_cost()
+	var can_afford := true
+	
+	if cost.has("credits"):
+		var has_amt: float = GameState.credits
+		var cost_amt: float = cost["credits"]
+		
+		var cred_box := HBoxContainer.new()
+		cred_box.alignment = BoxContainer.ALIGNMENT_CENTER
+		cred_box.add_theme_constant_override("separation", 12)
+		
+		var c_lbl := Label.new()
+		c_lbl.text = "Credits:"
+		_apply_orbitron(c_lbl, 10)
+		c_lbl.add_theme_color_override("font_color", Color(0.9, 0.82, 0.25))
+		
+		var v_lbl := Label.new()
+		v_lbl.text = "%d / %d" % [has_amt, cost_amt]
+		_apply_orbitron(v_lbl, 10)
+		
+		if has_amt >= cost_amt:
+			v_lbl.add_theme_color_override("font_color", Color(0.4, 0.9, 0.4))
+		else:
+			v_lbl.add_theme_color_override("font_color", Color(0.9, 0.4, 0.4))
+			can_afford = false
+			
+		cred_box.add_child(c_lbl)
+		cred_box.add_child(v_lbl)
+		vbox.add_child(cred_box)
+		
+	var res_flow := HFlowContainer.new()
+	res_flow.alignment = FlowContainer.ALIGNMENT_CENTER
+	res_flow.add_theme_constant_override("h_separation", 8)
+	res_flow.add_theme_constant_override("v_separation", 8)
+	
+	for k in cost.keys():
+		var k_str: String = str(k)
+		if k_str == "credits":
+			continue
+			
+		var cost_amt: float = cost[k]
+		var has_amt: float = 0.0
+		var display_rd: ResourceData = null
+		
+		if k_str.begins_with("ANY_T"):
+			var tier := k_str.trim_prefix("ANY_T").to_int()
+			for rid: String in pp.stored_resources:
+				var rd: ResourceData = GameState.known_resources.get(rid) as ResourceData
+				if rd != null and rd.tag == ResourceData.Tag.RAW_MINERAL and rd.tier == tier:
+					has_amt += pp.stored_resources[rid]
+			
+			display_rd = ResourceData.new()
+			display_rd.tier = tier
+			display_rd.rarity = 1
+			display_rd.display_color = Color(0.65, 0.65, 0.70)
+			display_rd.unique_name = "Any T%d Mineral" % tier
+		else:
+			has_amt = pp.stored_resources.get(k_str, 0.0)
+			display_rd = GameState.known_resources.get(k_str) as ResourceData
+		
+		if has_amt < cost_amt:
+			can_afford = false
+			
+		if display_rd != null:
+			var card := _mineral_grid_card(display_rd, has_amt, true, "", pp)
+			
+			var card_vbox = card.get_child(0)
+			var lbl = card_vbox.get_child(1) as Label
+			lbl.text = "%d/%d" % [has_amt, cost_amt]
+			if has_amt >= cost_amt:
+				lbl.add_theme_color_override("font_color", Color(0.4, 0.9, 0.4))
+			else:
+				lbl.add_theme_color_override("font_color", Color(0.9, 0.4, 0.4))
+				
+			res_flow.add_child(card)
+			
+	if res_flow.get_child_count() > 0:
+		vbox.add_child(res_flow)
+	
+	var rew_lbl := Label.new()
+	rew_lbl.text = "Upon Level Up:\n+2 Max Districts\n+1 Max District Level"
+	rew_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_apply_orbitron(rew_lbl, 9)
+	rew_lbl.add_theme_color_override("font_color", Color(0.8, 0.7, 0.3))
+	vbox.add_child(rew_lbl)
+	
+	var btns := HBoxContainer.new()
+	btns.alignment = BoxContainer.ALIGNMENT_CENTER
+	btns.add_theme_constant_override("separation", 24)
+	
+	var cancel := Button.new()
+	cancel.text = "CANCEL"
+	_apply_orbitron(cancel, 10)
+	var cancel_sb := StyleBoxFlat.new()
+	cancel_sb.bg_color = Color(0.15, 0.15, 0.2)
+	cancel_sb.set_corner_radius_all(4)
+	cancel_sb.content_margin_top = 6; cancel_sb.content_margin_bottom = 6
+	cancel_sb.content_margin_left = 12; cancel_sb.content_margin_right = 12
+	cancel.add_theme_stylebox_override("normal", cancel_sb)
+	cancel.pressed.connect(func(): overlay.queue_free())
+	btns.add_child(cancel)
+	
+	var up_btn := Button.new()
+	up_btn.text = "CONFIRM"
+	_apply_orbitron(up_btn, 10)
+	var btn_sb := StyleBoxFlat.new()
+	btn_sb.bg_color = Color(0.2, 0.45, 0.7) if can_afford else Color(0.2, 0.25, 0.35)
+	btn_sb.set_corner_radius_all(4)
+	btn_sb.content_margin_top = 6; btn_sb.content_margin_bottom = 6
+	btn_sb.content_margin_left = 12; btn_sb.content_margin_right = 12
+	up_btn.add_theme_stylebox_override("normal", btn_sb)
+	up_btn.add_theme_color_override("font_color", Color.WHITE if can_afford else Color(0.5, 0.55, 0.6))
+	up_btn.disabled = not can_afford
+	up_btn.pressed.connect(func():
+		for k in cost.keys():
+			var k_str: String = str(k)
+			if k_str == "credits":
+				GameState.spend_credits(cost[k])
+			elif k_str.begins_with("ANY_T"):
+				var tier := k_str.trim_prefix("ANY_T").to_int()
+				var remain: float = cost[k]
+				var available: Array[ResourceData] = []
+				for rid: String in pp.stored_resources:
+					var rd: ResourceData = GameState.known_resources.get(rid) as ResourceData
+					if rd != null and rd.tag == ResourceData.Tag.RAW_MINERAL and rd.tier == tier and pp.stored_resources[rid] > 0:
+						available.append(rd)
+				available.sort_custom(func(a: ResourceData, b: ResourceData) -> bool: return a.rarity < b.rarity)
+				for rd: ResourceData in available:
+					var rid := rd.resource_id()
+					var take: float = minf(remain, pp.stored_resources[rid])
+					pp.stored_resources[rid] -= take
+					remain -= take
+					if remain <= 0.01:
+						break
+			else:
+				pp.stored_resources[k_str] = pp.stored_resources.get(k_str, 0.0) - cost[k]
+		pp.is_upgrading = true
+		pp.upgrade_progress = 0.0
+		if current_data != null:
+			_build_planet_overview(current_data)
+		overlay.queue_free()
+	)
+	btns.add_child(up_btn)
+	
+	vbox.add_child(btns)
+	
+	# Close on dim click
+	overlay.gui_input.connect(func(ev: InputEvent) -> void:
+		if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
+			overlay.queue_free()
+	)
+	# But stop clicks from falling through the popup to the dim background
+	popup.mouse_filter = Control.MOUSE_FILTER_STOP
+	
+	popup.add_child(vbox)
+	
+	var c := CenterContainer.new()
+	c.set_anchors_preset(Control.PRESET_FULL_RECT)
+	c.add_child(popup)
+	overlay.add_child(c)
+	
+	get_viewport().add_child(overlay)
 
 func _make_overview_tab_btn(label: String, is_active: bool) -> Button:
 	var btn := Button.new()
@@ -1871,6 +2123,58 @@ func _build_planet_overview(data: PlanetData) -> void:
 		for ship: ShipData in ships:
 			var ship_card := _build_orbital_ship_card(ship)
 			orbital_page.add_child(ship_card)
+			
+	# Push the rest to the bottom
+	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var spacer := Control.new()
+	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	root.add_child(spacer)
+
+	# --- LEVEL UP SECTION ---
+	var lvl_sep := HSeparator.new()
+	var sep_style := StyleBoxFlat.new()
+	sep_style.bg_color = Color(0.2, 0.25, 0.4, 0.35)
+	lvl_sep.add_theme_stylebox_override("separator", sep_style)
+	root.add_child(lvl_sep)
+
+	if pp.is_upgrading:
+		var up_lbl := Label.new()
+		up_lbl.text = "UPGRADING TO LV %d..." % (pp.level + 1)
+		up_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_apply_orbitron(up_lbl, 10)
+		up_lbl.add_theme_color_override("font_color", Color(0.4, 0.9, 0.4))
+		root.add_child(up_lbl)
+
+		_planet_upgrade_pbar = ProgressBar.new()
+		_planet_upgrade_pbar.custom_minimum_size.y = 12
+		_planet_upgrade_pbar.show_percentage = false
+		_planet_upgrade_pbar.value = pp.upgrade_progress * 100.0
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color(0.1, 0.1, 0.15)
+		var sbf := StyleBoxFlat.new()
+		sbf.bg_color = Color(0.4, 0.9, 0.4)
+		_planet_upgrade_pbar.add_theme_stylebox_override("background", sb)
+		_planet_upgrade_pbar.add_theme_stylebox_override("fill", sbf)
+		root.add_child(_planet_upgrade_pbar)
+	else:
+		_planet_upgrade_pbar = null
+		
+		var up_btn := Button.new()
+		up_btn.text = "LEVEL UP"
+		_apply_orbitron(up_btn, 12)
+		var btn_sb := StyleBoxFlat.new()
+		btn_sb.bg_color = Color(0.15, 0.4, 0.15)
+		btn_sb.content_margin_top = 10; btn_sb.content_margin_bottom = 10
+		up_btn.add_theme_stylebox_override("normal", btn_sb)
+		
+		var h_sb := StyleBoxFlat.new()
+		h_sb.bg_color = Color(0.2, 0.6, 0.2)
+		h_sb.content_margin_top = 10; h_sb.content_margin_bottom = 10
+		up_btn.add_theme_stylebox_override("hover", h_sb)
+		
+		up_btn.add_theme_color_override("font_color", Color.WHITE)
+		up_btn.pressed.connect(func(): _show_level_up_popup(pp))
+		root.add_child(up_btn)
 
 	panel_content.add_child(root)
 
@@ -2484,7 +2788,9 @@ func _refresh_overview_energy() -> void:
 ## Starts a rocket launch animation. Multiple can run concurrently.
 func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callable,
 		sp_pm_key: String = "", ship_name: String = "Pioneer", ship_type: String = "shuttle",
-		ship_cargo: Dictionary = {}) -> void:
+		ship_cargo: Dictionary = {}, destination_ship_id: String = "",
+		transfer_dir: String = "", transfer_resource: String = "", transfer_amount: int = 0,
+		auto_land: bool = false, mission_tasks: Array = []) -> void:
 	var container: Control = planet_renderer.get_parent()
 	var planet_r:  float   = planet_renderer._planet_radius_px
 	const ORBIT_FRAC:       float = 1.06
@@ -2509,10 +2815,41 @@ func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callabl
 		if not p.is_empty():
 			start_r = p.get("r_px", planet_r)
 
-	# Random orbit insertion point: random longitude sweep + random target latitude
+	# Orbit insertion point: random by default, intercepted to destination if set.
 	var sweep_target: float = randf_range(PI * 0.15, PI * 0.75) * (1.0 if randf() > 0.5 else -1.0)
 	var sweep_sign:   float = sign(sweep_target)
 	var lat_target:   float = randf_range(-PI * 0.35, PI * 0.35)
+
+	# Predictive intercept — aim for where the station will be when we arrive.
+	if destination_ship_id != "":
+		var dest: ShipData = null
+		for s: ShipData in ShipManager.ships_for(planet_seed):
+			if s.ship_id == destination_ship_id:
+				dest = s; break
+		if dest != null:
+			var rot_at_launch: float = planet_renderer.get_rotation_offset()
+			var pred_a: float = dest.orbit_angle + dest.orbit_speed * launch_dur
+			var inc: float    = dest.orbit_inclination
+			var rot: float    = rot_at_launch + dest.orbit_node
+			# Project predicted station position (unit-radius normalized)
+			var px: float = cos(pred_a)
+			var py: float = sin(pred_a) * sin(inc)
+			var pz: float = sin(pred_a) * cos(inc)
+			var nx: float = px * cos(rot) + pz * sin(rot)
+			var ny: float = py
+			# Reverse the launch math:  ty = -sin(lat_final), tx = sin(lon_final)*cos(lat_final)
+			lat_target   = -asin(clampf(ny, -1.0, 1.0))
+			var cos_lat: float = cos(lat_target)
+			if abs(cos_lat) > 0.01:
+				var sin_lon: float = clampf(nx / cos_lat, -1.0, 1.0)
+				var lon1: float = asin(sin_lon)
+				var lon2: float = PI - lon1
+				var sw1: float  = wrapf(lon1 - poi_lon + rot_at_launch, -PI, PI)
+				var sw2: float  = wrapf(lon2 - poi_lon + rot_at_launch, -PI, PI)
+				sweep_target = sw1 if absf(sw1) < absf(sw2) else sw2
+				sweep_sign   = sign(sweep_target)
+			print("[INTERCEPT] pred_a=%.2f° target sweep=%.1f° lat=%.1f°" % [
+				rad_to_deg(pred_a), rad_to_deg(sweep_target), rad_to_deg(lat_target)])
 
 	# ── Rocket node ──────────────────────────────────────────────────────────────
 	var rocket := Control.new()
@@ -2605,9 +2942,15 @@ func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callabl
 		"hover_active":    false,
 		"on_complete":     on_complete,
 		"sp_pm_key":       sp_pm_key,
-		"ship_name":       ship_name,
-		"ship_type":       ship_type,
-		"ship_cargo":      ship_cargo,
+		"ship_name":            ship_name,
+		"ship_type":            ship_type,
+		"ship_cargo":           ship_cargo,
+		"destination_ship_id":  destination_ship_id,
+		"transfer_dir":         transfer_dir,
+		"transfer_resource":    transfer_resource,
+		"transfer_amount":      transfer_amount,
+		"auto_land":            auto_land,
+		"mission_tasks":        mission_tasks,
 	}
 	anim_ref.append(anim_d)
 	_rocket_anims.append(anim_d)
@@ -2857,7 +3200,8 @@ func _finish_rocket_anim(d: Dictionary) -> void:
 	
 	var lon_deg := rad_to_deg(d["poi_lon"] + d["sweep_target"])
 	var lat_deg := rad_to_deg(lat_final)
-	poi_layer.spawn_floating_text(lon_deg, lat_deg, "Orbit reached!", Color(0.15, 0.95, 0.45), 11)
+	if d.get("destination_ship_id", "") == "":
+		poi_layer.spawn_floating_text(lon_deg, lat_deg, "Orbit reached!", Color(0.15, 0.95, 0.45), 11)
 	var tx: float = sin(lon_final) * cos(lat_final)   # normalised
 	var ty: float = -sin(lat_final)
 
@@ -2923,21 +3267,6 @@ func _finish_rocket_anim(d: Dictionary) -> void:
 	else:
 		orbit_node = 0.0
 
-	var dbg_pos := _orbital_project_2d(orbit_angle, orbit_inc, orbit_r, rot_now + orbit_node)
-	# Rocket position relative to OrbitalLayer center (to compare with ship spawn)
-	var oc_center: Vector2 = planet_renderer.global_position + planet_renderer.size * 0.5 \
-		- container.get_global_rect().position
-	var ol_center: Vector2 = planet_renderer.global_position + planet_renderer.size * 0.5 \
-		- (_orbital_layer.get_global_rect().position if _orbital_layer != null else Vector2.ZERO)
-	var rocket_offset: Vector2 = (rocket_screen_pos - oc_center) / orbit_r
-	print("[ORBIT] lon_final=%.1f° lat_final=%.1f° tx=%.3f ty=%.3f | a=%.3f inc=%.1f° node=%.1f° rot_now=%.1f°" % [
-		rad_to_deg(lon_final), rad_to_deg(lat_final), tx, ty,
-		orbit_angle, rad_to_deg(orbit_inc), rad_to_deg(orbit_node), rad_to_deg(rot_now)])
-	print("[ORBIT] verify spawn=(%.3f,%.3f) rocket=(%.3f,%.3f)  oc_vs_ol center diff=%s" % [
-		dbg_pos.x / orbit_r, dbg_pos.y / orbit_r,
-		rocket_offset.x, rocket_offset.y,
-		str((oc_center - ol_center).round())])
-
 	var rdx_raw: float   = d["sweep_sign"] * cos(lat_final)
 	var eff_rot2: float  = rot_now + orbit_node
 	var p1: Vector2      = _orbital_project_2d(orbit_angle,         orbit_inc, orbit_r, eff_rot2)
@@ -2955,10 +3284,19 @@ func _finish_rocket_anim(d: Dictionary) -> void:
 	var _LD: float = d["launch_dur"]
 	var exit_rate: float = (_CF / _D) * (2.0 / _LD)
 	ship.orbit_speed = speed_sign * exit_rate
-	print("[ORBIT] spawned '%s' angle=%.3f inc=%.3f node=%.3f speed=%.4f" % [
-		ship.ship_name, ship.orbit_angle, ship.orbit_inclination, ship.orbit_node, ship.orbit_speed])
 	if _orbital_layer != null and is_instance_valid(_orbital_layer):
 		_orbital_layer.queue_redraw()
+
+	# Load mission task chain onto ship and advance past move_orbit (already done).
+	var tasks: Array = d.get("mission_tasks", [])
+	ship.mission_tasks      = tasks.duplicate(true)
+	ship.mission_task_index = 0
+	# Skip move_orbit and pick_planet — both are applied at launch time.
+	var _skip_types: Array = ["move_orbit", "pick_planet"]
+	while ship.mission_task_index < ship.mission_tasks.size() \
+			and _skip_types.has((ship.mission_tasks[ship.mission_task_index] as Dictionary).get("type", "")):
+		ship.mission_task_index += 1
+	_advance_mission(ship)
 
 	# Station: spawn a brief solar-panel deploy animation at insertion point
 	if ship.ship_type == "station" and _orbital_layer != null:
@@ -3680,13 +4018,13 @@ func _build_spaceport_card(def: BuildingDef, pm_key: String,
 		"configuring":
 			_sp_build_config(card, stack, left_vbox, hbox, def, pm_key, pp, poi, entry, rebuild_sp)
 		"preparing":
-			_sp_build_progress(left_vbox, hbox, pm_key, entry,
-				"Preparing…", Color(0.15, 0.88, 0.75, 0.85))
+			_sp_build_progress(left_vbox, hbox, pm_key, pp, entry,
+				"Preparing…", Color(0.15, 0.88, 0.75, 0.85), rebuild_sp)
 		"launch_ready":
 			_sp_build_launch_ready(left_vbox, hbox, def, pm_key, pp, poi, entry, rebuild_sp)
 		"cooldown":
-			_sp_build_progress(left_vbox, hbox, pm_key, entry,
-				"Recharging…", Color(0.85, 0.65, 0.20, 0.80))
+			_sp_build_progress(left_vbox, hbox, pm_key, pp, entry,
+				"Recharging…", Color(0.85, 0.65, 0.20, 0.80), rebuild_sp)
 
 	_bar_meta[pm_key] = {
 		"spaceport":   true,
@@ -3698,6 +4036,552 @@ func _build_spaceport_card(def: BuildingDef, pm_key: String,
 	}
 
 	return card
+
+## Register all built-in mission task types into MissionTaskRegistry.
+func _register_mission_tasks() -> void:
+	# ── Move to Orbit ────────────────────────────────────────────────────────
+	var move_orbit := MissionTaskDef.new()
+	move_orbit.task_type       = "move_orbit"
+	move_orbit.display_name    = "Move to Orbit"
+	move_orbit.required_status = ["on_pad"]
+	move_orbit.produced_status = "in_orbit"
+	move_orbit.build_params_ui = func(_c: Control, _e: Dictionary, _oc: Callable, _ctx: Dictionary) -> void: pass
+	move_orbit.estimate_cost   = func(_e: Dictionary, _ctx: Dictionary) -> float: return 80.0
+	MissionTaskRegistry.register(move_orbit)
+
+	# ── Move to Station ──────────────────────────────────────────────────────
+	var move_station := MissionTaskDef.new()
+	move_station.task_type       = "move_station"
+	move_station.display_name    = "Move to Station"
+	move_station.required_status = ["on_pad", "in_orbit"]
+	move_station.produced_status = "at_station:{target_id}"
+	move_station.build_params_ui = func(cont: Control, e: Dictionary, on_change: Callable, ctx: Dictionary) -> void:
+		for ch in cont.get_children(): ch.queue_free()
+		# Locate outer name_lbl (first child of the task row HBox).
+		# We hide it and put our own title inside ms_vbox so OnRendezvous fills full width.
+		var outer_lbl: Control = null
+		var outer_row_node: Node = cont.get_parent()
+		if outer_row_node != null and outer_row_node.get_child_count() > 0:
+			outer_lbl = outer_row_node.get_child(0) as Control
+		if outer_lbl != null:
+			outer_lbl.visible = false
+
+		# rebuild_ms restores outer_lbl visibility first, then rebuilds, so it gets hidden
+		# again cleanly — avoids the tree_exiting signal racing with the new build.
+		var rebuild_ms := func() -> void:
+			if outer_lbl != null and is_instance_valid(outer_lbl):
+				outer_lbl.visible = true
+			move_station.build_params_ui.call(cont, e, on_change, ctx)
+
+		var ms_vbox := VBoxContainer.new()
+		ms_vbox.add_theme_constant_override("separation", 3)
+		ms_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		ms_vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		cont.add_child(ms_vbox)
+
+		# ── Title + station selector on same row ─────────────────────────────────
+		var stations: Array = (ctx.get("ships", []) as Array).filter(
+			func(s: ShipData) -> bool: return s.ship_type == "station")
+		var st_row := HBoxContainer.new()
+		st_row.add_theme_constant_override("separation", 6)
+		ms_vbox.add_child(st_row)
+
+		var title_lbl := Label.new()
+		title_lbl.text = "Move to Station"
+		title_lbl.add_theme_font_size_override("font_size", 7)
+		title_lbl.add_theme_color_override("font_color", Color(0.75, 0.90, 1.0))
+		title_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		title_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		st_row.add_child(title_lbl)
+		if stations.is_empty():
+			var lbl := Label.new()
+			lbl.text = "No stations"
+			lbl.add_theme_font_size_override("font_size", 7)
+			lbl.add_theme_color_override("font_color", Color(0.70, 0.35, 0.35, 0.75))
+			lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			st_row.add_child(lbl)
+		else:
+			if not e.has("target_id") or not stations.any(func(s: ShipData) -> bool: return s.ship_id == e["target_id"]):
+				e["target_id"] = (stations[0] as ShipData).ship_id
+				on_change.call()
+			for st: ShipData in stations:
+				var cap_st: ShipData = st
+				var btn := Button.new()
+				btn.text = st.ship_name
+				btn.add_theme_font_size_override("font_size", 7)
+				var is_sel: bool = e.get("target_id", "") == st.ship_id
+				var bs := StyleBoxFlat.new()
+				bs.bg_color     = Color(0.06, 0.24, 0.18, 0.95) if is_sel else Color(0.05, 0.07, 0.15, 0.75)
+				bs.border_color = Color(0.20, 0.78, 0.52, 0.75) if is_sel else Color(0.28, 0.42, 0.35, 0.35)
+				bs.set_border_width_all(1); bs.set_corner_radius_all(3)
+				bs.content_margin_left = 6; bs.content_margin_right = 6
+				bs.content_margin_top = 3; bs.content_margin_bottom = 3
+				btn.add_theme_stylebox_override("normal", bs)
+				btn.add_theme_stylebox_override("hover",  bs)
+				btn.add_theme_color_override("font_color",
+					Color(0.35, 0.95, 0.65) if is_sel else Color(0.45, 0.62, 0.55))
+				btn.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
+				btn.mouse_exited.connect( func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
+				btn.pressed.connect(func() -> void:
+					e["target_id"] = cap_st.ship_id
+					on_change.call()
+					rebuild_ms.call())
+				st_row.add_child(btn)
+
+		# ── OnRendezvous sub-tasks ─────────────────────────────────────────────
+		if not e.has("rendezvous_tasks"):
+			e["rendezvous_tasks"] = []
+		var rdv_tasks: Array = e["rendezvous_tasks"]
+
+		var rdv_hdr := Label.new()
+		rdv_hdr.text = "On Rendezvous:"
+		rdv_hdr.add_theme_font_size_override("font_size", 6)
+		rdv_hdr.add_theme_color_override("font_color", Color(0.45, 0.65, 0.90, 0.65))
+		rdv_hdr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		ms_vbox.add_child(rdv_hdr)
+
+		for i: int in rdv_tasks.size():
+			var rt: Dictionary = rdv_tasks[i]
+			var rdef: MissionTaskDef = MissionTaskRegistry.get_def(rt.get("type", ""))
+			var rt_row := HBoxContainer.new()
+			rt_row.add_theme_constant_override("separation", 4)
+			ms_vbox.add_child(rt_row)
+			var rt_lbl := Label.new()
+			rt_lbl.text = rdef.display_name if rdef != null else rt.get("type", "?")
+			rt_lbl.add_theme_font_size_override("font_size", 7)
+			rt_lbl.add_theme_color_override("font_color", Color(0.75, 0.90, 1.0))
+			rt_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			rt_lbl.custom_minimum_size = Vector2(44, 0)
+			rt_row.add_child(rt_lbl)
+			var rt_params := HBoxContainer.new()
+			rt_params.add_theme_constant_override("separation", 3)
+			rt_params.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			if rdef != null and rdef.build_params_ui.is_valid():
+				var rdv_ctx: Dictionary = ctx.duplicate()
+				rdv_ctx["rdv_station_id"] = e.get("target_id", "")
+				# Compute what cargo the ship will have at rendezvous:
+				# collect all pick_planet tasks that precede this move_station in the chain.
+				var pending: Dictionary = {}
+				for chain_t: Dictionary in (ctx.get("entry", {}) as Dictionary).get("mission_tasks", []):
+					if chain_t == e: break
+					if chain_t.get("type", "") == "pick_planet":
+						for k: String in (chain_t.get("cargo", {}) as Dictionary).keys():
+							pending[k] = (chain_t["cargo"] as Dictionary)[k]
+				rdv_ctx["pending_cargo"] = pending
+				rdef.build_params_ui.call(rt_params, rt, func() -> void: on_change.call(), rdv_ctx)
+			rt_row.add_child(rt_params)
+			var cap_i: int = i
+			var del_btn := Button.new()
+			del_btn.text = "×"
+			del_btn.add_theme_font_size_override("font_size", 9)
+			var dbs := StyleBoxFlat.new()
+			dbs.bg_color = Color(0,0,0,0); dbs.set_border_width_all(0)
+			dbs.content_margin_left = 4; dbs.content_margin_right = 4
+			del_btn.add_theme_stylebox_override("normal", dbs)
+			del_btn.add_theme_stylebox_override("hover",  dbs)
+			del_btn.add_theme_color_override("font_color", Color(0.70, 0.35, 0.35, 0.80))
+			del_btn.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
+			del_btn.mouse_exited.connect( func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
+			del_btn.pressed.connect(func() -> void:
+				rdv_tasks.remove_at(cap_i)
+				on_change.call()
+				rebuild_ms.call())
+			rt_row.add_child(del_btn)
+
+		# "+" Add — driven by the registry, same DI pattern as the main chain.
+		# Any task registered with required_status containing "__nested__" shows up here.
+		var add_btn := _make_mission_add_btn("+ Add")
+		var cap_pv      := self   # explicit capture — nested lambdas can lose implicit self
+		var cap_rdv     := rdv_tasks
+		var cap_ctx     := ctx
+		var cap_btn     := add_btn
+		var cap_overlay := ctx.get("_overlay", null) as Control
+		add_btn.pressed.connect(func() -> void:
+			var stype: String = (cap_ctx.get("entry", {}) as Dictionary).get("ship_type", "shuttle")
+			cap_pv._show_rdv_add_popup(cap_btn, cap_rdv, stype, cap_overlay, func() -> void:
+				on_change.call()
+				rebuild_ms.call()))
+		ms_vbox.add_child(add_btn)
+	move_station.estimate_cost = func(_e: Dictionary, _ctx: Dictionary) -> float: return 40.0
+	MissionTaskRegistry.register(move_station)
+
+	# ── Pick Up (nested inside Move to Station only — not shown in main chain) ──
+	var pickup := MissionTaskDef.new()
+	pickup.task_type       = "pickup"
+	pickup.display_name    = "Take"
+	pickup.required_status = ["__nested__"]
+	pickup.produced_status = ""  # stays at same station
+	pickup.build_params_ui = func(cont: Control, e: Dictionary, on_change: Callable, ctx: Dictionary) -> void:
+		var res_id: String = e.get("transfer_resource", "")
+		var rdv_id: String = ctx.get("rdv_station_id", "")
+		var pp_ref: PlanetProgress = ctx.get("pp", null)
+		# Remaining capacity at rendezvous = ship cap minus pick_planet cargo already loaded
+		var ship_cap: int = _sp_cargo_capacity((ctx.get("entry", {}) as Dictionary).get("ship_type", "shuttle"))
+		var pending_used: int = 0
+		for v in (ctx.get("pending_cargo", {}) as Dictionary).values():
+			pending_used += int(v)
+		var remaining_cap: int = maxi(0, ship_cap - pending_used)
+		# Also cap by what the station actually carries
+		var station_has: int = remaining_cap
+		if rdv_id != "" and pp_ref != null:
+			for s: ShipData in ShipManager.ships_for(pp_ref.planet_seed):
+				if s.ship_id == rdv_id:
+					station_has = int(s.cargo.get(res_id, 0))
+					break
+		var max_amt: int = mini(station_has, remaining_cap)
+		_build_res_icon_ui(cont, e, "transfer_resource", res_id,
+			e.get("transfer_amount", 10), max_amt, on_change, ctx, null, rdv_id, {})
+	pickup.estimate_cost = func(_e: Dictionary, _ctx: Dictionary) -> float: return 0.0
+	MissionTaskRegistry.register(pickup)
+
+	# ── Deliver (nested inside Move to Station only) ─────────────────────────
+	var deliver := MissionTaskDef.new()
+	deliver.task_type       = "deliver"
+	deliver.display_name    = "Drop"
+	deliver.required_status = ["__nested__"]
+	deliver.produced_status = ""  # stays at same station
+	deliver.build_params_ui = func(cont: Control, e: Dictionary, on_change: Callable, ctx: Dictionary) -> void:
+		var cargo: Dictionary = e.get("cargo", {})
+		var res_id: String = cargo.keys()[0] if not cargo.is_empty() else ""
+		var pending: Dictionary = ctx.get("pending_cargo", {})
+		# Max = how much of this resource is in pending cargo (what the ship actually carries)
+		var max_amt: int = int(pending.get(res_id, 0)) if not pending.is_empty() else 0
+		_build_res_icon_ui(cont, e, "_deliver_res", res_id,
+			cargo.get(res_id, 10), max_amt, on_change, ctx, ctx.get("pp", null), "", pending)
+	deliver.estimate_cost = func(_e: Dictionary, _ctx: Dictionary) -> float: return 0.0
+	MissionTaskRegistry.register(deliver)
+
+	# ── Take from Planet Storage (top-level, loads resource at launch) ───────
+	var pick_planet := MissionTaskDef.new()
+	pick_planet.task_type       = "pick_planet"
+	pick_planet.display_name    = "Take"
+	pick_planet.required_status = ["on_pad"]
+	pick_planet.produced_status = "on_pad"  # stays on pad, cargo loaded at launch
+	pick_planet.build_params_ui = func(cont: Control, e: Dictionary, on_change: Callable, ctx: Dictionary) -> void:
+		var pp_ref: PlanetProgress = ctx.get("pp", null)
+		var cargo: Dictionary = e.get("cargo", {})
+		var res_id: String = cargo.keys()[0] if not cargo.is_empty() else ""
+		# Capacity: ship cap minus cargo already claimed by OTHER pick_planet tasks in chain
+		var ship_cap: int = _sp_cargo_capacity((ctx.get("entry", {}) as Dictionary).get("ship_type", "shuttle"))
+		var used_by_others: int = 0
+		for chain_t: Dictionary in (ctx.get("entry", {}) as Dictionary).get("mission_tasks", []):
+			if chain_t == e: continue
+			if chain_t.get("type", "") == "pick_planet":
+				for v in (chain_t.get("cargo", {}) as Dictionary).values():
+					used_by_others += int(v)
+		var remaining_cap: int = maxi(0, ship_cap - used_by_others)
+		var stored_amt: int = int(pp_ref.stored_resources.get(res_id, 0)) if pp_ref != null and res_id != "" else remaining_cap
+		var max_amt: int = mini(stored_amt, remaining_cap)
+		_build_res_icon_ui(cont, e, "_pick_planet_res", res_id,
+			cargo.get(res_id, 10), max_amt, on_change, ctx, pp_ref)
+	pick_planet.estimate_cost = func(_e: Dictionary, _ctx: Dictionary) -> float: return 0.0
+	MissionTaskRegistry.register(pick_planet)
+
+	# ── Land ─────────────────────────────────────────────────────────────────
+	var land := MissionTaskDef.new()
+	land.task_type       = "land"
+	land.display_name    = "Land"
+	land.required_status = ["in_orbit", "at_station:*"]
+	land.produced_status = "on_pad"
+	land.build_params_ui = func(_c: Control, _e: Dictionary, _oc: Callable, _ctx: Dictionary) -> void: pass
+	land.estimate_cost   = func(_e: Dictionary, _ctx: Dictionary) -> float: return 30.0
+	MissionTaskRegistry.register(land)
+
+	# ── Deploy (Station only) ─────────────────────────────────────────────────
+	var deploy := MissionTaskDef.new()
+	deploy.task_type            = "deploy"
+	deploy.display_name         = "Deploy Station"
+	deploy.required_status      = ["in_orbit"]
+	deploy.required_ship_types  = ["station"]
+	deploy.produced_status      = "on_pad"  # mission ends — station stays in orbit
+	deploy.build_params_ui = func(_c: Control, _e: Dictionary, _oc: Callable, _ctx: Dictionary) -> void: pass
+	deploy.estimate_cost   = func(_e: Dictionary, _ctx: Dictionary) -> float: return 0.0
+	MissionTaskRegistry.register(deploy)
+
+## Builds the icon + slider row used by Take/Drop task params.
+## cont       — parent HBox to add widgets into
+## e          — task entry dict (mutated on change)
+## res_key    — which popup key to use ("transfer_resource"|"_deliver_res"|"_pick_planet_res")
+## amt_getter — Callable() → int   : reads current amount from e
+## amt_setter — Callable(int)      : writes amount back to e
+## max_amt    — upper bound for slider (0 = use ship capacity)
+## on_change  — rebuild signal
+## ctx        — task context (pp, _overlay, etc.)
+## popup_pp   — PlanetProgress for popup filtering (planet storage)
+## rdv_station_id, pending_cargo — forwarded to resource popup
+func _build_res_icon_ui(cont: Control, e: Dictionary,
+		res_key: String, res_id: String, amount: int, max_amt: int,
+		on_change: Callable, ctx: Dictionary, popup_pp: PlanetProgress,
+		rdv_station_id: String = "", pending_cargo: Dictionary = {}) -> void:
+	var rd: ResourceData = GameState.known_resources.get(res_id, null) if res_id != "" else null
+	var ph: Control = ctx.get("_overlay", null) as Control
+	# For station-cargo filtering (pickup task), rdv_pp is the planet pp from ctx
+	var rdv_pp: PlanetProgress = ctx.get("pp", null) if rdv_station_id != "" else null
+
+	if rd == null:
+		# No resource selected yet — show a plain "Pick…" button
+		var pick_btn := _make_mission_add_btn("Pick resource…")
+		pick_btn.pressed.connect(func() -> void:
+			_mission_show_resource_popup(cont, e, res_key, on_change,
+				popup_pp, ph, rdv_station_id, rdv_pp, pending_cargo))
+		cont.add_child(pick_btn)
+		return
+
+	# ── Icon chip (clickable to reopen picker) ─────────────────────
+	var icon_card := _mineral_grid_card(rd, 0.0, false)
+	icon_card.custom_minimum_size = Vector2(30, 30)
+	icon_card.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
+	icon_card.mouse_exited.connect( func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
+	icon_card.gui_input.connect(func(ev: InputEvent) -> void:
+		if not (ev is InputEventMouseButton): return
+		var mev := ev as InputEventMouseButton
+		if not (mev.pressed and mev.button_index == MOUSE_BUTTON_LEFT): return
+		_mission_show_resource_popup(cont, e, res_key, on_change,
+			popup_pp, ph, rdv_station_id, rdv_pp, pending_cargo))
+	cont.add_child(icon_card)
+
+	# ── Slider ─────────────────────────────────────────────────────
+	var real_max: int = maxi(1, max_amt)
+	var slider := HSlider.new()
+	slider.min_value  = 1
+	slider.max_value  = real_max
+	slider.step       = 1
+	slider.value      = clamp(amount, 1, real_max)
+	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	slider.custom_minimum_size   = Vector2(70, 0)
+	slider.add_theme_constant_override("grabber_offset", 0)
+	cont.add_child(slider)
+
+	# ── Amount label ───────────────────────────────────────────────
+	var val_lbl := Label.new()
+	val_lbl.text = str(int(slider.value))
+	val_lbl.custom_minimum_size = Vector2(22, 0)
+	val_lbl.add_theme_font_size_override("font_size", 7)
+	val_lbl.add_theme_color_override("font_color", Color(0.88, 0.92, 1.0))
+	val_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cont.add_child(val_lbl)
+
+	slider.value_changed.connect(func(v: float) -> void:
+		val_lbl.text = str(int(v))
+		# Write back via res_key convention
+		if res_key == "transfer_resource":
+			e["transfer_amount"] = int(v)
+		else:  # _deliver_res or _pick_planet_res → cargo dict
+			e["cargo"] = {res_id: int(v)}
+		on_change.call())
+
+## Show a resource picker popup for mission task params.
+## Small styled "+" button used to add nested (DI) mission sub-tasks.
+func _make_mission_add_btn(label_text: String) -> Button:
+	var btn := Button.new()
+	btn.text = label_text
+	btn.add_theme_font_size_override("font_size", 7)
+	var bs := StyleBoxFlat.new()
+	bs.bg_color = Color(0.05, 0.10, 0.22, 0.80)
+	bs.border_color = Color(0.20, 0.38, 0.65, 0.40)
+	bs.set_border_width_all(1); bs.set_corner_radius_all(3)
+	bs.content_margin_left = 5; bs.content_margin_right = 5
+	bs.content_margin_top = 2; bs.content_margin_bottom = 2
+	btn.add_theme_stylebox_override("normal", bs)
+	btn.add_theme_stylebox_override("hover",  bs)
+	btn.add_theme_color_override("font_color", Color(0.55, 0.78, 1.0))
+	btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	btn.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
+	btn.mouse_exited.connect( func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
+	return btn
+
+## Dependency-injected dropdown for "On Rendezvous" sub-tasks — lists whatever
+## is registered in MissionTaskRegistry under the "__nested__" status, same as
+## the top-level chain's "+ Add Step" dropdown.
+func _show_rdv_add_popup(anchor: Control, rdv_tasks: Array, ship_type: String,
+		popup_host: Control, on_added: Callable) -> void:
+	var available: Array = MissionTaskRegistry.get_available("__nested__", ship_type)
+	if available.is_empty():
+		return
+	var popup := PanelContainer.new()
+	var ps := StyleBoxFlat.new()
+	ps.bg_color = Color(0.06, 0.09, 0.18, 0.97)
+	ps.border_color = Color(0.25, 0.45, 0.80, 0.55)
+	ps.set_border_width_all(1); ps.set_corner_radius_all(5)
+	ps.content_margin_left = 6; ps.content_margin_right = 6
+	ps.content_margin_top = 6; ps.content_margin_bottom = 6
+	popup.add_theme_stylebox_override("panel", ps)
+	popup.z_index = 215
+
+	var pvbox := VBoxContainer.new()
+	pvbox.add_theme_constant_override("separation", 3)
+	popup.add_child(pvbox)
+
+	for def: MissionTaskDef in available:
+		var cap_def: MissionTaskDef = def
+		var btn := Button.new()
+		btn.text = cap_def.display_name
+		btn.add_theme_font_size_override("font_size", 7)
+		var ibs := StyleBoxFlat.new()
+		ibs.bg_color = Color(0.0, 0.0, 0.0, 0.0)
+		ibs.set_border_width_all(0)
+		ibs.content_margin_left = 6; ibs.content_margin_right = 6
+		ibs.content_margin_top = 3; ibs.content_margin_bottom = 3
+		btn.add_theme_stylebox_override("normal", ibs)
+		var ibs_h := ibs.duplicate()
+		(ibs_h as StyleBoxFlat).bg_color = Color(0.12, 0.22, 0.45, 0.80)
+		btn.add_theme_stylebox_override("hover", ibs_h)
+		btn.add_theme_color_override("font_color", Color(0.80, 0.92, 1.0))
+		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		btn.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
+		btn.mouse_exited.connect( func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
+		btn.pressed.connect(func() -> void:
+			rdv_tasks.append({"type": cap_def.task_type})
+			popup.queue_free()
+			on_added.call())
+		pvbox.add_child(btn)
+
+	# Add popup inside the Mission Builder overlay so mouse_filter doesn't block it.
+	# Fall back to viewport if overlay not available (e.g. called outside builder).
+	var anchor_global: Vector2 = anchor.get_global_rect().position + Vector2(0, anchor.size.y + 2)
+	if popup_host != null and is_instance_valid(popup_host):
+		popup.position = anchor_global - popup_host.get_global_rect().position
+		popup_host.add_child(popup)
+	else:
+		popup.global_position = anchor_global
+		anchor.get_viewport().add_child(popup)
+
+func _mission_show_resource_popup(anchor: Control, entry: Dictionary,
+		key: String, on_change: Callable, pp_ref: PlanetProgress = null,
+		popup_host: Control = null, rdv_station_id: String = "",
+		rdv_pp: PlanetProgress = null, pending_cargo: Dictionary = {}) -> void:
+	var popup := PanelContainer.new()
+	var ps := StyleBoxFlat.new()
+	ps.bg_color = Color(0.06, 0.09, 0.18, 0.97)
+	ps.border_color = Color(0.25, 0.45, 0.80, 0.55)
+	ps.set_border_width_all(1); ps.set_corner_radius_all(5)
+	ps.content_margin_left = 8; ps.content_margin_right = 8
+	ps.content_margin_top = 8; ps.content_margin_bottom = 8
+	popup.add_theme_stylebox_override("panel", ps)
+	popup.z_index = 220
+	popup.custom_minimum_size = Vector2(220, 0)
+
+	var pvbox := VBoxContainer.new()
+	pvbox.add_theme_constant_override("separation", 6)
+	popup.add_child(pvbox)
+
+	# Resolve resource list — priority: pending_cargo > station filter > pp storage > all known
+	var resources: Array = []
+	if not pending_cargo.is_empty():
+		resources = pending_cargo.keys()
+	elif rdv_station_id != "" and rdv_pp != null:
+		for s: ShipData in ShipManager.ships_for(rdv_pp.planet_seed):
+			if s.ship_id == rdv_station_id:
+				resources = s.cargo.keys()
+				break
+		if resources.is_empty():
+			var empty_lbl := Label.new()
+			empty_lbl.text = "Station has no cargo"
+			empty_lbl.add_theme_font_size_override("font_size", 7)
+			empty_lbl.add_theme_color_override("font_color", Color(0.70, 0.40, 0.40, 0.75))
+			pvbox.add_child(empty_lbl)
+	elif pp_ref != null:
+		resources = pp_ref.stored_resources.keys()
+		resources = resources.filter(func(r: String) -> bool: return pp_ref.stored_resources.get(r, 0.0) >= 1.0)
+	else:
+		resources = GameState.known_resources.keys()
+
+	var flow := HFlowContainer.new()
+	flow.add_theme_constant_override("h_separation", 5)
+	flow.add_theme_constant_override("v_separation", 5)
+	pvbox.add_child(flow)
+
+	for res_id: String in resources:
+		var cap_id: String = res_id
+		var rd: ResourceData = GameState.known_resources.get(res_id, null)
+		if rd == null: continue
+
+		var card := _mineral_grid_card(rd, 0.0, false)
+		card.custom_minimum_size = Vector2(44, 44)
+		# mouse_filter is STOP from _mineral_grid_card; gui_input gives us click detection.
+		card.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
+		card.mouse_exited.connect( func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
+		card.gui_input.connect(func(ev: InputEvent) -> void:
+			if not (ev is InputEventMouseButton): return
+			var mev := ev as InputEventMouseButton
+			if not (mev.pressed and mev.button_index == MOUSE_BUTTON_LEFT): return
+			if key == "_deliver_res" or key == "_pick_planet_res":
+				var old_cargo: Dictionary = entry.get("cargo", {})
+				var old_amt: int = old_cargo.values()[0] if not old_cargo.is_empty() else 10
+				entry["cargo"] = {cap_id: old_amt}
+			else:
+				entry[key] = cap_id
+			on_change.call()
+			popup.queue_free()
+			if not is_instance_valid(anchor): return
+			for ch in anchor.get_children(): ch.queue_free()
+			var def: MissionTaskDef = MissionTaskRegistry.get_def(entry.get("type", ""))
+			if def != null and def.build_params_ui.is_valid():
+				var rebuild_ctx := {} if popup_host == null else {"_overlay": popup_host}
+				def.build_params_ui.call(anchor, entry, on_change, rebuild_ctx))
+		flow.add_child(card)
+
+	# Host popup inside the builder overlay so it's above the mouse_filter=STOP overlay.
+	var anchor_global: Vector2 = anchor.get_global_rect().position + Vector2(0, 18)
+	if popup_host != null and is_instance_valid(popup_host):
+		popup.position = anchor_global - popup_host.get_global_rect().position
+		popup_host.add_child(popup)
+	else:
+		popup.global_position = anchor_global
+		anchor.get_viewport().add_child(popup)
+
+## Convert a task chain into legacy entry fields for the launch system.
+func _sp_apply_mission_to_entry(entry: Dictionary, tasks: Array) -> void:
+	entry.erase("destination_ship_id")
+	entry.erase("transfer_dir")
+	entry.erase("transfer_resource")
+	entry.erase("transfer_amount")
+	entry.erase("cargo")
+	for t: Dictionary in tasks:
+		match t.get("type", ""):
+			"pick_planet":
+				# Merge into cargo so multiple take tasks stack
+				var cur: Dictionary = entry.get("cargo", {})
+				for k: String in (t.get("cargo", {}) as Dictionary).keys():
+					cur[k] = (t["cargo"] as Dictionary)[k]
+				entry["cargo"] = cur
+			"move_station":
+				entry["destination_ship_id"] = t.get("target_id", "")
+				# Apply first pickup/deliver from rendezvous_tasks as legacy fields
+				for rt: Dictionary in t.get("rendezvous_tasks", []):
+					match rt.get("type", ""):
+						"pickup":
+							entry["transfer_dir"]      = "pickup"
+							entry["transfer_resource"] = rt.get("transfer_resource", "")
+							entry["transfer_amount"]   = rt.get("transfer_amount", 0)
+						"deliver":
+							entry["transfer_dir"] = "deliver"
+							entry["cargo"]        = rt.get("cargo", {}).duplicate()
+			"deploy":
+				pass
+			"land":
+				entry["auto_land"] = true
+
+## Execute the current task in ship.mission_tasks at mission_task_index.
+func _advance_mission(ship: ShipData) -> void:
+	if _orbital_layer == null or not is_instance_valid(_orbital_layer):
+		return
+	if ship.mission_task_index >= ship.mission_tasks.size():
+		return
+	var task: Dictionary = ship.mission_tasks[ship.mission_task_index]
+	var ttype: String = task.get("type", "")
+	match ttype:
+		"move_station":
+			var dest_id: String = task.get("target_id", "")
+			if dest_id != "":
+				ship.rendezvous_base_speed = ship.orbit_speed
+				ship.rendezvous_target_id  = dest_id
+				_orbital_layer._reveal[ship.ship_id] = {"progress": 1.0, "spawn_angle": ship.orbit_angle}
+		"land":
+			_orbital_layer._reveal[ship.ship_id] = {"progress": 1.0, "spawn_angle": ship.orbit_angle}
+			_orbital_layer.start_landing(ship)
+		"deploy":
+			pass
 
 ## Helper: generate next ship name (Pioneer I, II, …) based on how many ships exist.
 func _sp_next_ship_name(planet_seed: int) -> String:
@@ -3731,6 +4615,33 @@ func _sp_btn_style(bg: Color, border: Color) -> StyleBoxFlat:
 func _sp_build_idle(left_vbox: VBoxContainer, hbox: HBoxContainer,
 		_def: BuildingDef, pm_key: String, pp: PlanetProgress,
 		_poi: POIData, entry: Dictionary, rebuild_sp: Callable) -> void:
+	# Auto-dequeue: if missions are queued, start the next one immediately
+	var queue: Array = entry.get("mission_queue", [])
+	if not queue.is_empty():
+		var item: Dictionary = queue.pop_front()
+		entry["mission_queue"] = queue
+		entry["ship_name"]     = item.get("ship_name", _sp_next_ship_name(pp.planet_seed))
+		entry["ship_type"]     = item.get("ship_type", "shuttle")
+		entry["mission_tasks"] = item.get("mission_tasks", [])
+		entry["repeat_cycle"]  = item.get("repeat_cycle", 0.0)
+		_sp_apply_mission_to_entry(entry, entry["mission_tasks"])
+		var used_q: int = _sp_cargo_used(entry)
+		var cost_q: int = _sp_launch_cost(entry.get("ship_type", "shuttle"), used_q)
+		if GameState.spend_credits(float(cost_q)):
+			var src_pq := GameState.get_planet(pp.planet_seed)
+			if src_pq != null:
+				for res_q: String in entry.get("cargo", {}):
+					src_pq.stored_resources[res_q] = maxf(0.0,
+						src_pq.stored_resources.get(res_q, 0.0) - float(entry["cargo"][res_q]))
+			entry["phase"] = "preparing"
+			entry["effective_duration"] = 20.0
+			entry.erase("cooldown_only")
+			_bar_meta.erase(pm_key)
+			if ProductionManager.is_user_paused(pm_key):
+				ProductionManager.toggle_user_pause(pm_key)
+			rebuild_sp.call()
+		return
+
 	var status := Label.new()
 	status.text = "Ready"
 	_apply_orbitron(status, 8)
@@ -3739,7 +4650,7 @@ func _sp_build_idle(left_vbox: VBoxContainer, hbox: HBoxContainer,
 	left_vbox.add_child(status)
 
 	var btn := Button.new()
-	btn.text = "Prep Launch"
+	btn.text = "Prepare Mission"
 	_apply_orbitron(btn, 9)
 	var bs := _sp_btn_style(Color(0.10, 0.22, 0.42, 0.90), Color(0.30, 0.60, 1.0, 0.75))
 	btn.add_theme_stylebox_override("normal",  bs)
@@ -3750,18 +4661,57 @@ func _sp_build_idle(left_vbox: VBoxContainer, hbox: HBoxContainer,
 	btn.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
 	btn.mouse_exited.connect( func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
 	btn.pressed.connect(func() -> void:
-		entry["phase"] = "configuring"
-		entry["ship_name"] = _sp_next_ship_name(pp.planet_seed)
+		# Toggle: if already open, close it
+		if _mission_builder_overlay != null and is_instance_valid(_mission_builder_overlay):
+			_mission_builder_overlay.queue_free()
+			_mission_builder_overlay = null
+			return
+		if not entry.has("ship_name"):
+			entry["ship_name"] = _sp_next_ship_name(pp.planet_seed)
 		entry["ship_type"] = "shuttle"
-		_bar_meta.erase(pm_key)  # will be replaced by rebuild
-		rebuild_sp.call())
+		var planet_cont: Control = planet_renderer.get_parent()
+		var ctx := {
+			"planet_seed":   pp.planet_seed,
+			"pp":            pp,
+			"font":          _orbitron,
+			"entry":         entry,
+			"ships":         ShipManager.ships_for(pp.planet_seed),
+			"default_name":  entry.get("ship_name", _sp_next_ship_name(pp.planet_seed)),
+			"initial_tasks": entry.get("mission_tasks", []),
+			"on_close":      func() -> void: _mission_builder_overlay = null,
+		}
+		_mission_builder_overlay = MissionBuilderPanel.open(planet_cont, ctx, func(tasks: Array, repeat: float) -> void:
+			_mission_builder_overlay = null
+
+			entry["mission_tasks"] = tasks
+			entry["repeat_cycle"]  = repeat
+			_sp_apply_mission_to_entry(entry, tasks)
+			# Go straight to preparing
+			var used: int = _sp_cargo_used(entry)
+			var launch_cost: int = _sp_launch_cost(entry.get("ship_type", "shuttle"), used)
+			if not GameState.spend_credits(float(launch_cost)):
+				return
+			var src_pp := GameState.get_planet(pp.planet_seed)
+			if src_pp != null:
+				for res_id2: String in entry.get("cargo", {}):
+					src_pp.stored_resources[res_id2] = maxf(0.0,
+						src_pp.stored_resources.get(res_id2, 0.0) - float(entry["cargo"][res_id2]))
+			entry["phase"] = "preparing"
+			entry["effective_duration"] = 20.0
+			entry.erase("cooldown_only")
+			_bar_meta.erase(pm_key)
+			if ProductionManager.is_user_paused(pm_key):
+				ProductionManager.toggle_user_pause(pm_key)
+			rebuild_sp.call()))
 	hbox.add_child(btn)
 
 ## Config phase: ship name + type selection.
 func _sp_cargo_capacity(ship_type: String) -> int:
 	match ship_type:
-		"station": return 60
-		_:         return 20
+		"station":      return 60
+		"heavy_hauler": return 60
+		"hauler":       return 20
+		_:              return 5   # shuttle
 
 func _sp_cargo_used(entry: Dictionary) -> int:
 	var total := 0
@@ -3773,8 +4723,10 @@ func _sp_cargo_used(entry: Dictionary) -> int:
 
 func _sp_launch_cost(ship_type: String, cargo_weight: int) -> int:
 	match ship_type:
-		"station": return 5000
-		_:         return 200 + cargo_weight * 10
+		"station":      return 5000
+		"heavy_hauler": return 2500 + cargo_weight * 5
+		"hauler":       return 800 + cargo_weight * 8
+		_:              return 200 + cargo_weight * 12  # shuttle
 
 func _sp_build_config(_card: PanelContainer, stack: Control, left_vbox: VBoxContainer,
 		_hbox: HBoxContainer, _def: BuildingDef, pm_key: String, pp: PlanetProgress,
@@ -3842,9 +4794,13 @@ func _sp_build_config(_card: PanelContainer, stack: Control, left_vbox: VBoxCont
 	type_hint.custom_minimum_size = Vector2(32, 0)
 	type_row.add_child(type_hint)
 
-	for ttype in ["shuttle", "station"]:
+	const SP_SHIP_LABELS: Dictionary = {
+		"shuttle": "Shuttle", "hauler": "Hauler",
+		"heavy_hauler": "Heavy", "station": "Station",
+	}
+	for ttype in ["shuttle", "hauler", "heavy_hauler", "station"]:
 		var tb := Button.new()
-		tb.text = ttype.capitalize()
+		tb.text = SP_SHIP_LABELS.get(ttype, ttype.capitalize())
 		_apply_orbitron(tb, 7)
 		var is_sel: bool = (entry.get("ship_type", "shuttle") == ttype)
 		var is_locked: bool = (ttype == "station" and station_locked)
@@ -3876,13 +4832,11 @@ func _sp_build_config(_card: PanelContainer, stack: Control, left_vbox: VBoxCont
 		lock_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		type_row.add_child(lock_lbl)
 
-	# ── Cargo section (hidden for station — it's too heavy to carry cargo) ──
+	# ── Station vs Shuttle split ──────────────────────────────────────────────
+	var is_station_type: bool = entry.get("ship_type", "shuttle") == "station"
+
 	var sep := HSeparator.new()
 	left_vbox.add_child(sep)
-
-	var is_station_type: bool = entry.get("ship_type", "shuttle") == "station"
-	var capacity := _sp_cargo_capacity(entry.get("ship_type", "shuttle"))
-	var used     := _sp_cargo_used(entry)
 
 	if is_station_type:
 		var no_cargo_lbl := Label.new()
@@ -3892,84 +4846,62 @@ func _sp_build_config(_card: PanelContainer, stack: Control, left_vbox: VBoxCont
 		no_cargo_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		left_vbox.add_child(no_cargo_lbl)
 
+	# ── Shuttle: mission summary + Plan Mission button ────────────────────────
 	if not is_station_type:
-		var cargo_hdr := HBoxContainer.new()
-		cargo_hdr.add_theme_constant_override("separation", 6)
-		left_vbox.add_child(cargo_hdr)
+		var orbit_stations: Array[ShipData] = []
+		for s: ShipData in ShipManager.ships_for(pp.planet_seed):
+			if s.ship_type == "station":
+				orbit_stations.append(s)
 
-		var cargo_title := Label.new()
-		cargo_title.text = "Cargo"
-		_apply_orbitron(cargo_title, 7)
-		cargo_title.add_theme_color_override("font_color", Color(0.60, 0.72, 0.92, 0.75))
-		cargo_title.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		cargo_hdr.add_child(cargo_title)
+		# Show current mission summary if tasks were already planned
+		var mission_tasks: Array = entry.get("mission_tasks", [])
+		if not mission_tasks.is_empty():
+			var sum_lbl := Label.new()
+			sum_lbl.text = "%d step mission planned" % mission_tasks.size()
+			_apply_orbitron(sum_lbl, 7)
+			sum_lbl.add_theme_color_override("font_color", Color(0.50, 0.88, 0.65))
+			sum_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			left_vbox.add_child(sum_lbl)
+		else:
+			var hint_lbl := Label.new()
+			hint_lbl.text = "No mission — plan one below"
+			_apply_orbitron(hint_lbl, 6)
+			hint_lbl.add_theme_color_override("font_color", Color(0.55, 0.45, 0.45, 0.70))
+			hint_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			left_vbox.add_child(hint_lbl)
 
-		var cap_bar := Control.new()
-		cap_bar.custom_minimum_size = Vector2(55, 6)
-		cap_bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		cap_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		var cap_used_ref: Array[int] = [used]; var cap_total_ref: Array[int] = [capacity]
-		cap_bar.draw.connect(func() -> void:
-			var w := cap_bar.size.x; var h := cap_bar.size.y
-			cap_bar.draw_rect(Rect2(0, 0, w, h), Color(0.10, 0.12, 0.20, 0.85))
-			var fill := minf(float(cap_used_ref[0]) / float(cap_total_ref[0]), 1.0) * w
-			var fc := Color(0.32, 0.82, 0.52) if cap_used_ref[0] <= cap_total_ref[0] else Color(0.90, 0.35, 0.25)
-			if fill > 0.5:
-				cap_bar.draw_rect(Rect2(0, 0, fill, h), Color(fc, 0.80))
-			cap_bar.draw_rect(Rect2(0, 0, w, h), Color(0.30, 0.42, 0.62, 0.45), false, 1.0))
-		cargo_hdr.add_child(cap_bar)
-
-		var cap_lbl := Label.new()
-		cap_lbl.text = "%d / %d" % [used, capacity]
-		_apply_orbitron(cap_lbl, 6)
-		cap_lbl.add_theme_color_override("font_color",
-			Color(0.45, 0.88, 0.58) if used <= capacity else Color(0.95, 0.40, 0.30))
-		cap_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		cargo_hdr.add_child(cap_lbl)
-
-		var cargo: Dictionary = entry.get("cargo", {})
-		var cargo_row := HBoxContainer.new()
-		cargo_row.add_theme_constant_override("separation", 4)
-		left_vbox.add_child(cargo_row)
-
-		for res_id: String in cargo:
-			var rd: ResourceData = GameState.known_resources.get(res_id, null)
-			if rd == null: continue
-			var sq := _mineral_grid_card(rd, float(cargo[res_id]), true)
-			sq.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
-			sq.mouse_exited.connect( func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
-			var cap_rid2 := res_id
-			sq.gui_input.connect(func(ev: InputEvent) -> void:
-				if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed \
-						and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_RIGHT:
-					entry["cargo"].erase(cap_rid2)
-					rebuild_sp.call())
-			var rd2: ResourceData = GameState.known_resources.get(res_id, null)
-			if rd2 != null:
-				sq.tooltip_text = "%s  (%dw/unit)" % [rd2.unique_name, rd2.rarity + rd2.tier - 1]
-			cargo_row.add_child(sq)
-
-		if used < capacity:
-			var add_sq := Button.new()
-			add_sq.text = "+"
-			_apply_orbitron(add_sq, 14)
-			add_sq.custom_minimum_size = Vector2(52, 52)
-			var add_style := StyleBoxFlat.new()
-			add_style.bg_color     = Color(0.07, 0.10, 0.20, 0.80)
-			add_style.border_color = Color(0.28, 0.45, 0.75, 0.45)
-			add_style.set_border_width_all(2); add_style.set_corner_radius_all(5)
-			add_sq.add_theme_stylebox_override("normal", add_style)
-			add_sq.add_theme_stylebox_override("hover",  add_style)
-			add_sq.add_theme_color_override("font_color", Color(0.45, 0.72, 1.0, 0.70))
-			add_sq.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
-			add_sq.mouse_exited.connect( func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
-			add_sq.pressed.connect(func() -> void:
-				_sp_show_cargo_popup(entry, pp, capacity, rebuild_sp))
-			cargo_row.add_child(add_sq)
+		var plan_btn := Button.new()
+		plan_btn.text = "Plan Mission" if mission_tasks.is_empty() else "Edit Mission"
+		_apply_orbitron(plan_btn, 7)
+		var pbs := _sp_btn_style(Color(0.06, 0.14, 0.30, 0.90), Color(0.28, 0.52, 0.90, 0.55))
+		plan_btn.add_theme_stylebox_override("normal", pbs)
+		plan_btn.add_theme_stylebox_override("hover",  pbs)
+		plan_btn.add_theme_color_override("font_color", Color(0.60, 0.82, 1.0))
+		plan_btn.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
+		plan_btn.mouse_exited.connect( func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
+		plan_btn.pressed.connect(func() -> void:
+			var planet_cont: Control = planet_renderer.get_parent()
+			var ctx := {
+				"planet_seed": pp.planet_seed,
+				"pp": pp,
+				"font": _orbitron,
+				"entry": entry,
+				"ships": ShipManager.ships_for(pp.planet_seed),
+			}
+			if not mission_tasks.is_empty():
+				ctx["initial_tasks"] = mission_tasks.duplicate(true)
+			MissionBuilderPanel.open(planet_cont, ctx, func(tasks: Array, repeat: float) -> void:
+				entry["mission_tasks"] = tasks
+				entry["repeat_cycle"]  = repeat
+				_sp_apply_mission_to_entry(entry, tasks)
+				rebuild_sp.call()))
+		left_vbox.add_child(plan_btn)
 
 	# ── Bottom row: cost / Cancel / Start Prep ──────────────────────────────
+	var used: int   = _sp_cargo_used(entry)
 	var launch_cost: int = _sp_launch_cost(entry.get("ship_type", "shuttle"), used)
-	var can_afford: bool = GameState.credits >= launch_cost
+	var has_mission: bool = is_station_type or not entry.get("mission_tasks", []).is_empty()
+	var can_afford: bool  = GameState.credits >= launch_cost and has_mission
 
 	var bottom_row := HBoxContainer.new()
 	bottom_row.add_theme_constant_override("separation", 6)
@@ -4000,6 +4932,7 @@ func _sp_build_config(_card: PanelContainer, stack: Control, left_vbox: VBoxCont
 	cancel_btn.pressed.connect(func() -> void:
 		entry["phase"] = "idle"
 		entry.erase("cargo")
+		entry.erase("mission_tasks")
 		_bar_meta.erase(pm_key)
 		rebuild_sp.call())
 	bottom_row.add_child(cancel_btn)
@@ -4021,23 +4954,24 @@ func _sp_build_config(_card: PanelContainer, stack: Control, left_vbox: VBoxCont
 		if not GameState.spend_credits(float(launch_cost)):
 			return
 		# Deduct cargo from planet storage upfront
-		var src_pp := GameState.get_planet(pp.planet_seed)
-		if src_pp != null:
+		var src_pp2 := GameState.get_planet(pp.planet_seed)
+		if src_pp2 != null:
 			for res_id2: String in entry.get("cargo", {}):
-				src_pp.stored_resources[res_id2] = maxf(0.0,
-					src_pp.stored_resources.get(res_id2, 0.0) - float(entry["cargo"][res_id2]))
+				src_pp2.stored_resources[res_id2] = maxf(0.0,
+					src_pp2.stored_resources.get(res_id2, 0.0) - float(entry["cargo"][res_id2]))
 		entry["phase"] = "preparing"
 		entry["effective_duration"] = 20.0
 		entry.erase("cooldown_only")
-		_bar_meta.erase(pm_key)  # erase before toggle so signal handler ignores this key
+		_bar_meta.erase(pm_key)
 		if ProductionManager.is_user_paused(pm_key):
 			ProductionManager.toggle_user_pause(pm_key)
 		rebuild_sp.call())
 	bottom_row.add_child(confirm_btn)
 
 ## Progress bar view — used for both "preparing" and "cooldown" phases.
-func _sp_build_progress(left_vbox: VBoxContainer, _hbox: HBoxContainer,
-		_pm_key: String, entry: Dictionary, label_text: String, lbl_color: Color) -> void:
+func _sp_build_progress(left_vbox: VBoxContainer, hbox: HBoxContainer,
+		pm_key: String, pp: PlanetProgress, entry: Dictionary,
+		label_text: String, lbl_color: Color, rebuild_sp: Callable) -> void:
 	var ship_desc: String = entry.get("ship_name", "")
 	if ship_desc == "":
 		ship_desc = label_text
@@ -4050,6 +4984,62 @@ func _sp_build_progress(left_vbox: VBoxContainer, _hbox: HBoxContainer,
 	status.add_theme_color_override("font_color", lbl_color)
 	status.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	left_vbox.add_child(status)
+
+	# Queue display
+	var queue: Array = entry.get("mission_queue", [])
+	if not queue.is_empty():
+		var q_lbl := Label.new()
+		q_lbl.text = "Queue: %d" % queue.size()
+		_apply_orbitron(q_lbl, 7)
+		q_lbl.add_theme_color_override("font_color", Color(0.70, 0.75, 1.0, 0.75))
+		q_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		left_vbox.add_child(q_lbl)
+		for i: int in mini(queue.size(), 2):
+			var qi: Dictionary = queue[i]
+			var qi_lbl := Label.new()
+			qi_lbl.text = "  %d. %s" % [i + 1, qi.get("ship_name", "–")]
+			_apply_orbitron(qi_lbl, 6)
+			qi_lbl.add_theme_color_override("font_color", Color(0.55, 0.65, 0.85, 0.60))
+			qi_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			left_vbox.add_child(qi_lbl)
+
+	# Queue Mission button
+	var q_btn := Button.new()
+	q_btn.text = "Queue Mission"
+	_apply_orbitron(q_btn, 7)
+	var qbs := _sp_btn_style(Color(0.08, 0.16, 0.32, 0.85), Color(0.25, 0.45, 0.80, 0.55))
+	q_btn.add_theme_stylebox_override("normal", qbs)
+	q_btn.add_theme_stylebox_override("hover",  qbs)
+	q_btn.add_theme_color_override("font_color", Color(0.55, 0.78, 1.0))
+	q_btn.custom_minimum_size = Vector2(100, 0)
+	q_btn.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
+	q_btn.mouse_exited.connect( func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
+	var cap_pm := pm_key; var cap_pp := pp; var cap_entry := entry; var cap_rebuild := rebuild_sp
+	q_btn.pressed.connect(func() -> void:
+		if _mission_builder_overlay != null and is_instance_valid(_mission_builder_overlay):
+			_mission_builder_overlay.queue_free()
+			_mission_builder_overlay = null
+			return
+		var qe: Dictionary = {"ship_name": _sp_next_ship_name(cap_pp.planet_seed), "ship_type": "shuttle"}
+		var planet_cont: Control = planet_renderer.get_parent()
+		var qctx := {
+			"planet_seed": cap_pp.planet_seed, "pp": cap_pp, "font": _orbitron,
+			"entry": qe, "ships": ShipManager.ships_for(cap_pp.planet_seed),
+			"default_name": qe["ship_name"],
+			"on_close": func() -> void: _mission_builder_overlay = null,
+		}
+		_mission_builder_overlay = MissionBuilderPanel.open(planet_cont, qctx, func(tasks: Array, repeat: float) -> void:
+			_mission_builder_overlay = null
+			var mq: Array = cap_entry.get("mission_queue", [])
+			mq.append({
+				"ship_name": qe.get("ship_name", ""),
+				"ship_type": qe.get("ship_type", "shuttle"),
+				"mission_tasks": tasks,
+				"repeat_cycle": repeat,
+			})
+			cap_entry["mission_queue"] = mq
+			cap_rebuild.call()))
+	hbox.add_child(q_btn)
 
 ## Launch-ready phase: prominent Launch button.
 func _sp_build_launch_ready(left_vbox: VBoxContainer, hbox: HBoxContainer,
@@ -4091,7 +5081,13 @@ func _sp_build_launch_ready(left_vbox: VBoxContainer, hbox: HBoxContainer,
 			pm_key,
 			cap_entry.get("ship_name", "Pioneer"),
 			cap_entry.get("ship_type", "shuttle"),
-			cap_entry.get("cargo", {})))
+			cap_entry.get("cargo", {}),
+			cap_entry.get("destination_ship_id", ""),
+			cap_entry.get("transfer_dir", ""),
+			cap_entry.get("transfer_resource", ""),
+			cap_entry.get("transfer_amount", 0),
+			cap_entry.get("auto_land", false),
+			cap_entry.get("mission_tasks", [])))
 
 	hbox.add_child(btn)
 
@@ -4275,6 +5271,113 @@ func _sp_show_cargo_popup(entry: Dictionary, pp: PlanetProgress,
 			entry["cargo"][rid2] = entry["cargo"].get(rid2, 0) + amt2
 			close_popup.call())
 		vbox.add_child(add_btn2)
+
+## Pick-up resource selector popup — picks what the shuttle should collect from the station.
+func _sp_show_pickup_popup(entry: Dictionary, pp: PlanetProgress, rebuild_sp: Callable) -> void:
+	var container: Control = planet_renderer.get_parent()
+	var overlay := Control.new()
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.z_index = 60
+	container.add_child(overlay)
+	var close_popup := func() -> void:
+		overlay.queue_free()
+		rebuild_sp.call()
+	var dim := Control.new()
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	dim.draw.connect(func() -> void:
+		dim.draw_rect(Rect2(Vector2.ZERO, dim.size), Color(0, 0, 0, 0.55)))
+	dim.gui_input.connect(func(ev: InputEvent) -> void:
+		if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed:
+			close_popup.call())
+	overlay.add_child(dim)
+	var panel := PanelContainer.new()
+	panel.z_index = 1
+	var ps := StyleBoxFlat.new()
+	ps.bg_color = Color(0.06, 0.10, 0.08, 0.97)
+	ps.border_color = Color(0.22, 0.70, 0.38, 0.70)
+	ps.set_border_width_all(1); ps.set_corner_radius_all(6)
+	panel.add_theme_stylebox_override("panel", ps)
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	panel.custom_minimum_size = Vector2(240, 0)
+	overlay.add_child(panel)
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left",  10)
+	margin.add_theme_constant_override("margin_right", 10)
+	margin.add_theme_constant_override("margin_top",    8)
+	margin.add_theme_constant_override("margin_bottom", 8)
+	panel.add_child(margin)
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 6)
+	margin.add_child(vbox)
+	var hdr_lbl := Label.new()
+	hdr_lbl.text = "Pick Up From Station"
+	_apply_orbitron(hdr_lbl, 9)
+	hdr_lbl.add_theme_color_override("font_color", Color(0.55, 0.95, 0.70))
+	hdr_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(hdr_lbl)
+	vbox.add_child(HSeparator.new())
+	# Resource list — show all known resources
+	var all_res: Array[String] = []
+	for res_id: String in GameState.known_resources:
+		all_res.append(res_id)
+	all_res.sort()
+	if all_res.is_empty():
+		var no_lbl := Label.new()
+		no_lbl.text = "No known resources"
+		_apply_orbitron(no_lbl, 7)
+		no_lbl.add_theme_color_override("font_color", Color(0.45, 0.50, 0.45, 0.65))
+		no_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		vbox.add_child(no_lbl)
+	else:
+		var dropdown := OptionButton.new()
+		_apply_orbitron(dropdown, 8)
+		dropdown.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		vbox.add_child(dropdown)
+		for res_id: String in all_res:
+			var rd: ResourceData = GameState.known_resources[res_id]
+			dropdown.add_item(rd.unique_name)
+		var sel_res: Array[String] = [all_res[0]]
+		var cur_res: String = entry.get("transfer_resource", "")
+		if cur_res != "" and cur_res in all_res:
+			dropdown.selected = all_res.find(cur_res)
+			sel_res[0] = cur_res
+		var slider_row := HBoxContainer.new()
+		slider_row.add_theme_constant_override("separation", 8)
+		vbox.add_child(slider_row)
+		var slider := HSlider.new()
+		slider.min_value = 1
+		slider.max_value = _sp_cargo_capacity("shuttle")
+		slider.step = 1
+		slider.value = entry.get("transfer_amount", _sp_cargo_capacity("shuttle"))
+		slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		slider_row.add_child(slider)
+		var amt_lbl := Label.new()
+		amt_lbl.text = str(int(slider.value))
+		_apply_orbitron(amt_lbl, 9)
+		amt_lbl.custom_minimum_size = Vector2(28, 0)
+		amt_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		amt_lbl.add_theme_color_override("font_color", Color(0.92, 0.95, 1.0))
+		amt_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		slider_row.add_child(amt_lbl)
+		slider.value_changed.connect(func(v: float) -> void: amt_lbl.text = str(int(v)))
+		dropdown.item_selected.connect(func(idx: int) -> void: sel_res[0] = all_res[idx])
+		var confirm_btn := Button.new()
+		confirm_btn.text = "Set Pick-up"
+		_apply_orbitron(confirm_btn, 8)
+		var cbs2 := _sp_btn_style(Color(0.07, 0.22, 0.12, 0.92), Color(0.22, 0.72, 0.38, 0.75))
+		confirm_btn.add_theme_stylebox_override("normal", cbs2)
+		confirm_btn.add_theme_stylebox_override("hover",  cbs2)
+		confirm_btn.add_theme_color_override("font_color", Color(0.38, 0.95, 0.55))
+		confirm_btn.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
+		confirm_btn.mouse_exited.connect( func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
+		confirm_btn.pressed.connect(func() -> void:
+			entry["transfer_resource"] = sel_res[0]
+			entry["transfer_amount"]   = int(slider.value)
+			close_popup.call())
+		vbox.add_child(confirm_btn)
 
 ## Empty slot card — shows "+" and opens a build dropdown on click.
 func _build_slot_card(poi: POIData, planet: PlanetData, pp: PlanetProgress,

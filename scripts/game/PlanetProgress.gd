@@ -6,6 +6,9 @@ extends Resource
 
 # ── Level & Limits ──────────────────────────────────────────────────────────
 @export var level: int = 1
+@export var is_upgrading: bool = false
+@export var upgrade_progress: float = 0.0
+@export var upgrade_duration: float = 60.0
 
 @export var max_districts:   int = 4
 @export var max_mining_lv:   int = 1
@@ -33,6 +36,15 @@ extends Resource
 
 # ────────────────────────────────────────────────────────────────────────────
 
+func get_upgrade_cost() -> Dictionary:
+	var cost := {}
+	var next_lv := level + 1
+	cost["credits"] = 500 * next_lv
+	cost["ANY_T1"] = 250 * next_lv
+	if next_lv > 2:
+		cost["ANY_T2"] = 50 * (next_lv - 2)
+	return cost
+
 func recalculate_limits() -> void:
 	max_districts  = 4  + (level - 1) * 2
 	max_mining_lv  = 1  + (level - 1)
@@ -59,8 +71,13 @@ func district_slots(poi: POIData) -> int:
 	var base_slots: int = 5 if poi.poi_type == POIData.POIType.CITY else 2
 	return base_slots + (lv - 1) * 2
 
+func can_upgrade_district(district_label: String) -> bool:
+	var lv: int = district_levels.get(district_label, 1)
+	return lv < level
+
 func upgrade_district(district_label: String) -> void:
-	district_levels[district_label] = district_levels.get(district_label, 1) + 1
+	if can_upgrade_district(district_label):
+		district_levels[district_label] = district_levels.get(district_label, 1) + 1
 
 func slots_used_in_district(district_label: String) -> int:
 	var total: int = 0

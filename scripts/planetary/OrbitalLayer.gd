@@ -11,6 +11,10 @@ var _hovered_ship:    ShipData = null
 var _selected_ship:   ShipData = null
 var suppress_label:   bool     = false   # true when ship panel is open
 
+var _drag_ship:   ShipData = null
+var _drag_last_x: float    = 0.0
+var _drag_anchor: Vector2  = Vector2.ZERO  # ship 2D pos (in orbit-radius units) at drag start
+
 ## Per-ship orbit-reveal: ship_id -> {progress: float, spawn_angle: float}
 var _reveal: Dictionary = {}
 
@@ -54,8 +58,13 @@ func start_landing(ship: ShipData) -> void:
 	var spos   := center + Vector2(sv.x, sv.y)
 	# Impact point on planet surface in the direction of the ship
 	var impact: Vector2 = center + (spos - center).normalized() * _planet_radius * 0.88
-	# arc = 2x orbital arc → p*(1+p)/2 easing starts at orbital speed, accelerates to 2x
+	# Skip orbit-reveal animation for ships that immediately land.
+	_reveal[ship.ship_id] = {"progress": 1.0, "spawn_angle": ship.orbit_angle}
+
+	# Freeze position: compute arc from current speed then zero it so the ship
+	# doesn't drift during the animation phases.
 	var arc: float = ship.orbit_speed * _LAND_CURVE_DUR * 6.0
+	ship.orbit_speed = 0.0
 	_landing[ship.ship_id] = {
 		"phase":       0,
 		"progress":    0.0,
@@ -114,6 +123,9 @@ func _tick_rendezvous(delta: float) -> void:
 			rendezvous_reached.emit(ship, target)
 			continue
 
+		# Boost to 2× speed during rendezvous so shuttle closes the angle gap faster.
+		ship.orbit_speed = ship.rendezvous_base_speed * 2.0
+
 		# Rotate orbit_node so the ship's projected position drifts toward the target.
 		# Try +step and -step, pick the direction that reduces distance — no U-turns needed.
 		var node_step: float = 1.2 * delta
@@ -122,6 +134,17 @@ func _tick_rendezvous(delta: float) -> void:
 		var d_plus   := (Vector2(sv_plus.x,  sv_plus.y)  - tpos).length()
 		var d_minus  := (Vector2(sv_minus.x, sv_minus.y) - tpos).length()
 		ship.orbit_node += node_step if d_plus < d_minus else -node_step
+
+## Projects ship to 2D using its current orbit_node. Used by drag to keep ship position fixed.
+func _project_2d(ship: ShipData, angle: float) -> Vector2:
+	var r: float   = _planet_radius * ship.orbit_radius
+	var inc: float = ship.orbit_inclination
+	var px: float  = r * cos(angle)
+	var py: float  = r * sin(angle) * sin(inc)
+	var pz: float  = r * sin(angle) * cos(inc)
+	var rot: float = _planet_rotation + ship.orbit_node
+	var rx: float  = px * cos(rot) + pz * sin(rot)
+	return Vector2(rx, py)
 
 func _project_at_node(ship: ShipData, node: float) -> Vector3:
 	var r: float   = _planet_radius * ship.orbit_radius
@@ -158,9 +181,9 @@ func _tick_landing(delta: float) -> void:
 			ld["progress"] = 0.0
 			var ls: ShipData = ld["ship"]
 			if int(ld["phase"]) == 1:
-				ld["start_angle"] = ls.orbit_angle
+				ld["start_angle"] = ls.orbit_angle  # same as initial since speed=0
 				ld["start_r"]     = ls.orbit_radius
-				ld["arc"]         = ls.orbit_speed * _LAND_CURVE_DUR * 6.0
+				# arc already set at start_landing; don't recalculate (orbit_speed is 0)
 			elif int(ld["phase"]) == 2:
 				# Store impact angle/radius instead of fixed Vector2
 				# ep at p=1: 1*(1+1)/2 = 1.0
@@ -503,6 +526,29 @@ func _draw_brackets_only(spos: Vector2) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
+		if _drag_ship != null:
+			var dx: float = event.global_position.x - _drag_last_x
+			_drag_last_x = event.global_position.x
+			_drag_ship.orbit_node += dx * 0.012
+			# Re-find orbit_angle so ship stays at anchor screen position (ring rotates, ship fixed).
+			var a: float = _drag_ship.orbit_angle
+			for _i in 10:
+				var p0: Vector2 = _project_2d(_drag_ship, a)
+				var p1: Vector2 = _project_2d(_drag_ship, a + 0.005)
+				var tangent: Vector2 = (p1 - p0) / 0.005
+				var err: Vector2 = p0 - _drag_anchor
+				if tangent.length_squared() < 0.0001:
+					break
+				a -= err.dot(tangent) / tangent.length_squared()
+			_drag_ship.orbit_angle = a
+			# Dragging manually cancels any active rendezvous
+			if _drag_ship.rendezvous_target_id != "":
+				_drag_ship.orbit_speed          = _drag_ship.rendezvous_base_speed
+				_drag_ship.rendezvous_target_id  = ""
+				_drag_ship.rendezvous_base_speed = 0.0
+			queue_redraw()
+			accept_event()
+			return
 		var prev := _hovered_ship
 		_hovered_ship = _ship_at(event.global_position)
 		if _hovered_ship != prev:
@@ -516,13 +562,21 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	elif event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
-		if mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed:
-			var clicked := _ship_at(mb.global_position)
-			if clicked != null:
-				_selected_ship = clicked
-				queue_redraw()
-				ship_clicked.emit(clicked)
-				accept_event()
+		if mb.button_index == MOUSE_BUTTON_LEFT:
+			if mb.pressed:
+				var clicked := _ship_at(mb.global_position)
+				if clicked != null:
+					_selected_ship = clicked
+					_drag_ship     = clicked
+					_drag_last_x   = mb.global_position.x
+					var sv := _project(clicked, clicked.orbit_angle)
+					_drag_anchor   = Vector2(sv.x, sv.y)
+					queue_redraw()
+					ship_clicked.emit(clicked)
+					accept_event()
+			else:
+				if _drag_ship != null:
+					_drag_ship = null
 
 func _ship_at(global_pos: Vector2) -> ShipData:
 	if _planet_seed < 0 or _planet_radius <= 0.0:

@@ -60,6 +60,16 @@ func _tick_all(delta: float) -> void:
 		var pd: PlanetData = GameState.get_planet_data(planet_seed)
 		if pd:
 			var district_changed := false
+			
+			if pp.is_upgrading:
+				pp.upgrade_progress += delta / max(0.1, pp.upgrade_duration)
+				if pp.upgrade_progress >= 1.0:
+					pp.is_upgrading = false
+					pp.upgrade_progress = 0.0
+					pp.level += 1
+					pp.recalculate_limits()
+					GameState.planet_progress_changed.emit(planet_seed)
+			
 			for poi in pd.custom_pois:
 				if poi.constructing:
 					poi.construct_progress += delta / max(0.1, poi.construct_duration)
