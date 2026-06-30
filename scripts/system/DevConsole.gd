@@ -206,32 +206,30 @@ func _exec(line: String) -> void:
 			var target := parts[1].to_lower() if parts.size() > 1 else ""
 			match target:
 				"solar":
+					GameState.moon_unlocked  = true
 					GameState.solar_unlocked = true
+					GameState.unlock_changed.emit("moon_unlocked", true)
 					GameState.unlock_changed.emit("solar_unlocked", true)
-					_log_ok("Solar View unlocked.")
+					_log_ok("Solar View (and Moons) unlocked.")
 				"galaxy":
-					GameState.galaxy_unlocked = true
-					GameState.unlock_changed.emit("galaxy_unlocked", true)
-					_log_ok("Galaxy View unlocked.")
-				"moon", "moons":
-					var seed := GameState.active_planet_seed
-					if seed < 0:
-						_log_err("Not currently viewing a planet.")
-						return
-					var pp := GameState.get_planet(seed)
-					pp.moons_unlocked = true
-					GameState.planet_progress_changed.emit(seed)
-					_log_ok("Moons unlocked for current planet.")
-				"all":
+					GameState.moon_unlocked   = true
 					GameState.solar_unlocked  = true
 					GameState.galaxy_unlocked = true
+					GameState.unlock_changed.emit("moon_unlocked", true)
+					GameState.unlock_changed.emit("solar_unlocked", true)
+					GameState.unlock_changed.emit("galaxy_unlocked", true)
+					_log_ok("Galaxy View (and Solar, Moons) unlocked.")
+				"moon", "moons":
+					GameState.moon_unlocked = true
+					GameState.unlock_changed.emit("moon_unlocked", true)
+					_log_ok("Moons globally unlocked.")
+				"all":
+					GameState.moon_unlocked   = true
+					GameState.solar_unlocked  = true
+					GameState.galaxy_unlocked = true
+					GameState.unlock_changed.emit("moon_unlocked", true)
 					GameState.unlock_changed.emit("solar_unlocked",  true)
 					GameState.unlock_changed.emit("galaxy_unlocked", true)
-					var seed_all := GameState.active_planet_seed
-					if seed_all >= 0:
-						var pp_all := GameState.get_planet(seed_all)
-						pp_all.moons_unlocked = true
-						GameState.planet_progress_changed.emit(seed_all)
 					_log_ok("Everything unlocked.")
 				_:
 					_log_err("Unknown unlock target: '%s'. Try: solar, galaxy, moon, all" % target)
@@ -251,20 +249,22 @@ func _exec(line: String) -> void:
 			match target:
 				"solar":
 					GameState.solar_unlocked = false
+					GameState.galaxy_unlocked = false
 					GameState.unlock_changed.emit("solar_unlocked", false)
-					_log_ok("Solar View locked.")
+					GameState.unlock_changed.emit("galaxy_unlocked", false)
+					_log_ok("Solar View (and Galaxy) locked.")
 				"galaxy":
 					GameState.galaxy_unlocked = false
 					GameState.unlock_changed.emit("galaxy_unlocked", false)
 					_log_ok("Galaxy View locked.")
 				"moon", "moons":
-					var seed := GameState.active_planet_seed
-					if seed < 0:
-						_log_err("Not currently viewing a planet.")
-						return
-					GameState.get_planet(seed).moons_unlocked = false
-					GameState.planet_progress_changed.emit(seed)
-					_log_ok("Moons locked for current planet.")
+					GameState.moon_unlocked = false
+					GameState.solar_unlocked = false
+					GameState.galaxy_unlocked = false
+					GameState.unlock_changed.emit("moon_unlocked", false)
+					GameState.unlock_changed.emit("solar_unlocked", false)
+					GameState.unlock_changed.emit("galaxy_unlocked", false)
+					_log_ok("Moons (and Solar, Galaxy) locked.")
 				_:
 					_log_err("Unknown lock target: '%s'. Try: solar, galaxy, moon" % target)
 

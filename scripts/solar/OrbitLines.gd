@@ -1,9 +1,11 @@
 class_name OrbitLines
 extends Node2D
 
-# Positioned at star center. Draws orbit ellipses centered at (0,0).
+enum DrawMode { FULL, BACK, FRONT }
+
 var orbit_radii: Array[float] = []
 var y_ratio: float = 0.38
+var draw_mode: DrawMode = DrawMode.FULL
 
 func refresh(radii: Array[float]) -> void:
 	orbit_radii = radii
@@ -22,5 +24,14 @@ func _draw() -> void:
 		var pts := PackedVector2Array()
 		for j in 97:
 			var a: float = float(j) / 96.0 * TAU
+			var is_front: bool = sin(a) >= 0.0
+			
+			if draw_mode == DrawMode.BACK and is_front:
+				continue
+			if draw_mode == DrawMode.FRONT and not is_front:
+				continue
+			
 			pts.append(Vector2(cos(a) * rx, sin(a) * ry))
-		draw_polyline(pts, Color(0.50, 0.62, 0.88, alpha), 1.0, true)
+			
+		if pts.size() > 1:
+			draw_polyline(pts, Color(0.50, 0.62, 0.88, alpha), 1.0, false)

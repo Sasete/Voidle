@@ -34,6 +34,11 @@ extends Resource
 ## Only used when ship_type == "station".
 @export var buildings:    Array      = []
 
+## Rendezvous: ship_id of target ship, or "" if not rendezvousing.
+@export var rendezvous_target_id:  String = ""
+## Speed before rendezvous override (restored on arrival/cancel).
+@export var rendezvous_base_speed: float  = 0.0
+
 ## Destination planet seed (-1 = parked in orbit).
 @export var dest_seed:    int    = -1
 

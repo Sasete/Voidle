@@ -27,6 +27,7 @@ signal ship_clicked(ship: ShipData)
 signal ship_right_clicked(ship: ShipData, screen_pos: Vector2)
 signal ship_deselected()
 signal ship_landed(ship: ShipData)
+signal rendezvous_reached(ship: ShipData, target: ShipData)
 
 func setup(planet_seed: int) -> void:
 	_planet_seed = planet_seed
@@ -79,7 +80,60 @@ func _process(delta: float) -> void:
 		if rv["progress"] < 1.0:
 			rv["progress"] = minf(rv["progress"] + delta * 1.8, 1.0)
 	_tick_landing(delta)
+	_tick_rendezvous(delta)
 	queue_redraw()
+
+func _tick_rendezvous(delta: float) -> void:
+	var ships := ShipManager.ships_for(_planet_seed)
+	for ship: ShipData in ships:
+		if ship.rendezvous_target_id == "":
+			continue
+		var target: ShipData = null
+		for s: ShipData in ships:
+			if s.ship_id == ship.rendezvous_target_id:
+				target = s
+				break
+		if target == null:
+			ship.orbit_speed          = ship.rendezvous_base_speed
+			ship.rendezvous_target_id = ""
+			ship.rendezvous_base_speed = 0.0
+			continue
+
+		# Project both ships to 2D screen space and measure distance
+		var sv := _project(ship,   ship.orbit_angle)
+		var tv := _project(target, target.orbit_angle)
+		var spos := Vector2(sv.x, sv.y)
+		var tpos := Vector2(tv.x, tv.y)
+		var dist := (tpos - spos).length()
+
+		if dist < _planet_radius * 0.07:
+			# Arrived — restore original speed
+			ship.orbit_speed          = ship.rendezvous_base_speed
+			ship.rendezvous_target_id = ""
+			ship.rendezvous_base_speed = 0.0
+			rendezvous_reached.emit(ship, target)
+			continue
+
+		# Rotate orbit_node so the ship's projected position drifts toward the target.
+		# Try +step and -step, pick the direction that reduces distance — no U-turns needed.
+		var node_step: float = 1.2 * delta
+		var sv_plus  := _project_at_node(ship, ship.orbit_node + node_step)
+		var sv_minus := _project_at_node(ship, ship.orbit_node - node_step)
+		var d_plus   := (Vector2(sv_plus.x,  sv_plus.y)  - tpos).length()
+		var d_minus  := (Vector2(sv_minus.x, sv_minus.y) - tpos).length()
+		ship.orbit_node += node_step if d_plus < d_minus else -node_step
+
+func _project_at_node(ship: ShipData, node: float) -> Vector3:
+	var r: float   = _planet_radius * ship.orbit_radius
+	var inc: float = ship.orbit_inclination
+	var a: float   = ship.orbit_angle
+	var px: float  = r * cos(a)
+	var py: float  = r * sin(a) * sin(inc)
+	var pz: float  = r * sin(a) * cos(inc)
+	var rot: float = _planet_rotation + node
+	var rx: float  =  px * cos(rot) + pz * sin(rot)
+	var rz: float  = -px * sin(rot) + pz * cos(rot)
+	return Vector3(rx, py, rz)
 
 func _tick_landing(delta: float) -> void:
 	var finished: Array[String] = []

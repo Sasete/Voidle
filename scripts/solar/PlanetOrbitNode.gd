@@ -135,10 +135,6 @@ func _build() -> void:
 
 	_mini.mouse_entered.connect(_on_hover_start)
 	_mini.mouse_exited.connect(_on_hover_end)
-	_mini.gui_input.connect(func(e: InputEvent) -> void:
-		if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
-			clicked.emit(planet_data)
-	)
 
 	_hover_label = Label.new()
 	_hover_label.text    = planet_data.planet_name
@@ -168,11 +164,13 @@ func _build_moons(data: PlanetData) -> void:
 		var node := MoonOrbitNode.new()
 		add_child(node)
 		node.setup(data.moons[i], moon_rx, start)
-		node.clicked.connect(func(md: PlanetData) -> void: clicked.emit(md))
+		node.hover_start.connect(func(_md: PlanetData) -> void: _on_hover_start())
+		node.hover_end.connect(func() -> void: _on_hover_end())
 		_moon_nodes.append(node)
 		_moon_base_pos.append(node.position)
 
 func _on_hover_start() -> void:
+	if _hover: return
 	_hover = true
 	_hover_label.visible = true
 	hover_start.emit(planet_data)
@@ -182,8 +180,10 @@ func _on_hover_start() -> void:
 	queue_redraw()
 	if _hover_tween:
 		_hover_tween.kill()
-	_hover_tween = create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	_hover_tween = create_tween().set_parallel(true).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	_hover_tween.tween_property(_mini, "scale", Vector2(1.9, 1.9), 0.14)
+	for node in _moon_nodes:
+		node.set_hovered(true)
 	const S := 1.9
 	for i in _moon_nodes.size():
 		var moon := _moon_nodes[i]
@@ -192,20 +192,23 @@ func _on_hover_start() -> void:
 		mt.tween_property(moon, "position", _moon_base_pos[i] * S, 0.14)
 
 func _on_hover_end() -> void:
+	if not _hover: return
 	_hover = false
-	CursorManager.set_state(CursorManager.State.NORMAL)
+	_hover_label.visible = false
 	hover_end.emit()
+	CursorManager.set_state(CursorManager.State.NORMAL)
 	queue_redraw()
 	if _hover_tween:
 		_hover_tween.kill()
-	_hover_tween = create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-	_hover_tween.tween_property(_mini, "scale", Vector2(1.0, 1.0), 0.12)
+	_hover_tween = create_tween().set_parallel(true).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	_hover_tween.tween_property(_mini, "scale", Vector2(1.0, 1.0), 0.1)
+	for node in _moon_nodes:
+		node.set_hovered(false)
 	for i in _moon_nodes.size():
 		var moon := _moon_nodes[i]
 		var mt := moon.create_tween().set_parallel(true).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 		mt.tween_property(moon, "scale",    Vector2(1.0, 1.0), 0.12)
 		mt.tween_property(moon, "position", _moon_base_pos[i], 0.12)
-	_hover_label.visible = false
 
 func _ring_arc(target: CanvasItem, from_a: float, to_a: float,
 		rx: float, yr: float, col: Color, w: float) -> void:

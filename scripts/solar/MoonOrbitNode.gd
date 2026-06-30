@@ -1,7 +1,8 @@
 class_name MoonOrbitNode
 extends Node2D
 
-signal clicked(moon_data: PlanetData)
+signal hover_start(moon_data: PlanetData)
+signal hover_end
 
 const SIZE := 14
 
@@ -33,7 +34,6 @@ func _build(data: PlanetData) -> void:
 	_mini.size         = Vector2(SIZE, SIZE)
 	_mini.position     = -Vector2(SIZE, SIZE) * 0.5
 	_mini.pivot_offset = Vector2(SIZE, SIZE) * 0.5
-	# Node2D scale pivot is at (0,0) which is already the moon center
 	_mini.mouse_filter = Control.MOUSE_FILTER_STOP
 
 	var mat    := ShaderMaterial.new()
@@ -55,17 +55,19 @@ func _build(data: PlanetData) -> void:
 
 	_mini.mouse_entered.connect(_on_hover_start)
 	_mini.mouse_exited.connect(_on_hover_end)
-	_mini.gui_input.connect(func(e: InputEvent) -> void:
-		if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
-			clicked.emit(moon_data)
-	)
 
 func _on_hover_start() -> void:
-	CursorManager.set_state(CursorManager.State.POINTER)
-	var t := create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	t.tween_property(_mini, "scale", Vector2(1.5, 1.5), 0.1)
+	hover_start.emit(moon_data)
 
 func _on_hover_end() -> void:
-	CursorManager.set_state(CursorManager.State.NORMAL)
-	var t := create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-	t.tween_property(_mini, "scale", Vector2(1.0, 1.0), 0.1)
+	hover_end.emit()
+
+func set_hovered(hovered: bool) -> void:
+	if hovered:
+		CursorManager.set_state(CursorManager.State.POINTER)
+		var t := create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		t.tween_property(_mini, "scale", Vector2(1.5, 1.5), 0.1)
+	else:
+		CursorManager.set_state(CursorManager.State.NORMAL)
+		var t := create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+		t.tween_property(_mini, "scale", Vector2(1.0, 1.0), 0.1)

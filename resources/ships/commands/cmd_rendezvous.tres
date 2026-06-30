@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="ShipCommandDef" load_steps=2 format=3 uid="uid://cmd_rendezvous"]
+
+[ext_resource type="Script" path="res://scripts/ships/ShipCommandDef.gd" id="1_def"]
+
+[resource]
+script = ExtResource("1_def")
+command_id = "rendezvous"
+icon = "⟐"
+label = "Rendezvous"
+color = Color(0.30, 0.82, 1.00, 1.0)
+context = 0
+ship_types = Array[String](["shuttle"])

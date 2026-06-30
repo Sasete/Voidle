@@ -21,24 +21,32 @@ var _star2:        ColorRect   # binary companion, null if not binary
 var _star2_angle:  float = 0.0
 var _pivot:        Node2D
 var _orbit_lines:  OrbitLines
+var _orbit_lines_local_back: OrbitLines
+var _orbit_lines_local_front: OrbitLines
 var _orbits:       Array[PlanetOrbitNode] = []
 var _belts:        Array[AsteroidBelt]    = []
 var _belt_configs: Array[Dictionary]     = []   # {slot, rx, seed} per belt
 
 var _view_angle:      float     = 0.0
 var _orbit_tilt:      float     = 0.38
+var _solar_view_angle: float    = 0.0
+var _solar_orbit_tilt: float    = 0.38
+var _local_view_angle: float    = 0.0
+var _local_orbit_tilt: float    = 0.38
 var _max_orbit_px:    float     = 200.0  # updated after build_planets
 var _dragging:        bool      = false
+var _left_drag_from:  Vector2   = Vector2.ZERO
 var _right_dragging:  bool      = false
 var _right_drag_from: Vector2   = Vector2.ZERO
 var _hovered_planet:  PlanetData = null
 var _active_orbit:    PlanetOrbitNode = null   # tracks which orbit node is hovered
 var _enter_charge:    int        = 0   # scroll-in on hovered planet
 var _back_charge:     int        = 0   # scroll-out to go back to galaxy
+var _is_ready:        bool       = false
 
-var _camera:       Camera2D
-var _target_zoom:  float = 1.0
-var _target_pos:   Vector2 = Vector2.ZERO
+enum Mode { SOLAR, LOCAL }
+var _mode:         Mode = Mode.SOLAR
+var _current_local: PlanetData = null
 
 const ORBIT_Y_RATIO := 0.38   # must match OrbitLines.y_ratio and PlanetOrbitNode
 
@@ -51,21 +59,7 @@ const STAR_PX: Dictionary = {
 	SolarData.StarType.BLUE_GIANT:      340,
 }
 
-func _process(delta: float) -> void:
-	if _camera:
-		# Track active orbit if significantly zoomed in
-		if _target_zoom > 1.2 and _active_orbit != null:
-			_target_pos = _active_orbit.global_position
-
-		_camera.zoom = _camera.zoom.lerp(Vector2(_target_zoom, _target_zoom), 12.0 * delta)
-		_camera.position = _camera.position.lerp(_target_pos, 12.0 * delta)
-		
-		# LOD: Fade out moons and their orbits when zoomed out
-		var lod_alpha := clampf((_camera.zoom.x - 1.2) * 2.0, 0.0, 1.0)
-		for node in _orbits:
-			for moon in node._moon_nodes:
-				moon.modulate.a = lod_alpha
-
+func _process(_delta: float) -> void:
 	if _dragging or _right_dragging:
 		CursorManager.set_state(CursorManager.State.GRAB)
 		return
@@ -77,24 +71,28 @@ func _process(delta: float) -> void:
 func _ready() -> void:
 	CursorManager.set_state(CursorManager.State.NORMAL)
 	
-	_camera = Camera2D.new()
-	_camera.position = size * 0.5
-	_target_pos = _camera.position
-	add_child(_camera)
-
 	# back button removed — right-click navigates back
 	get_tree().root.size_changed.connect(_on_resize)
 	planet_selected.connect(_on_planet_selected)
+	
+	_pivot = Node2D.new()
+	_space.add_child(_pivot)
 	GameState.asteroid_discovered.connect(_on_asteroid_discovered)
 
 	# wait one frame so Control sizes are computed
 	await get_tree().process_frame
 
-	# data injected from GalaxyView (star selected) or PlanetaryView (back)
-	var sd: SolarData = SceneTransition.pending_data as SolarData
+	var pending = SceneTransition.pending_data
 	SceneTransition.pending_data = null
-	if sd != null:
-		load_system(sd)
+	if pending is PlanetData:
+		var pd := pending as PlanetData
+		if pd.has_meta("__solar_data"):
+			_current = pd.get_meta("__solar_data") as SolarData
+		else:
+			_current = GameState.get_home_solar()
+		load_local(pd)
+	elif pending is SolarData:
+		load_system(pending as SolarData)
 	elif solar_data != null:
 		load_system(solar_data)
 	elif random_on_start:
@@ -102,24 +100,30 @@ func _ready() -> void:
 	else:
 		load_system(SolarData.from_seed(debug_seed))
 
-	# restore saved view angle so entering/leaving doesn't reset the orbit view
-	if _current != null:
-		var angle_key := "solar_angle_%d" % _current.seed
-		if GameState.has_meta(angle_key):
-			_view_angle = GameState.get_meta(angle_key)
-			for node in _orbits:
-				node.set_view_angle(_view_angle)
-			for belt in _belts:
-				belt.set_view_angle(_view_angle)
+	_is_ready = true
 
-func _save_view_angle() -> void:
-	if _current != null:
-		GameState.set_meta("solar_angle_%d" % _current.seed, _view_angle)
+func _save_current_angles_to_game_state() -> void:
+	if not _is_ready:
+		return
+	if _mode == Mode.SOLAR and _current != null:
+		GameState.set_meta("solar_view_angle_%d" % _current.seed, _view_angle)
+		GameState.set_meta("solar_orbit_tilt_%d" % _current.seed, _orbit_tilt)
+	elif _mode == Mode.LOCAL and _current_local != null:
+		GameState.set_meta("local_view_angle_%d" % _current_local.seed, _view_angle)
+		GameState.set_meta("local_orbit_tilt_%d" % _current_local.seed, _orbit_tilt)
+
+func _load_current_angles_from_game_state() -> void:
+	if _mode == Mode.SOLAR and _current != null:
+		_view_angle = GameState.get_meta("solar_view_angle_%d" % _current.seed, 0.0)
+		_orbit_tilt = GameState.get_meta("solar_orbit_tilt_%d" % _current.seed, 0.38)
+	elif _mode == Mode.LOCAL and _current_local != null:
+		_view_angle = GameState.get_meta("local_view_angle_%d" % _current_local.seed, 0.0)
+		_orbit_tilt = GameState.get_meta("local_orbit_tilt_%d" % _current_local.seed, 0.38)
 
 func _go_to_galaxy() -> void:
 	if not GameState.galaxy_unlocked:
 		return
-	_save_view_angle()
+	_save_current_angles_to_game_state()
 	var gd: GalaxyData = null
 	if _current != null and _current.has_meta("__galaxy_data"):
 		gd = _current.get_meta("__galaxy_data") as GalaxyData
@@ -138,8 +142,14 @@ func _can_access(pd: PlanetData) -> bool:
 					if p.seed == GameState.home_planet_seed:
 						home_pd = p
 						break
-			if home_pd != null and not home_pd.moons.has(pd):
-				return false
+			if home_pd != null:
+				var is_home_moon := false
+				for m in home_pd.moons:
+					if m.seed == pd.seed:
+						is_home_moon = true
+						break
+				if not is_home_moon:
+					return false
 	else:
 		if not GameState.solar_unlocked and pd.seed != GameState.home_planet_seed:
 			return false
@@ -148,21 +158,94 @@ func _can_access(pd: PlanetData) -> bool:
 func _on_planet_selected(pd: PlanetData) -> void:
 	if not _can_access(pd):
 		print("[SolarView] Access denied to planet/moon: ", pd.planet_name)
+		_show_access_denied_text()
 		return
-	_save_view_angle()
-	pd.set_meta("__solar_data", _current)
-	SceneTransition.go("res://scenes/planetary/PlanetaryView.tscn", pd)
+		
+	if _mode == Mode.SOLAR:
+		if pd.planet_type == PlanetData.Type.MOON:
+			# Direct jump to moon's surface if somehow clicked from Solar View
+			_save_current_angles_to_game_state()
+			pd.set_meta("__solar_data", _current)
+			SceneTransition.go("res://scenes/planetary/PlanetaryView.tscn", pd)
+		else:
+			# Enter LOCAL mode for this planet
+			load_local(pd)
+	else:
+		# In LOCAL mode, clicking the central planet or any moon goes to the surface
+		_save_current_angles_to_game_state()
+		pd.set_meta("__solar_data", _current)
+		SceneTransition.go("res://scenes/planetary/PlanetaryView.tscn", pd)
+
+func _show_access_denied_text() -> void:
+	var lbl := Label.new()
+	lbl.text = "ACCESS DENIED"
+	lbl.add_theme_color_override("font_color", Color(1.0, 0.3, 0.3))
+	lbl.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+	lbl.add_theme_constant_override("outline_size", 4)
+	var orbitron := load("res://Fonts/Orbitron-VariableFont_wght.ttf") as Font
+	if orbitron:
+		lbl.add_theme_font_override("font", orbitron)
+		lbl.add_theme_font_size_override("font_size", 14)
+	lbl.global_position = get_viewport().get_mouse_position() + Vector2(-40, -20)
+	lbl.z_index = 1000
+	add_child(lbl)
+	var tw := create_tween().set_parallel(true).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_property(lbl, "position", lbl.global_position + Vector2(0, -40), 1.2)
+	tw.tween_property(lbl, "modulate:a", 0.0, 1.2)
+	tw.chain().tween_callback(lbl.queue_free)
 
 func load_system(data: SolarData) -> void:
+	_save_current_angles_to_game_state()
 	_current = data
+
+	if data.planets.size() > 0 and not GameState.solar_unlocked and not data.is_home:
+		var target_p: PlanetData = data.planets[0]
+		for p in data.planets:
+			if p.seed == GameState.home_planet_seed:
+				target_p = p
+				break
+		load_local(target_p)
+		return
+
+	_mode = Mode.SOLAR
+	_current_local = null
+	_load_current_angles_from_game_state()
 	get_tree().root.set_meta("__active_solar", data)
 	# auto-unlock if any planet already has a POI (e.g. returned from PlanetaryView)
 	_check_poi_unlock(data)
 	_clear()
 	_build_star(data)
 	_build_planets(data)
-	_update_panel(data)
+	_update_panel()
+	_apply_current_angles()
 	queue_redraw()
+
+func load_local(data: PlanetData) -> void:
+	_save_current_angles_to_game_state()
+		
+	_mode = Mode.LOCAL
+	_current_local = data
+	_load_current_angles_from_game_state()
+	_clear()
+	_build_local_star(data)
+	_build_local_moons(data)
+	_update_panel()
+	_apply_current_angles()
+	queue_redraw()
+
+func _apply_current_angles() -> void:
+	for node in _orbits:
+		node.set_view_angle(_view_angle)
+		node.set_tilt(_orbit_tilt)
+	for belt in _belts:
+		belt.set_view_angle(_view_angle)
+		belt.set_tilt(_orbit_tilt)
+	if _orbit_lines:
+		_orbit_lines.set_tilt(_orbit_tilt)
+	if _orbit_lines_local_back:
+		_orbit_lines_local_back.set_tilt(_orbit_tilt)
+	if _orbit_lines_local_front:
+		_orbit_lines_local_front.set_tilt(_orbit_tilt)
 
 func _check_poi_unlock(data: SolarData) -> void:
 	if data.is_home:
@@ -260,6 +343,122 @@ func _build_star(data: SolarData) -> void:
 		else:
 			_star2.z_index = 48   # companion is higher → behind
 			_star.z_index  = 50
+
+func _build_local_star(data: PlanetData) -> void:
+	var px_size: float = 240.0
+	
+	_star               = ColorRect.new()
+	_star.size          = Vector2(px_size, px_size)
+	_star.position      = _star_center() - _star.size * 0.5
+	_star.z_as_relative = false
+	_star.z_index       = 50
+	
+	var shader_path := PlanetData.get_shader_path(data.planet_type)
+	var mat         := ShaderMaterial.new()
+	mat.shader       = load(shader_path)
+	
+	mat.set_shader_parameter("planet_radius",     0.40)
+	mat.set_shader_parameter("pixel_count",       px_size)
+	mat.set_shader_parameter("aspect_ratio",      1.0)
+	mat.set_shader_parameter("seed",              data.seed)
+	mat.set_shader_parameter("terrain_roughness", data.terrain_roughness)
+	mat.set_shader_parameter("rotation_offset",   0.0)
+	
+	var stype := PlanetData.get_shader_type(data.planet_type)
+	match stype:
+		PlanetData.ShaderType.ROCKY:
+			mat.set_shader_parameter("sea_level",          data.sea_level)
+			mat.set_shader_parameter("continent_scale",    data.continent_scale)
+			mat.set_shader_parameter("has_clouds",         0.0)
+			mat.set_shader_parameter("atmosphere_density", data.atmosphere_density if data.has_atmosphere else 0.0)
+			mat.set_shader_parameter("specular_strength",  data.specular_strength)
+			mat.set_shader_parameter("city_lights",        0.0)
+			mat.set_shader_parameter("poi_count",          0)
+			for key in PlanetData.get_colors(data.planet_type):
+				mat.set_shader_parameter(key, PlanetData.get_colors(data.planet_type)[key])
+		PlanetData.ShaderType.GAS:
+			mat.set_shader_parameter("cloud_speed",        0.0)
+			mat.set_shader_parameter("atmosphere_density", data.atmosphere_density)
+			var c := PlanetData.get_colors(data.planet_type)
+			mat.set_shader_parameter("color_band_a",    c.get("color_sand",       Vector3(0.72,0.55,0.35)))
+			mat.set_shader_parameter("color_band_b",    c.get("color_forest",     Vector3(0.50,0.32,0.18)))
+			mat.set_shader_parameter("color_storm",     c.get("color_snow",       Vector3(0.88,0.82,0.72)))
+			mat.set_shader_parameter("color_atmosphere",c.get("color_atmosphere", Vector3(0.72,0.55,0.35)))
+		PlanetData.ShaderType.MOON:
+			var c := PlanetData.get_colors(data.planet_type)
+			mat.set_shader_parameter("color_highland", c.get("color_mountain",   Vector3(0.62,0.60,0.56)))
+			mat.set_shader_parameter("color_mare",     c.get("color_deep_ocean", Vector3(0.22,0.21,0.20)))
+			mat.set_shader_parameter("color_rim",      c.get("color_snow",       Vector3(0.78,0.76,0.72)))
+			mat.set_shader_parameter("color_floor",    c.get("color_ocean",      Vector3(0.16,0.15,0.14)))
+		PlanetData.ShaderType.ASTEROID:
+			mat.set_shader_parameter("irregularity", data.irregularity)
+			mat.set_shader_parameter("elongation",   1.0 + data.irregularity * 0.8)
+
+	_star.material = mat
+	_space.add_child(_star)
+	
+	_star.mouse_filter = Control.MOUSE_FILTER_STOP
+	_star.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	_star.mouse_entered.connect(func() -> void:
+		_hovered_planet = data
+	)
+	_star.mouse_exited.connect(func() -> void:
+		if _hovered_planet == data:
+			_hovered_planet = null
+	)
+
+func _build_local_moons(data: PlanetData) -> void:
+	_pivot          = Node2D.new()
+	_pivot.position = _star_center()
+	_space.add_child(_pivot)
+
+	_orbit_lines_local_back = OrbitLines.new()
+	_orbit_lines_local_back.draw_mode = OrbitLines.DrawMode.BACK
+	_pivot.add_child(_orbit_lines_local_back)
+
+	_orbit_lines_local_front = OrbitLines.new()
+	_orbit_lines_local_front.draw_mode = OrbitLines.DrawMode.FRONT
+	_pivot.add_child(_orbit_lines_local_front)
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = data.seed ^ 0x6969
+	
+	_orbits.clear()
+	var base_rx: float = 160.0
+	var radii: Array[float] = []
+	for i in data.moons.size():
+		var md: PlanetData = data.moons[i]
+		var rx    := base_rx + i * 60.0
+		var start := rng.randf_range(0.0, TAU)
+		
+		var node := PlanetOrbitNode.new()
+		_pivot.add_child(node)
+		node.setup(md, rx, start)
+		
+		node.hover_start.connect(func(pd: PlanetData) -> void: _hovered_planet = pd)
+		node.hover_end.connect(func() -> void:
+			if _hovered_planet == md:
+				_hovered_planet = null
+		)
+		
+		node.clicked.connect(func(pd: PlanetData) -> void: planet_selected.emit(pd))
+		
+		_orbits.append(node)
+		radii.append(rx)
+		
+	_orbit_lines_local_back.refresh(radii)
+	_orbit_lines_local_front.refresh(radii)
+		
+	_orbit_lines_local_back.z_as_relative = false
+	_orbit_lines_local_back.z_index       = 10
+	
+	_orbit_lines_local_front.z_as_relative = false
+	_orbit_lines_local_front.z_index       = 60
+	
+	_pivot.z_as_relative       = false
+	_pivot.z_index             = 20
+	
+	_max_orbit_px = base_rx + data.moons.size() * 60.0
 
 func _build_planets(data: SolarData) -> void:
 	_pivot          = Node2D.new()
@@ -363,21 +562,39 @@ func _on_asteroid_discovered(slot: int, count: int) -> void:
 			_belts[i] = belt
 			return
 
-func _update_panel(data: SolarData) -> void:
-	_system_name.text = data.system_name
-	_star_type.text   = SolarData.get_star_type_name(data.star_type)
-
-	for i in data.planets.size():
-		var pd: PlanetData = data.planets[i]
-		var btn := Button.new()
-		btn.text        = "%d. %s" % [i + 1, pd.planet_name]
-		btn.flat        = true
-		btn.alignment   = HORIZONTAL_ALIGNMENT_LEFT
-		if not _can_access(pd):
-			btn.disabled = true
-			btn.modulate.a = 0.5
-		btn.pressed.connect(func() -> void: planet_selected.emit(pd))
-		_planet_list.add_child(btn)
+func _update_panel() -> void:
+	if _mode == Mode.SOLAR:
+		_system_name.text = _current.system_name
+		_star_type.text   = SolarData.get_star_type_name(_current.star_type)
+		for child in _planet_list.get_children():
+			child.queue_free()
+		for i in _current.planets.size():
+			var pd: PlanetData = _current.planets[i]
+			var btn := Button.new()
+			btn.text        = "%d. %s" % [i + 1, pd.planet_name]
+			btn.flat        = true
+			btn.alignment   = HORIZONTAL_ALIGNMENT_LEFT
+			if not _can_access(pd):
+				btn.disabled = true
+				btn.modulate.a = 0.5
+			btn.pressed.connect(func() -> void: planet_selected.emit(pd))
+			_planet_list.add_child(btn)
+	else:
+		_system_name.text = _current_local.planet_name + " System"
+		_star_type.text   = "Planet"
+		for child in _planet_list.get_children():
+			child.queue_free()
+		for i in _current_local.moons.size():
+			var md: PlanetData = _current_local.moons[i]
+			var btn := Button.new()
+			btn.text        = "%s" % md.planet_name
+			btn.flat        = true
+			btn.alignment   = HORIZONTAL_ALIGNMENT_LEFT
+			if not _can_access(md):
+				btn.disabled = true
+				btn.modulate.a = 0.5
+			btn.pressed.connect(func() -> void: planet_selected.emit(md))
+			_planet_list.add_child(btn)
 
 	# remove old survey button if any
 	if _survey_btn and is_instance_valid(_survey_btn):
@@ -385,14 +602,14 @@ func _update_panel(data: SolarData) -> void:
 		_survey_btn = null
 
 	# home system is already unlocked — no button needed
-	if data.is_home:
+	if _current.is_home:
 		return
 
-	var gd: GalaxyData = data.get_meta("__galaxy_data") as GalaxyData if data.has_meta("__galaxy_data") else null
+	var gd: GalaxyData = _current.get_meta("__galaxy_data") as GalaxyData if _current.has_meta("__galaxy_data") else null
 	if gd == null:
 		return
 
-	var star_idx: int = data.get_meta("__galaxy_star_idx") as int if data.has_meta("__galaxy_star_idx") else -1
+	var star_idx: int = _current.get_meta("__galaxy_star_idx") as int if _current.has_meta("__galaxy_star_idx") else -1
 	if star_idx < 0:
 		return
 
@@ -414,7 +631,6 @@ func _update_panel(data: SolarData) -> void:
 	# insert before BackButton (second-to-last child)
 	_panel_content.add_child(_survey_btn)
 	_panel_content.move_child(_survey_btn, _panel_content.get_child_count() - 2)
-
 func _survey_system(gd: GalaxyData, star_idx: int) -> void:
 	gd.unlock(star_idx)
 	if is_instance_valid(_survey_btn):
@@ -432,84 +648,91 @@ func _input(event: InputEvent) -> void:
 			else:
 				_right_dragging = false
 				if mb.position.distance_to(_right_drag_from) < 5.0:
-					_go_to_galaxy()
+					if _mode == Mode.LOCAL:
+						if not GameState.solar_unlocked:
+							print("[SolarView] Access denied to exit Local System.")
+							_show_access_denied_text()
+						else:
+							load_system(_current)
+					else:
+						_go_to_galaxy()
 			return
 		if mb.button_index == MOUSE_BUTTON_LEFT:
 			if mb.pressed and _space.get_global_rect().has_point(mb.global_position):
 				_dragging = true
+				_left_drag_from = mb.position
 			elif not mb.pressed:
-				if mb.double_click and _hovered_planet != null:
-					planet_selected.emit(_hovered_planet)
 				_dragging = false
+				if mb.position.distance_to(_left_drag_from) < 5.0:
+					var target_pd: PlanetData = _hovered_planet
+					if target_pd == null and _mode == Mode.LOCAL and _star != null and _star.get_global_rect().has_point(mb.global_position):
+						target_pd = _current_local
+					if target_pd != null:
+						planet_selected.emit(target_pd)
 		elif mb.button_index == MOUSE_BUTTON_WHEEL_UP and mb.pressed:
-			var old_zoom := _target_zoom
-			_target_zoom = clampf(_target_zoom + 0.4, 1.0, 3.5)
-			if _hovered_planet != null and _active_orbit != null:
-				_target_pos = _active_orbit.global_position
-			if _target_zoom >= 3.5 and old_zoom >= 3.5 and _hovered_planet != null:
+			var target_pd: PlanetData = _hovered_planet
+			if target_pd == null and _mode == Mode.LOCAL and _star != null and _star.get_global_rect().has_point(mb.global_position):
+				target_pd = _current_local
+			if target_pd != null:
 				_enter_charge += 1
 				_back_charge   = 0
 				if _enter_charge >= 2:
 					_enter_charge = 0
-					planet_selected.emit(_hovered_planet)
+					planet_selected.emit(target_pd)
 		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
 			_enter_charge  = 0
-			var old_zoom := _target_zoom
-			_target_zoom = clampf(_target_zoom - 0.4, 1.0, 3.5)
-			if _target_zoom <= 1.0:
-				_target_pos = size * 0.5
-				if old_zoom <= 1.0:
-					_back_charge  += 1
-					if _back_charge >= 3:
-						_back_charge = 0
-						_go_to_galaxy()
+			_back_charge  += 1
+			if _back_charge >= 3:
+				_back_charge = 0
+				if _mode == Mode.LOCAL:
+					if not GameState.solar_unlocked:
+						print("[SolarView] Access denied to exit Local System.")
+						_show_access_denied_text()
+					else:
+						load_system(_current)
+				else:
+					_go_to_galaxy()
 	elif event is InputEventMagnifyGesture:
 		if event.factor > 1.0:
-			var old_zoom := _target_zoom
-			_target_zoom = clampf(_target_zoom + 0.2, 1.0, 3.5)
-			if _hovered_planet != null and _active_orbit != null:
-				_target_pos = _active_orbit.global_position
-			if _target_zoom >= 3.5 and old_zoom >= 3.5 and _hovered_planet != null:
+			var target_pd: PlanetData = _hovered_planet
+			if target_pd == null and _mode == Mode.LOCAL and _star != null and _star.get_global_rect().has_point(event.position):
+				target_pd = _current_local
+			if target_pd != null:
 				_enter_charge += 1
 				_back_charge   = 0
 				if _enter_charge >= 2:
 					_enter_charge = 0
-					planet_selected.emit(_hovered_planet)
+					planet_selected.emit(target_pd)
 		elif event.factor < 1.0:
 			_enter_charge  = 0
-			var old_zoom := _target_zoom
-			_target_zoom = clampf(_target_zoom - 0.2, 1.0, 3.5)
-			if _target_zoom <= 1.0:
-				_target_pos = size * 0.5
-				if old_zoom <= 1.0:
-					_back_charge  += 1
-					if _back_charge >= 3:
-						_back_charge = 0
-						_go_to_galaxy()
+			_back_charge  += 1
+			if _back_charge >= 3:
+				_back_charge = 0
+				if _mode == Mode.LOCAL:
+					load_system(_current)
+				else:
+					_go_to_galaxy()
 	elif event is InputEventPanGesture:
 		var dy: float = event.delta.y
 		if dy < -0.5:   # scroll up = zoom in
-			var old_zoom := _target_zoom
-			_target_zoom = clampf(_target_zoom + 0.3, 1.0, 3.5)
-			if _hovered_planet != null and _active_orbit != null:
-				_target_pos = _active_orbit.global_position
-			if _target_zoom >= 3.5 and old_zoom >= 3.5 and _hovered_planet != null:
+			var target_pd: PlanetData = _hovered_planet
+			if target_pd == null and _mode == Mode.LOCAL and _star != null and _star.get_global_rect().has_point(event.position):
+				target_pd = _current_local
+			if target_pd != null:
 				_enter_charge += 1
 				_back_charge   = 0
 				if _enter_charge >= 2:
 					_enter_charge = 0
-					planet_selected.emit(_hovered_planet)
+					planet_selected.emit(target_pd)
 		elif dy > 0.5:                               # scroll down = zoom out
 			_enter_charge  = 0
-			var old_zoom := _target_zoom
-			_target_zoom = clampf(_target_zoom - 0.3, 1.0, 3.5)
-			if _target_zoom <= 1.0:
-				_target_pos = size * 0.5
-				if old_zoom <= 1.0:
-					_back_charge  += 1
-					if _back_charge >= 3:
-						_back_charge = 0
-						_go_to_galaxy()
+			_back_charge  += 1
+			if _back_charge >= 3:
+				_back_charge = 0
+				if _mode == Mode.LOCAL:
+					load_system(_current)
+				else:
+					_go_to_galaxy()
 	elif event is InputEventMouseMotion and (_dragging or _right_dragging):
 		var mm  := event as InputEventMouseMotion
 		if mm.relative.length() < 1.5:
@@ -523,6 +746,10 @@ func _input(event: InputEvent) -> void:
 				belt.set_tilt(_orbit_tilt)
 			if _orbit_lines:
 				_orbit_lines.set_tilt(_orbit_tilt)
+			if _orbit_lines_local_back:
+				_orbit_lines_local_back.set_tilt(_orbit_tilt)
+			if _orbit_lines_local_front:
+				_orbit_lines_local_front.set_tilt(_orbit_tilt)
 		else:
 			_view_angle -= mm.relative.x * 0.0042
 		for node in _orbits:
