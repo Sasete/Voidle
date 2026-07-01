@@ -4057,20 +4057,8 @@ func _register_mission_tasks() -> void:
 	move_station.produced_status = "at_station:{target_id}"
 	move_station.build_params_ui = func(cont: Control, e: Dictionary, on_change: Callable, ctx: Dictionary) -> void:
 		for ch in cont.get_children(): ch.queue_free()
-		# Locate outer name_lbl (first child of the task row HBox).
-		# We hide it and put our own title inside ms_vbox so OnRendezvous fills full width.
-		var outer_lbl: Control = null
-		var outer_row_node: Node = cont.get_parent()
-		if outer_row_node != null and outer_row_node.get_child_count() > 0:
-			outer_lbl = outer_row_node.get_child(0) as Control
-		if outer_lbl != null:
-			outer_lbl.visible = false
 
-		# rebuild_ms restores outer_lbl visibility first, then rebuilds, so it gets hidden
-		# again cleanly — avoids the tree_exiting signal racing with the new build.
 		var rebuild_ms := func() -> void:
-			if outer_lbl != null and is_instance_valid(outer_lbl):
-				outer_lbl.visible = true
 			move_station.build_params_ui.call(cont, e, on_change, ctx)
 
 		var ms_vbox := VBoxContainer.new()
@@ -4079,23 +4067,16 @@ func _register_mission_tasks() -> void:
 		ms_vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		cont.add_child(ms_vbox)
 
-		# ── Title + station selector on same row ─────────────────────────────────
+		# ── Station selector ──────────────────────────────────────────────────────
 		var stations: Array = (ctx.get("ships", []) as Array).filter(
 			func(s: ShipData) -> bool: return s.ship_type == "station")
 		var st_row := HBoxContainer.new()
 		st_row.add_theme_constant_override("separation", 6)
 		ms_vbox.add_child(st_row)
 
-		var title_lbl := Label.new()
-		title_lbl.text = "Move to Station"
-		title_lbl.add_theme_font_size_override("font_size", 7)
-		title_lbl.add_theme_color_override("font_color", Color(0.75, 0.90, 1.0))
-		title_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		title_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		st_row.add_child(title_lbl)
 		if stations.is_empty():
 			var lbl := Label.new()
-			lbl.text = "No stations"
+			lbl.text = "No stations in orbit"
 			lbl.add_theme_font_size_override("font_size", 7)
 			lbl.add_theme_color_override("font_color", Color(0.70, 0.35, 0.35, 0.75))
 			lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -4128,17 +4109,14 @@ func _register_mission_tasks() -> void:
 					rebuild_ms.call())
 				st_row.add_child(btn)
 
-		# ── OnRendezvous sub-tasks ─────────────────────────────────────────────
+		# ── Rendezvous actions ────────────────────────────────────────────────────
 		if not e.has("rendezvous_tasks"):
 			e["rendezvous_tasks"] = []
 		var rdv_tasks: Array = e["rendezvous_tasks"]
 
-		var rdv_hdr := Label.new()
-		rdv_hdr.text = "On Rendezvous:"
-		rdv_hdr.add_theme_font_size_override("font_size", 6)
-		rdv_hdr.add_theme_color_override("font_color", Color(0.45, 0.65, 0.90, 0.65))
-		rdv_hdr.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		ms_vbox.add_child(rdv_hdr)
+		# Simulate cargo through rdv tasks in order so each task sees correct remaining capacity.
+		var rdv_base: Dictionary = ctx.get("state_before", {"status": "on_pad", "cargo": {}})
+		var rdv_running_cargo: Dictionary = (rdv_base.get("cargo", {}) as Dictionary).duplicate()
 
 		for i: int in rdv_tasks.size():
 			var rt: Dictionary = rdv_tasks[i]
@@ -4159,17 +4137,17 @@ func _register_mission_tasks() -> void:
 			if rdef != null and rdef.build_params_ui.is_valid():
 				var rdv_ctx: Dictionary = ctx.duplicate()
 				rdv_ctx["rdv_station_id"] = e.get("target_id", "")
-				# Compute what cargo the ship will have at rendezvous:
-				# collect all pick_planet tasks that precede this move_station in the chain.
-				var pending: Dictionary = {}
-				for chain_t: Dictionary in (ctx.get("entry", {}) as Dictionary).get("mission_tasks", []):
-					if chain_t == e: break
-					if chain_t.get("type", "") == "pick_planet":
-						for k: String in (chain_t.get("cargo", {}) as Dictionary).keys():
-							pending[k] = (chain_t["cargo"] as Dictionary)[k]
-				rdv_ctx["pending_cargo"] = pending
+				rdv_ctx["state_before"] = {"status": rdv_base.get("status", "on_pad"), "cargo": rdv_running_cargo.duplicate()}
 				rdef.build_params_ui.call(rt_params, rt, func() -> void: on_change.call(), rdv_ctx)
 			rt_row.add_child(rt_params)
+			# Advance running cargo for the next rdv task
+			match rt.get("type", ""):
+				"deliver":
+					for k: String in (rt.get("cargo", {}) as Dictionary).keys():
+						rdv_running_cargo[k] = maxi(0, rdv_running_cargo.get(k, 0) - int((rt["cargo"] as Dictionary)[k]))
+				"pickup":
+					var res: String = rt.get("transfer_resource", "")
+					if res != "": rdv_running_cargo[res] = rdv_running_cargo.get(res, 0) + int(rt.get("transfer_amount", 0))
 			var cap_i: int = i
 			var del_btn := Button.new()
 			del_btn.text = "×"
@@ -4215,13 +4193,11 @@ func _register_mission_tasks() -> void:
 		var res_id: String = e.get("transfer_resource", "")
 		var rdv_id: String = ctx.get("rdv_station_id", "")
 		var pp_ref: PlanetProgress = ctx.get("pp", null)
-		# Remaining capacity at rendezvous = ship cap minus pick_planet cargo already loaded
+		var state_before: Dictionary = ctx.get("state_before", {"cargo": {}})
 		var ship_cap: int = _sp_cargo_capacity((ctx.get("entry", {}) as Dictionary).get("ship_type", "shuttle"))
-		var pending_used: int = 0
-		for v in (ctx.get("pending_cargo", {}) as Dictionary).values():
-			pending_used += int(v)
-		var remaining_cap: int = maxi(0, ship_cap - pending_used)
-		# Also cap by what the station actually carries
+		var cargo_weight: int = 0
+		for v in (state_before.get("cargo", {}) as Dictionary).values(): cargo_weight += int(v)
+		var remaining_cap: int = maxi(0, ship_cap - cargo_weight)
 		var station_has: int = remaining_cap
 		if rdv_id != "" and pp_ref != null:
 			for s: ShipData in ShipManager.ships_for(pp_ref.planet_seed):
@@ -4243,11 +4219,12 @@ func _register_mission_tasks() -> void:
 	deliver.build_params_ui = func(cont: Control, e: Dictionary, on_change: Callable, ctx: Dictionary) -> void:
 		var cargo: Dictionary = e.get("cargo", {})
 		var res_id: String = cargo.keys()[0] if not cargo.is_empty() else ""
-		var pending: Dictionary = ctx.get("pending_cargo", {})
-		# Max = how much of this resource is in pending cargo (what the ship actually carries)
-		var max_amt: int = int(pending.get(res_id, 0)) if not pending.is_empty() else 0
+		# state_before = what the ship carries at rendezvous = valid resources to drop
+		var state_before: Dictionary = ctx.get("state_before", {"cargo": {}})
+		var cargo_at_rdv: Dictionary = state_before.get("cargo", {})
+		var max_amt: int = int(cargo_at_rdv.get(res_id, 0)) if res_id != "" else 0
 		_build_res_icon_ui(cont, e, "_deliver_res", res_id,
-			cargo.get(res_id, 10), max_amt, on_change, ctx, ctx.get("pp", null), "", pending)
+			cargo.get(res_id, 10), max_amt, on_change, ctx, ctx.get("pp", null), "", cargo_at_rdv)
 	deliver.estimate_cost = func(_e: Dictionary, _ctx: Dictionary) -> float: return 0.0
 	MissionTaskRegistry.register(deliver)
 
@@ -4261,15 +4238,12 @@ func _register_mission_tasks() -> void:
 		var pp_ref: PlanetProgress = ctx.get("pp", null)
 		var cargo: Dictionary = e.get("cargo", {})
 		var res_id: String = cargo.keys()[0] if not cargo.is_empty() else ""
-		# Capacity: ship cap minus cargo already claimed by OTHER pick_planet tasks in chain
+		# state_before = cargo already loaded by prior pick_planet tasks
+		var state_before: Dictionary = ctx.get("state_before", {"cargo": {}})
 		var ship_cap: int = _sp_cargo_capacity((ctx.get("entry", {}) as Dictionary).get("ship_type", "shuttle"))
-		var used_by_others: int = 0
-		for chain_t: Dictionary in (ctx.get("entry", {}) as Dictionary).get("mission_tasks", []):
-			if chain_t == e: continue
-			if chain_t.get("type", "") == "pick_planet":
-				for v in (chain_t.get("cargo", {}) as Dictionary).values():
-					used_by_others += int(v)
-		var remaining_cap: int = maxi(0, ship_cap - used_by_others)
+		var cargo_weight: int = 0
+		for v in (state_before.get("cargo", {}) as Dictionary).values(): cargo_weight += int(v)
+		var remaining_cap: int = maxi(0, ship_cap - cargo_weight)
 		var stored_amt: int = int(pp_ref.stored_resources.get(res_id, 0)) if pp_ref != null and res_id != "" else remaining_cap
 		var max_amt: int = mini(stored_amt, remaining_cap)
 		_build_res_icon_ui(cont, e, "_pick_planet_res", res_id,
@@ -4323,7 +4297,7 @@ func _build_res_icon_ui(cont: Control, e: Dictionary,
 		var pick_btn := _make_mission_add_btn("Pick resource…")
 		pick_btn.pressed.connect(func() -> void:
 			_mission_show_resource_popup(cont, e, res_key, on_change,
-				popup_pp, ph, rdv_station_id, rdv_pp, pending_cargo))
+				popup_pp, ph, rdv_station_id, rdv_pp, pending_cargo, ctx))
 		cont.add_child(pick_btn)
 		return
 
@@ -4337,7 +4311,7 @@ func _build_res_icon_ui(cont: Control, e: Dictionary,
 		var mev := ev as InputEventMouseButton
 		if not (mev.pressed and mev.button_index == MOUSE_BUTTON_LEFT): return
 		_mission_show_resource_popup(cont, e, res_key, on_change,
-			popup_pp, ph, rdv_station_id, rdv_pp, pending_cargo))
+			popup_pp, ph, rdv_station_id, rdv_pp, pending_cargo, ctx))
 	cont.add_child(icon_card)
 
 	# ── Slider ─────────────────────────────────────────────────────
@@ -4412,6 +4386,8 @@ func _show_rdv_add_popup(anchor: Control, rdv_tasks: Array, ship_type: String,
 	pvbox.add_theme_constant_override("separation", 3)
 	popup.add_child(pvbox)
 
+	var rdv_backdrop: Control = null
+
 	for def: MissionTaskDef in available:
 		var cap_def: MissionTaskDef = def
 		var btn := Button.new()
@@ -4432,6 +4408,7 @@ func _show_rdv_add_popup(anchor: Control, rdv_tasks: Array, ship_type: String,
 		btn.mouse_exited.connect( func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
 		btn.pressed.connect(func() -> void:
 			rdv_tasks.append({"type": cap_def.task_type})
+			if is_instance_valid(rdv_backdrop): rdv_backdrop.queue_free()
 			popup.queue_free()
 			on_added.call())
 		pvbox.add_child(btn)
@@ -4440,6 +4417,17 @@ func _show_rdv_add_popup(anchor: Control, rdv_tasks: Array, ship_type: String,
 	# Fall back to viewport if overlay not available (e.g. called outside builder).
 	var anchor_global: Vector2 = anchor.get_global_rect().position + Vector2(0, anchor.size.y + 2)
 	if popup_host != null and is_instance_valid(popup_host):
+		var backdrop := ColorRect.new()
+		backdrop.color = Color(0, 0, 0, 0)
+		backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
+		backdrop.z_index = 214
+		backdrop.gui_input.connect(func(ev: InputEvent) -> void:
+			if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed:
+				if is_instance_valid(backdrop): backdrop.queue_free()
+				if is_instance_valid(popup): popup.queue_free())
+		popup_host.add_child(backdrop)
+		rdv_backdrop = backdrop
 		popup.position = anchor_global - popup_host.get_global_rect().position
 		popup_host.add_child(popup)
 	else:
@@ -4449,7 +4437,8 @@ func _show_rdv_add_popup(anchor: Control, rdv_tasks: Array, ship_type: String,
 func _mission_show_resource_popup(anchor: Control, entry: Dictionary,
 		key: String, on_change: Callable, pp_ref: PlanetProgress = null,
 		popup_host: Control = null, rdv_station_id: String = "",
-		rdv_pp: PlanetProgress = null, pending_cargo: Dictionary = {}) -> void:
+		rdv_pp: PlanetProgress = null, pending_cargo: Dictionary = {},
+		orig_ctx: Dictionary = {}) -> void:
 	var popup := PanelContainer.new()
 	var ps := StyleBoxFlat.new()
 	ps.bg_color = Color(0.06, 0.09, 0.18, 0.97)
@@ -4517,7 +4506,11 @@ func _mission_show_resource_popup(anchor: Control, entry: Dictionary,
 			for ch in anchor.get_children(): ch.queue_free()
 			var def: MissionTaskDef = MissionTaskRegistry.get_def(entry.get("type", ""))
 			if def != null and def.build_params_ui.is_valid():
-				var rebuild_ctx := {} if popup_host == null else {"_overlay": popup_host}
+				# Preserve full orig_ctx (includes state_before) so capacity limits survive rebuild
+				var rebuild_ctx: Dictionary = orig_ctx.duplicate() if not orig_ctx.is_empty() \
+					else ({} if popup_host == null else {"_overlay": popup_host})
+				if popup_host != null and not rebuild_ctx.has("_overlay"):
+					rebuild_ctx["_overlay"] = popup_host
 				def.build_params_ui.call(anchor, entry, on_change, rebuild_ctx))
 		flow.add_child(card)
 

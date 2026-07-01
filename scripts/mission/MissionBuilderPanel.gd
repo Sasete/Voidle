@@ -83,7 +83,8 @@ var _vbox:       VBoxContainer
 var _task_list:  VBoxContainer
 var _cost_lbl:   Label
 var _confirm_btn: Button
-var _add_popup:  Control     # dropdown for "+" button, or null
+var _add_popup:    Control   # dropdown for "+" button, or null
+var _add_backdrop: Control   # transparent dismiss backdrop behind dropdown
 
 
 # ── UI Build ──────────────────────────────────────────────────────────────────
@@ -172,25 +173,6 @@ func _build_ui() -> void:
 		lock_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		type_row.add_child(lock_lbl)
 
-	# Starting position chip
-	var start_row := HBoxContainer.new()
-	start_row.add_theme_constant_override("separation", 5)
-	_vbox.add_child(start_row)
-
-	var start_dot := Label.new()
-	start_dot.text = "●"
-	_font_apply(start_dot, 7)
-	start_dot.add_theme_color_override("font_color", Color(0.40, 0.80, 0.55))
-	start_dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	start_row.add_child(start_dot)
-
-	var start_lbl := Label.new()
-	start_lbl.text = "Launch Pad"
-	_font_apply(start_lbl, 7)
-	start_lbl.add_theme_color_override("font_color", Color(0.55, 0.70, 0.90, 0.80))
-	start_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	start_row.add_child(start_lbl)
-
 	_add_sep()
 
 	# Task list (rebuilt on changes)
@@ -263,97 +245,388 @@ func _build_ui() -> void:
 	_refresh_cost()
 
 
+## ── Pre-clamp ─────────────────────────────────────────────────────────────────
+
+## Clamp pick_planet cargo amounts to ship capacity before state simulation runs,
+## so state rows and downstream max calculations see correct values.
+func _pre_clamp_tasks() -> void:
+	var ship_type: String = (_context.get("entry", {}) as Dictionary).get("ship_type", "shuttle")
+	const CAPS: Dictionary = {"shuttle": 5, "hauler": 20, "heavy_hauler": 60, "station": 60}
+	var cap: int = CAPS.get(ship_type, 5)
+	var used: int = 0
+	for task: Dictionary in _tasks:
+		if task.get("type", "") != "pick_planet": continue
+		var cargo: Dictionary = task.get("cargo", {})
+		for k: String in cargo.keys():
+			var avail: int = cap - used
+			var clamped: int = clampi(int(cargo[k]), 0, avail)
+			cargo[k] = clamped
+			used += clamped
+
+
+## ── State simulation ──────────────────────────────────────────────────────────
+
+## Returns Array of state dicts, one per task boundary: states[0] = initial,
+## states[i] = state the ship is in BEFORE executing task[i-1],
+## states[_tasks.size()] = final state after all tasks.
+func _compute_states() -> Array:
+	var states: Array = [{"status": "on_pad", "cargo": {}}]
+	for task: Dictionary in _tasks:
+		states.append(_apply_task_state(states.back(), task))
+	return states
+
+
+func _apply_task_state(state: Dictionary, task: Dictionary) -> Dictionary:
+	var s := {"status": state["status"], "cargo": (state["cargo"] as Dictionary).duplicate()}
+	match task.get("type", ""):
+		"pick_planet":
+			for k: String in (task.get("cargo", {}) as Dictionary).keys():
+				s["cargo"][k] = s["cargo"].get(k, 0) + int((task["cargo"] as Dictionary)[k])
+		"move_orbit":
+			s["status"] = "in_orbit"
+		"move_station":
+			var tid: String = task.get("target_id", "")
+			s["status"] = "at_station:" + tid if tid != "" else "at_station"
+			for rt: Dictionary in task.get("rendezvous_tasks", []):
+				match rt.get("type", ""):
+					"pickup":
+						var res: String = rt.get("transfer_resource", "")
+						if res != "":
+							s["cargo"][res] = s["cargo"].get(res, 0) + int(rt.get("transfer_amount", 0))
+					"deliver":
+						for k: String in (rt.get("cargo", {}) as Dictionary).keys():
+							s["cargo"][k] = maxi(0, s["cargo"].get(k, 0) - int((rt["cargo"] as Dictionary)[k]))
+		"land":
+			s["status"] = "on_pad"
+		"deploy":
+			s["status"] = "deployed"
+	return s
+
+
+func _status_label(status: String) -> String:
+	if status == "on_pad":    return "Launch Pad"
+	if status == "in_orbit":  return "In Orbit"
+	if status == "deployed":  return "Deployed"
+	if status.begins_with("at_station"):
+		var sid: String = status.substr("at_station:".length())
+		if sid != "":
+			for sh in _context.get("ships", []):
+				if (sh as ShipData).ship_id == sid:
+					return "At " + (sh as ShipData).ship_name
+		return "At Station"
+	return status
+
+
+## Small connector row between tasks showing ship location + cargo.
+func _build_state_row(state: Dictionary) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 4)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var status: String = state.get("status", "on_pad")
+	var dot_col: Color = Color(0.40, 0.80, 0.55) if status == "on_pad" \
+		else Color(0.45, 0.65, 1.0) if status == "in_orbit" \
+		else Color(0.85, 0.72, 0.30)
+	var dot := Label.new()
+	dot.text = "●"
+	_font_apply(dot, 6)
+	dot.add_theme_color_override("font_color", dot_col)
+	dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(dot)
+
+	var status_lbl := Label.new()
+	status_lbl.text = _status_label(status)
+	_font_apply(status_lbl, 6)
+	status_lbl.add_theme_color_override("font_color", Color(0.55, 0.70, 0.90, 0.65))
+	status_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(status_lbl)
+
+	var cargo: Dictionary = state.get("cargo", {})
+	var has_cargo: bool = false
+	for res_id: String in cargo.keys():
+		var amt: int = int(cargo[res_id])
+		if amt <= 0: continue
+		var rd: ResourceData = GameState.known_resources.get(res_id, null)
+		if rd == null: continue
+		has_cargo = true
+		var tex := MineralIcon.make(rd.tier, rd.display_color)
+		var icon := TextureRect.new()
+		icon.texture              = tex
+		icon.custom_minimum_size  = Vector2(14, 14)
+		icon.stretch_mode         = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon.mouse_filter         = Control.MOUSE_FILTER_IGNORE
+		row.add_child(icon)
+		var amt_lbl := Label.new()
+		amt_lbl.text = "×%d" % amt
+		_font_apply(amt_lbl, 6)
+		amt_lbl.add_theme_color_override("font_color", Color(0.82, 0.90, 1.0, 0.75))
+		amt_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(amt_lbl)
+
+	if not has_cargo:
+		var empty_lbl := Label.new()
+		empty_lbl.text = "· empty"
+		_font_apply(empty_lbl, 6)
+		empty_lbl.add_theme_color_override("font_color", Color(0.40, 0.45, 0.58, 0.50))
+		empty_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(empty_lbl)
+
+	return row
+
+
+## ── Task list ─────────────────────────────────────────────────────────────────
+
 func _rebuild_task_list() -> void:
 	for ch in _task_list.get_children():
 		ch.queue_free()
 
+	_pre_clamp_tasks()
+	var states: Array = _compute_states()
+
+	# Launch Pad card — groups all pick_planet tasks
+	_task_list.add_child(_build_launch_pad_card(states[0]))
+
+	var has_land    := false
+	var has_dest    := false
+
 	for i: int in _tasks.size():
-		_task_list.add_child(_build_task_row(i))
+		var ttype: String = (_tasks[i] as Dictionary).get("type", "")
+		match ttype:
+			"move_station":
+				has_dest = true
+				_task_list.add_child(_build_chain_arrow())
+				_task_list.add_child(_build_destination_card(i, states[i]))
+			"land":
+				has_land = true
+				_task_list.add_child(_build_chain_arrow())
+				_task_list.add_child(_build_land_row(i))
+			"pick_planet", "move_orbit":
+				pass  # rendered inside launch pad card
 
-	# "+" add button
-	var add_btn := _make_btn("+ Add Step",
-		Color(0.06, 0.14, 0.28, 0.85), Color(0.22, 0.45, 0.75, 0.45),
-		Color(0.50, 0.75, 1.0))
-	add_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	add_btn.pressed.connect(func() -> void: _show_add_dropdown(add_btn))
-	_task_list.add_child(add_btn)
+	# Bottom action buttons
+	if not has_land:
+		var btns := HBoxContainer.new()
+		btns.add_theme_constant_override("separation", 6)
+		_task_list.add_child(btns)
 
-	# Disable add if no tasks available at current tail
-	var tail: String = MissionTaskRegistry.chain_tail_status(_tasks, START_STATUS)
-	var available: Array = MissionTaskRegistry.get_available(tail, _context.get("entry", {}).get("ship_type", "shuttle"))
-	add_btn.disabled = available.is_empty()
+		var dest_btn := _make_btn("+ Add Destination",
+			Color(0.05, 0.10, 0.22, 0.80), Color(0.22, 0.42, 0.70, 0.45),
+			Color(0.55, 0.78, 1.0))
+		dest_btn.pressed.connect(func() -> void:
+			# Insert after all existing move_station tasks, before land
+			var pos: int = _tasks.size()
+			for j: int in _tasks.size():
+				if (_tasks[j] as Dictionary).get("type", "") in ["pick_planet", "move_orbit", "move_station"]:
+					pos = j + 1
+				else:
+					break
+			_tasks.insert(pos, {"type": "move_station"})
+			_rebuild_task_list())
+		btns.add_child(dest_btn)
+
+		if has_dest:
+			var land_btn := _make_btn("+ Land",
+				Color(0.05, 0.08, 0.16, 0.80), Color(0.22, 0.35, 0.55, 0.40),
+				Color(0.50, 0.68, 0.90))
+			land_btn.pressed.connect(func() -> void:
+				_tasks.append({"type": "land"})
+				_rebuild_task_list())
+			btns.add_child(land_btn)
 
 	_refresh_cost()
 
 
-func _build_task_row(index: int) -> Control:
-	var entry: Dictionary = _tasks[index]
-	var def: MissionTaskDef = MissionTaskRegistry.get_def(entry.get("type", ""))
-
+func _build_launch_pad_card(state_before: Dictionary) -> Control:
 	var card := PanelContainer.new()
-	var cs   := StyleBoxFlat.new()
-	cs.bg_color     = Color(0.08, 0.12, 0.24, 0.80)
-	cs.border_color = Color(0.22, 0.38, 0.65, 0.40)
-	cs.set_border_width_all(1)
-	cs.set_corner_radius_all(4)
-	cs.content_margin_left   = 8
-	cs.content_margin_right  = 6
-	cs.content_margin_top    = 5
-	cs.content_margin_bottom = 5
+	var cs := _card_style(Color(0.25, 0.55, 0.38, 0.40))
 	card.add_theme_stylebox_override("panel", cs)
 
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 6)
-	card.add_child(row)
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 6)
+	card.add_child(vbox)
 
-	# Task name
-	var name_lbl := Label.new()
-	name_lbl.text = def.display_name if def != null else entry.get("type", "?")
-	_font_apply(name_lbl, 7)
-	name_lbl.add_theme_color_override("font_color", Color(0.75, 0.90, 1.0))
-	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	name_lbl.custom_minimum_size = Vector2(72, 0)
-	name_lbl.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	row.add_child(name_lbl)
+	# Header
+	var hdr_row := HBoxContainer.new()
+	hdr_row.add_theme_constant_override("separation", 5)
+	hdr_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(hdr_row)
+	var dot := Label.new(); dot.text = "●"
+	_font_apply(dot, 7)
+	dot.add_theme_color_override("font_color", Color(0.40, 0.80, 0.55))
+	dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hdr_row.add_child(dot)
+	var hdr_lbl := Label.new(); hdr_lbl.text = "Launch Pad"
+	_font_apply(hdr_lbl, 7)
+	hdr_lbl.add_theme_color_override("font_color", Color(0.65, 0.82, 0.96, 0.90))
+	hdr_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hdr_row.add_child(hdr_lbl)
 
-	# Params container
-	var params_cont := HBoxContainer.new()
-	params_cont.add_theme_constant_override("separation", 4)
-	params_cont.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(params_cont)
+	# pick_planet task rows (in order, with sequential state)
+	var running := state_before.duplicate(true)
+	var has_pick := false
+	for i: int in _tasks.size():
+		var task: Dictionary = _tasks[i]
+		if task.get("type", "") != "pick_planet": continue
+		has_pick = true
+		vbox.add_child(_build_pick_planet_row(i, running.duplicate(true)))
+		running = _apply_task_state(running, task)
 
-	if def != null and def.build_params_ui.is_valid():
-		def.build_params_ui.call(params_cont, entry, func() -> void: _refresh_cost(), _context)
+	if not has_pick:
+		var empty := Label.new(); empty.text = "No pre-launch cargo"
+		_font_apply(empty, 6)
+		empty.add_theme_color_override("font_color", Color(0.38, 0.44, 0.58, 0.55))
+		empty.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		vbox.add_child(empty)
 
-	# × remove button
-	var remove_btn := Button.new()
-	remove_btn.text = "×"
-	_font_apply(remove_btn, 9)
-	var rbs := StyleBoxFlat.new()
-	rbs.bg_color     = Color(0.0, 0.0, 0.0, 0.0)
-	rbs.border_color = Color(0.0, 0.0, 0.0, 0.0)
-	rbs.set_border_width_all(0)
-	remove_btn.add_theme_stylebox_override("normal", rbs)
-	remove_btn.add_theme_stylebox_override("hover",  rbs)
-	remove_btn.add_theme_color_override("font_color", Color(0.70, 0.35, 0.35, 0.80))
-	remove_btn.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	remove_btn.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
-	remove_btn.mouse_exited.connect( func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
-	remove_btn.pressed.connect(func() -> void:
-		# Remove this task and all subsequent (chain may be broken)
-		_tasks.resize(index)
+	# Insert position: after last pick_planet/move_orbit, before first move_station
+	var insert_pos := 0
+	for j: int in _tasks.size():
+		if (_tasks[j] as Dictionary).get("type", "") in ["pick_planet", "move_orbit"]:
+			insert_pos = j + 1
+		else:
+			break
+	var cap_pos := insert_pos
+	var add_btn := _make_btn("+ Take from Storage",
+		Color(0.0, 0.0, 0.0, 0.0), Color(0.18, 0.35, 0.58, 0.35),
+		Color(0.48, 0.68, 0.92, 0.85))
+	add_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	add_btn.pressed.connect(func() -> void:
+		_tasks.insert(cap_pos, {"type": "pick_planet", "cargo": {}})
 		_rebuild_task_list())
-	row.add_child(remove_btn)
+	vbox.add_child(add_btn)
 
 	return card
 
 
+func _build_pick_planet_row(index: int, state_before: Dictionary) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 4)
+
+	var params := HBoxContainer.new()
+	params.add_theme_constant_override("separation", 4)
+	params.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(params)
+
+	var entry: Dictionary = _tasks[index]
+	var def: MissionTaskDef = MissionTaskRegistry.get_def("pick_planet")
+	if def != null and def.build_params_ui.is_valid():
+		var task_ctx := _context.duplicate()
+		task_ctx["state_before"] = state_before
+		def.build_params_ui.call(params, entry, func() -> void: _refresh_cost(), task_ctx)
+
+	var cap_i := index
+	row.add_child(_make_x_btn(func() -> void:
+		_tasks.remove_at(cap_i)
+		_rebuild_task_list()))
+	return row
+
+
+func _build_destination_card(index: int, state_before: Dictionary) -> Control:
+	var card := PanelContainer.new()
+	var cs := _card_style(Color(0.20, 0.52, 0.38, 0.35))
+	card.add_theme_stylebox_override("panel", cs)
+
+	# Outer row: content fills left, × button on right
+	var outer := HBoxContainer.new()
+	outer.add_theme_constant_override("separation", 4)
+	card.add_child(outer)
+
+	var content := HBoxContainer.new()
+	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	outer.add_child(content)
+
+	var entry: Dictionary = _tasks[index]
+	var def: MissionTaskDef = MissionTaskRegistry.get_def("move_station")
+	if def != null and def.build_params_ui.is_valid():
+		var task_ctx := _context.duplicate()
+		task_ctx["state_before"] = state_before
+		def.build_params_ui.call(content, entry, func() -> void: _refresh_cost(), task_ctx)
+
+	var cap_i := index
+	outer.add_child(_make_x_btn(func() -> void:
+		_tasks.resize(cap_i)
+		_rebuild_task_list()))
+
+	return card
+
+
+func _build_land_row(index: int) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var dot := Label.new(); dot.text = "●"
+	_font_apply(dot, 7)
+	dot.add_theme_color_override("font_color", Color(0.75, 0.55, 0.30))
+	dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(dot)
+
+	var lbl := Label.new(); lbl.text = "Land"
+	_font_apply(lbl, 7)
+	lbl.add_theme_color_override("font_color", Color(0.65, 0.75, 0.90, 0.85))
+	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(lbl)
+
+	var cap_i := index
+	row.add_child(_make_x_btn(func() -> void:
+		_tasks.resize(cap_i)
+		_rebuild_task_list()))
+	return row
+
+
+func _build_chain_arrow() -> Control:
+	var lbl := Label.new()
+	lbl.text = "    │"
+	_font_apply(lbl, 7)
+	lbl.add_theme_color_override("font_color", Color(0.28, 0.42, 0.65, 0.40))
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return lbl
+
+
+func _card_style(border_color: Color) -> StyleBoxFlat:
+	var cs := StyleBoxFlat.new()
+	cs.bg_color     = Color(0.07, 0.10, 0.20, 0.88)
+	cs.border_color = border_color
+	cs.set_border_width_all(1)
+	cs.set_corner_radius_all(5)
+	cs.content_margin_left   = 10
+	cs.content_margin_right  = 8
+	cs.content_margin_top    = 8
+	cs.content_margin_bottom = 8
+	return cs
+
+
+func _make_x_btn(on_press: Callable) -> Button:
+	var btn := Button.new()
+	btn.text = "×"
+	_font_apply(btn, 9)
+	var s := StyleBoxFlat.new()
+	s.bg_color = Color(0, 0, 0, 0); s.set_border_width_all(0)
+	btn.add_theme_stylebox_override("normal", s)
+	btn.add_theme_stylebox_override("hover",  s)
+	btn.add_theme_color_override("font_color", Color(0.70, 0.35, 0.35, 0.75))
+	btn.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	btn.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
+	btn.mouse_exited.connect( func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
+	btn.pressed.connect(on_press)
+	return btn
+
+
 # ── Add Dropdown ──────────────────────────────────────────────────────────────
+
+func _dismiss_add_popup() -> void:
+	if _add_popup != null and is_instance_valid(_add_popup):
+		_add_popup.queue_free()
+	_add_popup = null
+	if _add_backdrop != null and is_instance_valid(_add_backdrop):
+		_add_backdrop.queue_free()
+	_add_backdrop = null
+
 
 func _show_add_dropdown(anchor: Control) -> void:
 	if _add_popup != null and is_instance_valid(_add_popup):
-		_add_popup.queue_free()
-		_add_popup = null
+		_dismiss_add_popup()
 		return
 
 	var tail: String = MissionTaskRegistry.chain_tail_status(_tasks, START_STATUS)
@@ -397,18 +670,28 @@ func _show_add_dropdown(anchor: Control) -> void:
 		item_btn.mouse_exited.connect( func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
 		item_btn.pressed.connect(func() -> void:
 			_tasks.append({"type": cap_def.task_type})
-			if _add_popup != null and is_instance_valid(_add_popup):
-				_add_popup.queue_free()
-				_add_popup = null
+			_dismiss_add_popup()
 			_rebuild_task_list())
 		pvbox.add_child(item_btn)
 
 	# Position below anchor, added to overlay so coordinates are consistent
 	var anchor_global: Vector2 = anchor.get_global_rect().position + Vector2(0, anchor.size.y + 2)
 	if _overlay != null and is_instance_valid(_overlay):
+		# Transparent backdrop — added first (below popup), catches outside clicks to dismiss
+		var backdrop := ColorRect.new()
+		backdrop.color = Color(0, 0, 0, 0)
+		backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
+		backdrop.z_index = 209
+		backdrop.gui_input.connect(func(ev: InputEvent) -> void:
+			if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed:
+				_dismiss_add_popup())
+		_overlay.add_child(backdrop)
+		_add_backdrop = backdrop
+
 		var overlay_rect: Vector2 = _overlay.get_global_rect().position
 		popup.position = anchor_global - overlay_rect
-		_overlay.add_child(popup)
+		_overlay.add_child(popup)  # added after backdrop → higher input priority
 	else:
 		popup.global_position = anchor_global
 		anchor.get_viewport().add_child(popup)
@@ -451,9 +734,7 @@ func _on_confirm_pressed() -> void:
 
 
 func _close() -> void:
-	if _add_popup != null and is_instance_valid(_add_popup):
-		_add_popup.queue_free()
-		_add_popup = null
+	_dismiss_add_popup()
 	var on_close: Callable = _context.get("on_close", Callable())
 	if on_close.is_valid():
 		on_close.call()
