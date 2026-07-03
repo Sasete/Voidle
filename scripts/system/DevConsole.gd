@@ -45,6 +45,11 @@ func _ready() -> void:
 	_orbitron = load("res://Fonts/Orbitron-VariableFont_wght.ttf")
 	_build_ui()
 	_panel.visible = false
+	# Tab always cycles back to the field (must be set after node is in tree)
+	await get_tree().process_frame
+	if is_instance_valid(_field):
+		_field.focus_next     = _field.get_path()
+		_field.focus_previous = _field.get_path()
 
 func _build_ui() -> void:
 	_panel = PanelContainer.new()
@@ -89,6 +94,7 @@ func _build_ui() -> void:
 	_log.add_theme_font_size_override("bold_font_size",     FONT_SIZE)
 	_log.add_theme_font_size_override("italics_font_size",  FONT_SIZE)
 	_log.add_theme_color_override("default_color", Color(0.70, 0.82, 0.72))
+	_log.focus_mode = Control.FOCUS_NONE
 	vbox.add_child(_log)
 
 	# Separator above input
@@ -120,6 +126,7 @@ func _build_ui() -> void:
 	_field.add_theme_color_override("caret_color",              Color(0.45, 0.95, 0.60))
 	_field.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
 	_field.add_theme_stylebox_override("focus",  StyleBoxEmpty.new())
+	_field.focus_mode = Control.FOCUS_ALL
 	_field.text_submitted.connect(_on_submit)
 	_field.text_changed.connect(func(_t: String) -> void: AudioManager.play("tick", -10.0))
 	_field.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.IBEAM))
@@ -129,12 +136,12 @@ func _build_ui() -> void:
 # ── Input ─────────────────────────────────────────────────────────────────────
 
 func _input(event: InputEvent) -> void:
-	# Handle Tab here (before focus system consumes it)
-	if _open and event is InputEventKey:
-		var ke := event as InputEventKey
-		if ke.pressed and ke.keycode == KEY_TAB:
-			_field.grab_focus()
-			get_viewport().set_input_as_handled()
+	if not (event is InputEventKey):
+		return
+	var ke := event as InputEventKey
+	if ke.pressed and ke.keycode == KEY_TAB and _open and not _booting:
+		_field.grab_focus()
+		get_viewport().set_input_as_handled()
 
 func _unhandled_key_input(event: InputEvent) -> void:
 	if not (event is InputEventKey):
@@ -271,7 +278,10 @@ func _on_submit(raw: String) -> void:
 	# Animate the collected response lines
 	_out_gen += 1
 	_drain_output(_out_lines.duplicate(), _out_gen)
-	_field.grab_focus()
+	# Wait one frame so Godot's focus system finishes processing Enter, then re-grab
+	await get_tree().process_frame
+	if _open and is_instance_valid(_field):
+		_field.grab_focus()
 
 func _drain_output(lines: Array, gen: int) -> void:
 	for ln in lines:
