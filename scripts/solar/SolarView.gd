@@ -434,6 +434,8 @@ func _build_local_moons(data: PlanetData) -> void:
 		var node := PlanetOrbitNode.new()
 		_pivot.add_child(node)
 		node.setup(md, rx, start)
+		node._height = 0.0   # moons follow orbit ellipse exactly, no vertical scatter
+		node._update_position()
 		
 		node.hover_start.connect(func(pd: PlanetData) -> void: _hovered_planet = pd)
 		node.hover_end.connect(func() -> void:

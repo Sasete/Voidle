@@ -281,8 +281,9 @@ func _draw_ship_label(spos: Vector2, ship: ShipData) -> void:
 			draw_line(Vector2(cx, cy), Vector2(cx, cy - oy * C), shadow, W + 1.0, true)
 			draw_line(Vector2(cx, cy), Vector2(cx, cy - oy * C), accent, W, true)
 
-	# Leader lines
-	draw_line(spos, diag_end,  line_col, 1.0, true)
+	# Leader lines — start from the corner bracket closest to label direction
+	var line_start := spos + Vector2(horiz_dir * R, vert_dir * R)
+	draw_line(line_start, diag_end,  line_col, 1.0, true)
 	draw_line(diag_end, horiz_end, line_col, 1.0, true)
 
 	# Label
