@@ -618,29 +618,226 @@ func _update_panel() -> void:
 	if gd.is_unlocked(star_idx):
 		return   # already surveyed
 
+	const SURVEY_CREDITS: float = 200_000.0
+	const SURVEY_SCIENCE: float = 50_000.0
+
 	var orbitron := load("res://Fonts/Orbitron-VariableFont_wght.ttf") as Font
+
+	# Container for the whole survey section (separator + cost + button)
+	var survey_wrap := VBoxContainer.new()
+	survey_wrap.add_theme_constant_override("separation", 6)
+	_panel_content.add_child(survey_wrap)
+
+	var sep := HSeparator.new()
+	var sep_s := StyleBoxFlat.new()
+	sep_s.bg_color = Color(0.2, 0.25, 0.4, 0.35)
+	sep.add_theme_stylebox_override("separator", sep_s)
+	survey_wrap.add_child(sep)
+
+	# Survey button styled like Level Up (always green)
 	_survey_btn = Button.new()
-	_survey_btn.text      = "▶  SURVEY SYSTEM"
-	_survey_btn.flat      = false
+	_survey_btn.text = "SURVEY SYSTEM"
 	_survey_btn.alignment = HORIZONTAL_ALIGNMENT_CENTER
-	if orbitron:
-		_survey_btn.add_theme_font_override("font", orbitron)
-	_survey_btn.add_theme_font_size_override("font_size", 10)
-	_survey_btn.add_theme_color_override("font_color",        Color(0.90, 0.82, 0.45))
-	_survey_btn.add_theme_color_override("font_hover_color",  Color(1.00, 0.95, 0.60))
-	_survey_btn.add_theme_color_override("font_pressed_color",Color(1.00, 1.00, 0.80))
-	_survey_btn.pressed.connect(func() -> void: _survey_system(gd, star_idx))
-	# insert before BackButton (second-to-last child)
-	_panel_content.add_child(_survey_btn)
-	_panel_content.move_child(_survey_btn, _panel_content.get_child_count() - 2)
-func _survey_system(gd: GalaxyData, star_idx: int) -> void:
+	if orbitron: _survey_btn.add_theme_font_override("font", orbitron)
+	_survey_btn.add_theme_font_size_override("font_size", 12)
+
+	var nb := StyleBoxFlat.new()
+	nb.bg_color = Color(0.10, 0.32, 0.12)
+	nb.content_margin_top = 10; nb.content_margin_bottom = 10
+	nb.set_border_width_all(1)
+	nb.border_color = Color(0.25, 0.75, 0.30, 0.8)
+	nb.set_corner_radius_all(3)
+	_survey_btn.add_theme_stylebox_override("normal", nb)
+	var hb := StyleBoxFlat.new()
+	hb.bg_color = Color(0.15, 0.48, 0.18)
+	hb.content_margin_top = 10; hb.content_margin_bottom = 10
+	hb.set_border_width_all(1)
+	hb.border_color = Color(0.30, 0.90, 0.38, 0.9)
+	hb.set_corner_radius_all(3)
+	_survey_btn.add_theme_stylebox_override("hover", hb)
+	_survey_btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	_survey_btn.add_theme_color_override("font_color", Color(0.80, 1.0, 0.82))
+
+	_survey_btn.mouse_entered.connect(func() -> void:
+		AudioManager.play("hover")
+		CursorManager.set_state(CursorManager.State.POINTER))
+	_survey_btn.mouse_exited.connect(func() -> void:
+		CursorManager.set_state(CursorManager.State.NORMAL))
+	_survey_btn.pressed.connect(func() -> void: _show_survey_popup(gd, star_idx, SURVEY_CREDITS, SURVEY_SCIENCE))
+
+	survey_wrap.add_child(_survey_btn)
+
+func _show_survey_popup(gd: GalaxyData, star_idx: int, cost_cr: float, cost_sci: float) -> void:
+	var orbitron := load("res://Fonts/Orbitron-VariableFont_wght.ttf") as Font
+
+	var popup_layer := CanvasLayer.new()
+	popup_layer.layer = 400
+	get_tree().root.add_child(popup_layer)
+
+	var overlay := ColorRect.new()
+	overlay.color = Color(0.0, 0.0, 0.0, 0.65)
+	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	popup_layer.add_child(overlay)
+
+	var popup := PanelContainer.new()
+	var ps := StyleBoxFlat.new()
+	ps.bg_color = Color(0.06, 0.09, 0.18, 0.97)
+	ps.border_color = Color(0.25, 0.45, 0.80, 0.55)
+	ps.set_border_width_all(1); ps.set_corner_radius_all(6)
+	ps.content_margin_left = 24; ps.content_margin_right = 24
+	ps.content_margin_top  = 24; ps.content_margin_bottom = 24
+	popup.add_theme_stylebox_override("panel", ps)
+	popup.set_anchors_preset(Control.PRESET_CENTER)
+	popup.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	popup.grow_vertical   = Control.GROW_DIRECTION_BOTH
+	popup.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	popup.size_flags_vertical   = Control.SIZE_SHRINK_CENTER
+	overlay.add_child(popup)
+
+	# Close on overlay click (but not popup click)
+	overlay.gui_input.connect(func(ev: InputEvent) -> void:
+		if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed:
+			if not popup.get_global_rect().has_point((ev as InputEventMouseButton).global_position):
+				popup_layer.queue_free())
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 16)
+	popup.add_child(vbox)
+
+	var title := Label.new()
+	title.text = "SURVEY SYSTEM"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if orbitron: title.add_theme_font_override("font", orbitron)
+	title.add_theme_font_size_override("font_size", 14)
+	title.add_theme_color_override("font_color", Color(0.75, 0.90, 1.0))
+	vbox.add_child(title)
+
+	var desc := Label.new()
+	desc.text = "Reveal all planets and moons in this system."
+	desc.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	desc.custom_minimum_size.x = 240
+	if orbitron: desc.add_theme_font_override("font", orbitron)
+	desc.add_theme_font_size_override("font_size", 9)
+	desc.add_theme_color_override("font_color", Color(0.55, 0.65, 0.80))
+	vbox.add_child(desc)
+
+	# Cost rows
+	var cost_box := VBoxContainer.new()
+	cost_box.add_theme_constant_override("separation", 8)
+	vbox.add_child(cost_box)
+
+	var _make_cost_row := func(label: String, have: float, need: float, color: Color) -> void:
+		var row := HBoxContainer.new()
+		row.alignment = BoxContainer.ALIGNMENT_CENTER
+		row.add_theme_constant_override("separation", 10)
+		cost_box.add_child(row)
+		var lbl := Label.new()
+		lbl.text = label
+		if orbitron: lbl.add_theme_font_override("font", orbitron)
+		lbl.add_theme_font_size_override("font_size", 10)
+		lbl.add_theme_color_override("font_color", color)
+		row.add_child(lbl)
+		var val := Label.new()
+		val.text = "%s / %s" % [HUDManager.fmt_credits(have) if label.begins_with("◈") else "%.0f" % have,
+								HUDManager.fmt_credits(need) if label.begins_with("◈") else "%.0f" % need]
+		if orbitron: val.add_theme_font_override("font", orbitron)
+		val.add_theme_font_size_override("font_size", 10)
+		val.add_theme_color_override("font_color",
+			Color(0.35, 0.90, 0.45) if have >= need else Color(0.90, 0.35, 0.35))
+		row.add_child(val)
+
+	_make_cost_row.call("◈  Credits", GameState.credits, cost_cr, Color(0.95, 0.82, 0.35))
+	_make_cost_row.call("○  Science", GameState.science_points, cost_sci, Color(0.55, 0.85, 1.0))
+
+	var can_afford := GameState.credits >= cost_cr and GameState.science_points >= cost_sci
+
+	if not can_afford:
+		var warn := Label.new()
+		warn.text = "Insufficient resources to survey."
+		warn.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		if orbitron: warn.add_theme_font_override("font", orbitron)
+		warn.add_theme_font_size_override("font_size", 9)
+		warn.add_theme_color_override("font_color", Color(0.90, 0.35, 0.35))
+		vbox.add_child(warn)
+
+	# Buttons row
+	var btn_row := HBoxContainer.new()
+	btn_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	btn_row.add_theme_constant_override("separation", 12)
+	vbox.add_child(btn_row)
+
+	var cancel_btn := Button.new()
+	cancel_btn.text = "CANCEL"
+	if orbitron: cancel_btn.add_theme_font_override("font", orbitron)
+	cancel_btn.add_theme_font_size_override("font_size", 10)
+	cancel_btn.custom_minimum_size = Vector2(100, 36)
+	var cb_s := StyleBoxFlat.new()
+	cb_s.bg_color = Color(0.10, 0.10, 0.16)
+	cb_s.border_color = Color(0.30, 0.30, 0.45, 0.6); cb_s.set_border_width_all(1); cb_s.set_corner_radius_all(4)
+	cb_s.content_margin_top = 8; cb_s.content_margin_bottom = 8
+	cancel_btn.add_theme_stylebox_override("normal", cb_s)
+	var cb_h := cb_s.duplicate() as StyleBoxFlat; cb_h.bg_color = Color(0.16, 0.16, 0.24)
+	cancel_btn.add_theme_stylebox_override("hover", cb_h)
+	cancel_btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	cancel_btn.add_theme_color_override("font_color", Color(0.65, 0.68, 0.80))
+	cancel_btn.pressed.connect(func() -> void: popup_layer.queue_free())
+	btn_row.add_child(cancel_btn)
+
+	var confirm_btn := Button.new()
+	confirm_btn.text = "SURVEY"
+	if orbitron: confirm_btn.add_theme_font_override("font", orbitron)
+	confirm_btn.add_theme_font_size_override("font_size", 11)
+	confirm_btn.custom_minimum_size = Vector2(120, 36)
+	var fb_s := StyleBoxFlat.new()
+	fb_s.bg_color = Color(0.15, 0.4, 0.15)
+	fb_s.content_margin_top = 10; fb_s.content_margin_bottom = 10
+	confirm_btn.add_theme_stylebox_override("normal", fb_s)
+	var fb_h := StyleBoxFlat.new()
+	fb_h.bg_color = Color(0.2, 0.6, 0.2)
+	fb_h.content_margin_top = 10; fb_h.content_margin_bottom = 10
+	confirm_btn.add_theme_stylebox_override("hover", fb_h)
+	confirm_btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	confirm_btn.add_theme_color_override("font_color", Color.WHITE)
+	if not can_afford:
+		confirm_btn.disabled = true
+		var db_s := StyleBoxFlat.new()
+		db_s.bg_color = Color(0.10, 0.18, 0.10)
+		db_s.content_margin_top = 10; db_s.content_margin_bottom = 10
+		db_s.set_border_width_all(1); db_s.border_color = Color(0.20, 0.35, 0.20, 0.5)
+		db_s.set_corner_radius_all(3)
+		confirm_btn.add_theme_stylebox_override("disabled", db_s)
+		confirm_btn.add_theme_color_override("font_disabled_color", Color(0.35, 0.50, 0.35))
+	confirm_btn.pressed.connect(func() -> void:
+		AudioManager.play("survey")
+		popup_layer.queue_free()
+		_survey_system(gd, star_idx, cost_cr, cost_sci))
+	btn_row.add_child(confirm_btn)
+
+	cancel_btn.pressed.connect(func() -> void: overlay.queue_free())
+
+func _survey_system(gd: GalaxyData, star_idx: int, cost_cr: float, cost_sci: float) -> void:
+	if GameState.credits < cost_cr or GameState.science_points < cost_sci:
+		return
+	GameState.credits -= cost_cr
+	GameState.credits_changed.emit(GameState.credits)
+	if not GameState.spend_science(cost_sci):
+		GameState.credits += cost_cr
+		GameState.credits_changed.emit(GameState.credits)
+		return
 	gd.unlock(star_idx)
+	# Remove the whole survey_wrap (sep + cost + button)
 	if is_instance_valid(_survey_btn):
-		_survey_btn.queue_free()
+		var wrap := _survey_btn.get_parent()
+		if is_instance_valid(wrap):
+			wrap.queue_free()
 		_survey_btn = null
 
 
 func _input(event: InputEvent) -> void:
+	if SkillTreeView.is_open:
+		return
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.button_index == MOUSE_BUTTON_RIGHT:
@@ -715,26 +912,22 @@ func _input(event: InputEvent) -> void:
 				else:
 					_go_to_galaxy()
 	elif event is InputEventPanGesture:
-		var dy: float = event.delta.y
-		if dy < -0.5:   # scroll up = zoom in
-			var target_pd: PlanetData = _hovered_planet
-			if target_pd == null and _mode == Mode.LOCAL and _star != null and _star.get_global_rect().has_point(event.position):
-				target_pd = _current_local
-			if target_pd != null:
-				_enter_charge += 1
-				_back_charge   = 0
-				if _enter_charge >= 2:
-					_enter_charge = 0
-					planet_selected.emit(target_pd)
-		elif dy > 0.5:                               # scroll down = zoom out
-			_enter_charge  = 0
-			_back_charge  += 1
-			if _back_charge >= 3:
-				_back_charge = 0
-				if _mode == Mode.LOCAL:
-					load_system(_current)
-				else:
-					_go_to_galaxy()
+		# 2-finger trackpad swipe → rotate (horizontal) / tilt (vertical)
+		_view_angle += event.delta.x * 0.012
+		_orbit_tilt  = clamp(_orbit_tilt - event.delta.y * 0.006, 0.28, 0.50)
+		for node in _orbits:
+			node.set_view_angle(_view_angle)
+			node.set_tilt(_orbit_tilt)
+		for belt in _belts:
+			belt.set_view_angle(_view_angle)
+			belt.set_tilt(_orbit_tilt)
+		if _orbit_lines:
+			_orbit_lines.set_tilt(_orbit_tilt)
+		if _orbit_lines_local_back:
+			_orbit_lines_local_back.set_tilt(_orbit_tilt)
+		if _orbit_lines_local_front:
+			_orbit_lines_local_front.set_tilt(_orbit_tilt)
+		get_viewport().set_input_as_handled()
 	elif event is InputEventMouseMotion and (_dragging or _right_dragging):
 		var mm  := event as InputEventMouseMotion
 		if mm.relative.length() < 1.5:

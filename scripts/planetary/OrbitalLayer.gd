@@ -569,8 +569,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		_hovered_station = _station_poi_at(local_pos)
 		if _hovered_station != prev_st:
 			queue_redraw()
-			CursorManager.set_state(
-				CursorManager.State.POINTER if _hovered_station != "" else CursorManager.State.NORMAL)
+			if _hovered_station != "":
+				AudioManager.play("district_hover")
+				CursorManager.set_state(CursorManager.State.POINTER)
+			else:
+				CursorManager.set_state(CursorManager.State.NORMAL)
 
 	elif event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
@@ -586,6 +589,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				var local_pos := get_local_mouse_position()
 				var st := _station_poi_at(local_pos)
 				if st != "":
+					AudioManager.play("click")
 					station_poi_clicked.emit(st)
 					accept_event()
 					return

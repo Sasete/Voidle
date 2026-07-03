@@ -25,6 +25,12 @@ extends Resource
 # ── Resources ────────────────────────────────────────────────────────────────
 @export var stored_resources: Dictionary = {}
 
+func has_building(bid: String) -> bool:
+	for entry in buildings:
+		if entry.get("building_id", "") == bid and not entry.get("constructing", false):
+			return true
+	return false
+
 # ── Unlock flags ─────────────────────────────────────────────────────────────
 @export var is_colonized:   bool = false
 @export var has_spaceport:  bool = false
@@ -47,6 +53,16 @@ func get_upgrade_cost() -> Dictionary:
 
 func recalculate_limits() -> void:
 	max_districts  = 4  + (level - 1) * 2
+	
+	if has_building("cryo_vault"):
+		max_districts += 2
+		
+	var st = null
+	if Engine.has_singleton("SceneTree") and Engine.get_main_loop():
+		st = Engine.get_main_loop().root.get_node_or_null("SkillTree")
+	if st and st.has_method("get_max_districts_add"):
+		max_districts += st.get_max_districts_add()
+		
 	max_mining_lv  = 1  + (level - 1)
 	max_generators = 2  + (level - 1) * 2
 	max_spaceports = 1 if level >= 2 else 0

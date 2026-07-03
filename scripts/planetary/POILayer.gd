@@ -265,6 +265,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		if _hovered_index != prev:
 			queue_redraw()
 			if _hovered_index >= 0:
+				AudioManager.play("poi_ping")
 				CursorManager.set_state(CursorManager.State.POINTER)
 			else:
 				CursorManager.set_state(CursorManager.State.NORMAL)
@@ -272,6 +273,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		var idx := _get_poi_at(event.global_position)
 		if idx >= 0:
+			AudioManager.play("poi_select")
 			_selected_index = idx
 			queue_redraw()
 			poi_clicked.emit(idx, _pois[idx]["data"])

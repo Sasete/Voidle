@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="BuildingDef" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="1_def"]
+
+[resource]
+script = ExtResource("1_def")
+building_id = "commercial_hub"
+display_name = "Commercial Hub"
+description = "Consumes refined minerals to generate massive amounts of credits."
+allowed_poi_types = Array[int]([0])
+base_cost = 3000.0
+slot_cost = 1
+min_planet_lv = 2
+construct_duration = 0.0
+tick_duration = 30.0
+energy_per_tick = -10.0
+output_type = 2
+output_amount = 150.0
+input_type = 4
+input_amount = 5.0
+unlocked_by_default = false

@@ -69,6 +69,7 @@ func _ready() -> void:
 		_rotation = _galaxy.view_rotation
 	else:
 		_offset = size * 0.5
+		_zoom   = 2.5
 
 func _process(delta: float) -> void:
 	_pulse = fposmod(_pulse + delta * 1.8, TAU)
@@ -184,7 +185,7 @@ func _draw_callout(pos: Vector2, label: String, col: Color, r: float, bright: bo
 		Color(col.r, col.g, col.b, 0.90 if bright else 0.50))
 
 func _input(event: InputEvent) -> void:
-	if _entering:
+	if SkillTreeView.is_open or _entering:
 		return
 
 	if event is InputEventMouseButton:
@@ -227,17 +228,9 @@ func _input(event: InputEvent) -> void:
 			_reset_charge()
 
 	elif event is InputEventPanGesture:
-		var dy: float = event.delta.y
-		if abs(dy) > 0.1:
-			var factor := 1.0 - dy * 0.04
-			if factor > 1.0:
-				if _hovered >= 0:
-					_charge_entry(1)
-				else:
-					_zoom_at(event.position, factor)
-			else:
-				_zoom_at(event.position, factor)
-				_reset_charge()
+		# 2-finger swipe on trackpad → pan
+		_offset += event.delta * 4.0
+		get_viewport().set_input_as_handled()
 
 	elif event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion

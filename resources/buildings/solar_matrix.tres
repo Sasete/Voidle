@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="BuildingDef" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="1_def"]
+
+[resource]
+script = ExtResource("1_def")
+building_id = "solar_matrix"
+display_name = "Solar Matrix"
+description = "Hyper-efficient solar arrays taking advantage of clear skies. Only available on Desert worlds."
+allowed_poi_types = Array[int]([2])
+base_cost = 4000.0
+slot_cost = 2
+min_planet_lv = 1
+construct_duration = 0.0
+tick_duration = 10.0
+energy_per_tick = 0.0
+output_type = 1
+output_amount = 35.0
+input_type = 0
+input_amount = 0.0
+unlocked_by_default = false

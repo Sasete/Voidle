@@ -15,3 +15,4 @@ is_orbital = true
 max_per_planet = 2
 building_ids = Array[String]([])
 name_pool = Array[String](["Alpha Station", "Beta Station", "Orbital Hub", "Outpost Prime", "Helix Platform", "Apex Outpost", "Zenith Base"])
+unlock_skill = "unlock_space_station"

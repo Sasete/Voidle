@@ -22,6 +22,8 @@ enum Type { CITY, GENERATOR, MINING, SPACE_STATION }
 @export var building_ids: Array[String] = []
 ## Name pool used for random name suggestions.
 @export var name_pool:    Array[String] = []
+## Required skill node to unlock this district. Empty = unlocked by default.
+@export var unlock_skill: String = ""
 
 # ── Registry ─────────────────────────────────────────────────────────────────
 

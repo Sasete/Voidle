@@ -2,7 +2,7 @@ class_name MineralIcon
 extends RefCounted
 
 const BASE_SIZE := 16
-const EXPORT_SIZE := 32 # 16x16 çizilip 32x32'ye pürüzsüz scale edilecek (Tam pixel-art büyüklüğü)
+const EXPORT_SIZE := 48 # Standart envanter boyutlarına tam oturması için 48x48
 
 static var _noise_tex: FastNoiseLite = null
 

@@ -1,7 +1,7 @@
 class_name BuildingDef
 extends Resource
 
-enum OutputType { NONE, ENERGY, CREDITS, RAW_MINERAL, REFINED_MINERAL }
+enum OutputType { NONE, ENERGY, CREDITS, RAW_MINERAL, REFINED_MINERAL, SCIENCE }
 
 @export var building_id:       String   = ""
 @export var display_name:      String   = ""
@@ -26,6 +26,7 @@ func output_color() -> Color:
 		OutputType.CREDITS:        return Color(0.35, 0.95, 0.55)
 		OutputType.RAW_MINERAL:    return Color(0.15, 0.75, 0.50) # Cyan-emerald green for raw mining
 		OutputType.REFINED_MINERAL:return Color(0.75, 0.55, 1.00)
+		OutputType.SCIENCE:        return Color(0.20, 0.60, 1.00) # Science Blue
 	return Color(0.5, 0.5, 0.5)
 
 func output_label() -> String:
@@ -34,6 +35,7 @@ func output_label() -> String:
 		OutputType.CREDITS:         return "+%.0f cr" % output_amount
 		OutputType.RAW_MINERAL:     return "+%.0f ore" % output_amount
 		OutputType.REFINED_MINERAL: return "+%.0f ref" % output_amount
+		OutputType.SCIENCE:         return "+%.0f sci" % output_amount
 	return ""
 
 @export var logic: BuildingLogic

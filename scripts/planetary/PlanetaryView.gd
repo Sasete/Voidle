@@ -120,6 +120,7 @@ func _save_light_angle() -> void:
 func _go_back() -> void:
 	if not GameState.solar_unlocked and not GameState.moon_unlocked:
 		return
+	AudioManager.set_construction_active(false)
 	_save_light_angle()
 	var sd := _system_solar if _system_solar != null else GameState.get_home_solar()
 	
@@ -148,6 +149,8 @@ func _refresh_solar_btn() -> void:
 var _back_charge: int = 0
 
 func _input(event: InputEvent) -> void:
+	if SkillTreeView.is_open:
+		return
 	# ESC closes radial menu if open
 	if event is InputEventKey:
 		var ke := event as InputEventKey
@@ -202,13 +205,13 @@ func _input(event: InputEvent) -> void:
 		else:
 			_back_charge = 0
 	elif event is InputEventPanGesture:
-		if event.delta.y > 0.5:   # scroll down = zoom out = go back
-			_back_charge += 1
-			if _back_charge >= 4:
-				_back_charge = 0
-				_go_back()
-		elif event.delta.y < -0.5:
-			_back_charge = 0
+		# 2-finger horizontal swipe → rotate planet
+		if abs(event.delta.x) > abs(event.delta.y) * 0.5:
+			var r_px: float = planet_renderer.size.x * 0.5
+			if r_px > 0.0:
+				var delta_rot: float = event.delta.x / r_px
+				planet_renderer.set_rotation_offset(planet_renderer.get_rotation_offset() + delta_rot)
+			get_viewport().set_input_as_handled()
 
 func load_planet(data: PlanetData) -> void:
 	if current_data == null or current_data.seed != data.seed:
@@ -520,6 +523,7 @@ func _spawn_district(data: PlanetData, lbl: String, def: DistrictDef) -> void:
 		# Rotate planet to face the launch pad, then start rocket
 		if launch_poi != null:
 			_rotate_to_lon(launch_poi.lon_deg, 0.5)
+		AudioManager.play("construct")
 		# Add immediately so panel shows "Constructing"; OrbitalLayer skips constructing=true pois
 		data.custom_pois.append(poi)
 		_play_rocket_animation(data.seed, launch_poi, func() -> void:
@@ -543,6 +547,7 @@ func _spawn_district(data: PlanetData, lbl: String, def: DistrictDef) -> void:
 		poi.lon_deg = rad_to_deg(pos.x)
 		poi.lat_deg = rad_to_deg(pos.y)
 		poi.manual_position = true
+		AudioManager.play("construct")
 		data.custom_pois.append(poi)
 		load_planet(data)
 
@@ -742,6 +747,7 @@ func _mineral_grid_card(rd: ResourceData, stored: float, show_count: bool, sub_l
 
 		# Hover juice: scale up + yellow border highlight, z_index brings to front
 		card.mouse_entered.connect(func() -> void:
+			AudioManager.play("poi_hover")
 			card.z_index = 10
 			card.pivot_offset = card.size * 0.5
 			var tw := card.create_tween().set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
@@ -1599,6 +1605,15 @@ func _add_orbit_toggle(planet_cont: Control, layer: OrbitalLayer) -> void:
 func _process(delta: float) -> void:
 	_update_aspect()
 
+	# Construction loop audio — active whenever any POI is constructing
+	if current_data != null:
+		var any_constructing := false
+		for p: POIData in current_data.custom_pois:
+			if p.constructing:
+				any_constructing = true
+				break
+		AudioManager.set_construction_active(any_constructing)
+
 	if _ring_back != null or _ring_front != null:
 		_ring_angle = planet_renderer.get_rotation_offset()
 		if _ring_back  and is_instance_valid(_ring_back):  _ring_back.queue_redraw()
@@ -1676,6 +1691,7 @@ func _process(delta: float) -> void:
 								poi.construct_progress = 1.0
 								poi.constructing = false
 								any_finished = true
+								AudioManager.play("building_done")
 						pbar.value = poi.construct_progress * 100.0
 						break
 		if any_finished:
@@ -1915,6 +1931,7 @@ func _show_level_up_popup(pp: PlanetProgress) -> void:
 				GameState.global_resources_changed.emit()
 			else:
 				GameState.consume_resource(k_str, cost[k])
+		AudioManager.play("level_up")
 		pp.is_upgrading = true
 		pp.upgrade_progress = 0.0
 		if current_data != null:
@@ -2377,7 +2394,8 @@ func _build_planet_overview(data: PlanetData) -> void:
 		up_btn.add_theme_stylebox_override("hover", h_sb)
 		
 		up_btn.add_theme_color_override("font_color", Color.WHITE)
-		up_btn.pressed.connect(func(): _show_level_up_popup(pp))
+		up_btn.mouse_entered.connect(func(): AudioManager.play("hover"))
+		up_btn.pressed.connect(func(): AudioManager.play("click"); _show_level_up_popup(pp))
 		planet_page.add_child(up_btn)
 
 	panel_content.add_child(root)
@@ -2578,6 +2596,7 @@ func _build_district_overview_card(poi: POIData, planet: PlanetData, pp: PlanetP
 	var hov_s2  := norm_s2.duplicate() as StyleBoxFlat
 	hov_s2.bg_color = Color(0.10, 0.14, 0.28, 0.92)
 	card.mouse_entered.connect(func() -> void:
+		AudioManager.play("district_hover")
 		cap_card.add_theme_stylebox_override("panel", hov_s2)
 		if cap_poi.constructing:
 			TooltipManager.show_tip("Constructing", "This District is not fully operational yet.")
@@ -2589,6 +2608,7 @@ func _build_district_overview_card(poi: POIData, planet: PlanetData, pp: PlanetP
 	card.gui_input.connect(func(e: InputEvent) -> void:
 		if e is InputEventMouseButton and (e as InputEventMouseButton).pressed \
 				and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+			AudioManager.play("click")
 			if cap_poi.is_orbital():
 				# Rotate planet so station faces camera, then highlight
 				if _orbital_layer != null and is_instance_valid(_orbital_layer):
@@ -2659,6 +2679,7 @@ func _build_add_district_card(data: PlanetData, enabled: bool, orbital_only: boo
 
 	if enabled:
 		card.mouse_entered.connect(func() -> void:
+			AudioManager.play("hover")
 			CursorManager.set_state(CursorManager.State.POINTER))
 		card.mouse_exited.connect(func() -> void:
 			CursorManager.set_state(CursorManager.State.NORMAL))
@@ -2670,6 +2691,7 @@ func _build_add_district_card(data: PlanetData, enabled: bool, orbital_only: boo
 			if not (e is InputEventMouseButton and (e as InputEventMouseButton).pressed \
 					and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT):
 				return
+			AudioManager.play("click")
 			# Toggle
 			if dropdown_ref[0] != null and is_instance_valid(dropdown_ref[0]):
 				dropdown_ref[0].queue_free()
@@ -2694,6 +2716,8 @@ func _build_district_type_dropdown(data: PlanetData, _anchor: VBoxContainer,
 	var available := DistrictDef.for_planet(data.planet_type)
 	for def: DistrictDef in available:
 		if def.is_orbital != orbital_only:
+			continue
+		if def.unlock_skill != "" and not get_node("/root/SkillTree").unlocked_skills.has(def.unlock_skill):
 			continue
 		var row := _build_district_type_row(data, def, dropdown_ref)
 		vbox.add_child(row)
@@ -2734,6 +2758,7 @@ func _build_district_type_row(data: PlanetData, def: DistrictDef,
 
 	var cost_str := HUDManager.fmt_credits(cost)
 	btn.mouse_entered.connect(func() -> void:
+		AudioManager.play("district_hover")
 		CursorManager.set_state(CursorManager.State.POINTER)
 		var t_title = def.display_name
 		var t_desc = def.description
@@ -2753,6 +2778,7 @@ func _build_district_type_row(data: PlanetData, def: DistrictDef,
 			dropdown_ref[0].queue_free()
 			dropdown_ref[0] = null
 		if not GameState.spend_credits(DistrictDef.placement_cost(cap_def, cap_data)):
+			AudioManager.play("error")
 			return
 		_spawn_district(cap_data, cap_def.suggest_name(cap_data), cap_def))
 
@@ -2761,6 +2787,7 @@ func _build_district_type_row(data: PlanetData, def: DistrictDef,
 func _on_district_clicked(index: int, _data: Dictionary) -> void:
 	if index >= poi_layer._pois.size():
 		return
+	AudioManager.play("district_hover")
 	if _orbital_layer != null and is_instance_valid(_orbital_layer):
 		_orbital_layer.set_selected_station("")
 	var poi_dict: Dictionary = poi_layer._pois[index]
@@ -2801,7 +2828,7 @@ func _on_production_update(_planet_seed: int, key: String, progress: float) -> v
 	if _district_pbars.has(key):
 		var pbar: ProgressBar = _district_pbars[key]
 		if is_instance_valid(pbar):
-			print("[UI Debug] Updating pbar for ", key, " to ", progress * 100.0)
+
 			pbar.value = progress * 100.0
 		else:
 			print("[UI Debug] pbar is invalid for ", key)
@@ -2922,6 +2949,7 @@ func _refresh_bar_label_status(key: String) -> void:
 func _on_building_constructed(planet_seed: int, key: String) -> void:
 	if current_data == null or current_data.seed != planet_seed:
 		return
+	AudioManager.play("building_done")
 
 	# Parse key format: "{seed}:{poi_label}:{idx}"
 	var last_col  := key.rfind(":")
@@ -3148,6 +3176,7 @@ func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callabl
 	}
 	anim_ref.append(anim_d)
 	_rocket_anims.append(anim_d)
+	AudioManager.play("rocket", -4.0)
 
 	# Make rocket clickable — show a lightweight launch info panel
 	rocket.mouse_entered.connect(func() -> void: CursorManager.set_state(CursorManager.State.POINTER))
@@ -4052,6 +4081,26 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 	else:
 		vbox.add_child(info_row)
 
+	var tip_str := def.description + "\n\n"
+	if not paused:
+		if def.output_type != BuildingDef.OutputType.NONE:
+			tip_str += "Output: " + out_text + "\n"
+		var tip_etick := def.energy_per_tick
+		if tip_etick != 0.0:
+			if tip_etick > 0.0:
+				if def.building_id == "solar_panel":
+					tip_etick *= get_node("/root/SkillTree").get_solar_mult()
+			else:
+				tip_etick *= get_node("/root/SkillTree").get_energy_consume_mult()
+			tip_str += "Energy: " + ("+" if tip_etick > 0 else "") + "%.0f ⚡\n" % tip_etick
+		if def.input_amount > 0.0:
+			tip_str += "Consumes: %.0f units\n" % (def.input_amount * count)
+			
+	card.mouse_entered.connect(func() -> void:
+		AudioManager.play("poi_hover")
+		TooltipManager.show_tip(def.display_name, tip_str.strip_edges()))
+	card.mouse_exited.connect(func() -> void:
+		TooltipManager.hide_tip())
 	# Energy-crisis "Slowed" label — shown below info row for energy consumers
 	var slowed_lbl: Label = null
 	if def.energy_per_tick < 0.0:
@@ -5571,6 +5620,7 @@ func _build_slot_card(poi: POIData, planet: PlanetData, pp: PlanetProgress,
 	card.add_child(plus)
 
 	card.mouse_entered.connect(func() -> void:
+		AudioManager.play("poi_hover")
 		CursorManager.set_state(CursorManager.State.POINTER)
 		plus.add_theme_color_override("font_color", Color(0.55, 0.65, 1.0, 0.9)))
 	card.mouse_exited.connect(func() -> void:
@@ -5579,6 +5629,7 @@ func _build_slot_card(poi: POIData, planet: PlanetData, pp: PlanetProgress,
 	card.gui_input.connect(func(e: InputEvent) -> void:
 		if e is InputEventMouseButton and (e as InputEventMouseButton).pressed \
 				and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+			AudioManager.play("click")
 			_toggle_slot_dropdown(card, poi, planet, pp, root, slot_idx))
 	return card
 
@@ -5755,6 +5806,7 @@ func _toggle_slot_dropdown(card: PanelContainer, poi: POIData, planet: PlanetDat
 		var tip_cost := "%.0f cr" % def.base_cost
 
 		row_panel.mouse_entered.connect(func() -> void:
+			AudioManager.play("poi_hover")
 			cap_row.add_theme_stylebox_override("panel", cap_hov)
 			if enabled and not _is_at_edge():
 				CursorManager.set_state(CursorManager.State.POINTER)
@@ -5770,6 +5822,7 @@ func _toggle_slot_dropdown(card: PanelContainer, poi: POIData, planet: PlanetDat
 				if e is InputEventMouseButton and (e as InputEventMouseButton).pressed \
 						and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
 					if GameState.spend_credits(cap_def.base_cost):
+						AudioManager.play("construct")
 						pp.build_in_district(cap_poi, cap_def.building_id)
 						if is_instance_valid(cap_overlay):
 							cap_overlay.queue_free()

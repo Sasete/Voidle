@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="BuildingDef" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="1_def"]
+
+[resource]
+script = ExtResource("1_def")
+building_id = "atmospheric_siphon"
+display_name = "Atmospheric Siphon"
+description = "Extracts valuable gases to synthesize pure credits. Only available on Gas Giants."
+allowed_poi_types = Array[int]([1])
+base_cost = 8000.0
+slot_cost = 2
+min_planet_lv = 1
+construct_duration = 0.0
+tick_duration = 45.0
+energy_per_tick = -20.0
+output_type = 2
+output_amount = 200.0
+input_type = 0
+input_amount = 0.0
+unlocked_by_default = false

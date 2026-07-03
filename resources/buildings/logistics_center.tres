@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="BuildingDef" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="1_def"]
+
+[resource]
+script = ExtResource("1_def")
+building_id = "logistics_center"
+display_name = "Logistics Center"
+description = "Provides a passive +20% production speed to all buildings on this planet."
+allowed_poi_types = Array[int]([0])
+base_cost = 10000.0
+slot_cost = 2
+min_planet_lv = 3
+construct_duration = 0.0
+tick_duration = 0.0
+energy_per_tick = -15.0
+output_type = 0
+output_amount = 0.0
+input_type = 0
+input_amount = 0.0
+unlocked_by_default = false

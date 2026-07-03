@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="BuildingDef" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="1_def"]
+
+[resource]
+script = ExtResource("1_def")
+building_id = "geothermal_plant"
+display_name = "Geothermal Plant"
+description = "Harnesses massive planetary heat for unparalleled energy production. Only available on Volcanic worlds."
+allowed_poi_types = Array[int]([2])
+base_cost = 5000.0
+slot_cost = 2
+min_planet_lv = 1
+construct_duration = 0.0
+tick_duration = 20.0
+energy_per_tick = 0.0
+output_type = 1
+output_amount = 60.0
+input_type = 0
+input_amount = 0.0
+unlocked_by_default = false

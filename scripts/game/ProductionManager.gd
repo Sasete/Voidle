@@ -171,8 +171,16 @@ func _tick_all(delta: float) -> void:
 					continue
 				energy_speed = energy_ratio
 
+			# Planet-wide passive buffs
+			var planet_speed_mult := 1.0
+			var planet_energy_mult := 1.0
+			if pp.has_building("logistics_center"):
+				planet_speed_mult *= 1.20
+			if pp.has_building("command_center"):
+				planet_energy_mult *= 0.85
+
 			# ── Tick production bar ───────────────────────────────────────────
-			var speed_mult: float = _deposit_speed(def, planet_seed, mods) * energy_speed * get_node("/root/SkillTree").get_global_speed_mult()
+			var speed_mult: float = _deposit_speed(def, planet_seed, mods) * energy_speed * get_node("/root/SkillTree").get_global_speed_mult() * planet_speed_mult
 			if def.output_type == BuildingDef.OutputType.RAW_MINERAL:
 				speed_mult *= get_node("/root/SkillTree").get_mine_speed_mult()
 			var eff_dur: float = entry.get("effective_duration", def.tick_duration)
@@ -221,6 +229,9 @@ func _on_tick_complete(pp: PlanetProgress, def: BuildingDef,
 		BuildingDef.OutputType.REFINED_MINERAL:
 			suffix = ""
 			icon_tex = MineralIcon.make(2, Color(0.75, 0.55, 1.00))
+		BuildingDef.OutputType.SCIENCE:
+			GameState.add_science(display_val)
+			suffix = " sci"
 		BuildingDef.OutputType.ENERGY:
 			display_val = 0.0 # Energy is passive, no need for popup
 
@@ -248,27 +259,32 @@ func _calc_global_energy() -> void:
 			var ekey: String = _key(pp.planet_seed, entry.get("district_id", ""), i)
 			if _paused.get(ekey, false) or _user_paused.get(ekey, false):
 				continue
+			var planet_energy_mult := 1.0
+			if pp.has_building("command_center"):
+				planet_energy_mult *= 0.85
+				
 			if def.energy_per_tick > 0.0:
 				var mult: float = st.get_solar_mult() if def.building_id == "solar_panel" else 1.0
 				var contrib := def.energy_per_tick * amt * mult
 				total_prod += contrib
 				net += contrib
 			elif def.energy_per_tick < 0.0:
-				var contrib := def.energy_per_tick * amt * (st.get_energy_consume_mult() as float)
+				var contrib := def.energy_per_tick * amt * (st.get_energy_consume_mult() as float) * planet_energy_mult
 				total_demand += abs(contrib)
 				net += contrib
 			if def.output_type == BuildingDef.OutputType.ENERGY:
 				var mult: float = 1.0
-				if def.building_id == "solar_panel":
+				if def.building_id == "solar_panel" or def.building_id == "solar_matrix":
 					mult = st.get_solar_mult()
-				elif def.building_id == "generator":
+				elif def.building_id == "generator" or def.building_id == "power_plant" or def.building_id == "geothermal_plant":
 					mult = st.get_generator_output_mult()
-					var in_min: String = entry.get("burning_mineral", "")
-					if in_min != "":
-						var rd: ResourceData = GameState.known_resources.get(in_min)
-						if rd: mult *= float(rd.rarity)
-					else:
-						mult = 0.0
+					if def.building_id != "geothermal_plant":
+						var in_min: String = entry.get("burning_mineral", "")
+						if in_min != "":
+							var rd: ResourceData = GameState.known_resources.get(in_min)
+							if rd: mult *= float(rd.rarity)
+						else:
+							mult = 0.0
 				total_prod += def.output_amount * amt * mult
 				net        += def.output_amount * amt * mult
 	_global_energy = net

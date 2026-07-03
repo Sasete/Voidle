@@ -16,7 +16,7 @@ var show_planet_coords: bool = true
 const MAX_LINES := 200
 
 func _ready() -> void:
-	layer = 200   # above everything
+	layer = 225   # above SkillTree (220), below Credits (230)
 	_orbitron = load("res://Fonts/Orbitron-VariableFont_wght.ttf")
 	_build_ui()
 	_panel.visible = false
@@ -191,7 +191,17 @@ func _exec(line: String) -> void:
 [color=#55cc77]DEBUG[/color]
   state                          — print current game state summary
   clear                          — clear console log
-  debug coords                   — toggle planetary click coordinates""")
+  debug coords                   — toggle planetary click coordinates
+
+[color=#55cc77]SCIENCE[/color]
+  science                        — show current science points
+  science <amount>               — add science points
+  science set <amount>           — set science to exact value
+  science clear                  — reset science to 0
+
+[color=#55cc77]SKILL TREE[/color]
+  skilltree unhide -all          — reveal entire tech tree visually
+  skilltree hide -all            — hide unreached tech tree nodes""")
 
 		# ── Credits ─────────────────────────────────────────────────────────
 		"credits":
@@ -215,6 +225,47 @@ func _exec(line: String) -> void:
 					_log_ok("Added %s → total %s" % [
 						HUDManager.fmt_credits(v),
 						HUDManager.fmt_credits(GameState.credits)])
+
+		# ── Science ─────────────────────────────────────────────────────────
+		"science":
+			if parts.size() == 1:
+				_log_info("Science: [b]%.0f[/b]" % GameState.science_points)
+				return
+			var sub := parts[1].to_lower() if parts.size() > 1 else ""
+			match sub:
+				"set":
+					var v := _parse_float(parts, 2)
+					if is_nan(v): return
+					GameState.science_points = v
+					GameState.science_changed.emit(GameState.science_points)
+					_log_ok("Science set to %.0f" % GameState.science_points)
+				"clear":
+					GameState.science_points = 0.0
+					GameState.science_changed.emit(GameState.science_points)
+					_log_ok("Science cleared.")
+				_:
+					var v := _parse_float(parts, 1)
+					if is_nan(v): return
+					GameState.add_science(v)
+					_log_ok("Added %.0f science → total %.0f" % [v, GameState.science_points])
+
+		# ── Skill Tree ────────────────────────────────────────────────────────
+		"skilltree":
+			var sub := parts[1].to_lower() if parts.size() > 1 else ""
+			var opt := parts[2].to_lower() if parts.size() > 2 else ""
+			
+			if sub == "unhide" and opt == "-all":
+				var st = get_tree().root.get_node("SkillTree")
+				st.set_meta("debug_reveal_all", true)
+				st.skill_unlocked.emit("debug") # Forces SkillTreeView to rebuild
+				_log_ok("SkillTree nodes revealed (visual only).")
+			elif sub == "hide" and opt == "-all":
+				var st = get_tree().root.get_node("SkillTree")
+				st.set_meta("debug_reveal_all", false)
+				st.skill_unlocked.emit("debug")
+				_log_ok("SkillTree nodes hidden.")
+			else:
+				_log_info("Usage: skilltree unhide -all | skilltree hide -all")
 
 		# ── Unlocks ─────────────────────────────────────────────────────────
 		"unlock":

@@ -3,6 +3,11 @@
 class_name SkillTreeView
 extends Control
 
+signal tree_opened
+signal tree_closed
+
+static var is_open: bool = false
+
 var _font: Font
 var _nodes_container: Control
 var _connections_draw: Control
@@ -15,23 +20,44 @@ var _ui_nodes: Dictionary = {} # id -> PanelContainer
 var _is_dragging: bool = false
 var _drag_offset: Vector2 = Vector2.ZERO
 var _center_ctrl: Control
+var _bg: ColorRect
 
 func _ready() -> void:
-	# Ensure the tree block input to anything behind it
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	SkillTreeView.is_open = true
+	tree_opened.emit()
 	
 	# Put it on top of other HUD layers
 	z_as_relative = false
 	z_index = 200
 
-	# Dark semi-transparent fullscreen background
-	var bg := ColorRect.new()
-	bg.color = Color(0.04, 0.05, 0.09, 0.94)
-	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	# Dark fully opaque fullscreen background with blueprint dots
+	_bg = ColorRect.new()
+	_bg.color = Color(0.04, 0.05, 0.09, 1.0) # Tam opak (arkayı göstermez)
+	_bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	
+	# Blueprint Grid Effect (moves with the camera and scales with zoom)
+	_bg.draw.connect(func() -> void:
+		var dot_color := Color(0.2, 0.25, 0.35, 0.5)
+		var grid_size: int = maxi(10, int(40.0 * self._zoom))
+		var dot_size: float = maxf(1.0, 2.0 * self._zoom)
+		
+		var w := int(_bg.size.x)
+		var h := int(_bg.size.y)
+		
+		var offset_x = int(self._center_ctrl.position.x) % grid_size
+		var offset_y = int(self._center_ctrl.position.y) % grid_size
+		if offset_x < 0: offset_x += grid_size
+		if offset_y < 0: offset_y += grid_size
+		
+		for x in range(offset_x - grid_size, w + grid_size, grid_size):
+			for y in range(offset_y - grid_size, h + grid_size, grid_size):
+				_bg.draw_rect(Rect2(x, y, dot_size, dot_size), dot_color)
+	)
+	
 	# Background captures click so we can drag the whole canvas by clicking on empty space
-	bg.mouse_filter = Control.MOUSE_FILTER_STOP
-	bg.gui_input.connect(_on_bg_gui_input)
-	add_child(bg)
+	_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_bg)
 
 	_font = load("res://Fonts/Orbitron-VariableFont_wght.ttf")
 
@@ -43,6 +69,8 @@ func _ready() -> void:
 
 	# Drawing layer for connecting lines (underneath nodes)
 	_connections_draw = Control.new()
+	_connections_draw.custom_minimum_size = Vector2(20000, 20000)
+	_connections_draw.position = Vector2(-10000, -10000)
 	_connections_draw.draw.connect(_draw_connections)
 	_connections_draw.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_center_ctrl.add_child(_connections_draw)
@@ -51,7 +79,6 @@ func _ready() -> void:
 	_nodes_container = Control.new()
 	_nodes_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_center_ctrl.add_child(_nodes_container)
-
 
 	# Build all nodes and position them
 	_build_tree_graph()
@@ -108,6 +135,8 @@ func _ready() -> void:
 	
 	_close_btn.pressed.connect(func() -> void:
 		CursorManager.set_state(CursorManager.State.NORMAL)
+		SkillTreeView.is_open = false
+		tree_closed.emit()
 		queue_free())
 	_close_btn.mouse_entered.connect(func() -> void:
 		CursorManager.set_state(CursorManager.State.POINTER))
@@ -138,39 +167,34 @@ func _build_tree_graph() -> void:
 		var purchasable: bool = st.call("can_purchase", id)
 
 		var card := PanelContainer.new()
+		card.mouse_filter = Control.MOUSE_FILTER_PASS
 		card.custom_minimum_size = Vector2(48, 48)
 		card.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		card.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 
-		# Style based on status
-		var s := StyleBoxFlat.new()
-		s.corner_radius_top_left = 6
-		s.corner_radius_top_right = 6
-		s.corner_radius_bottom_left = 6
-		s.corner_radius_bottom_right = 6
+		# Style based on status (Cyberpunk Hexagon)
+		var bg_color := Color(0.08, 0.09, 0.12, 0.9)
+		var border_color := Color(0.5, 0.6, 0.7, 0.8) # <--- Brighter border for locked nodes
+		var shadow_color := Color(0.0, 0.0, 0.0, 0.0)
+		var border_width := 1.0
 		
 		if is_max_level:
-			# Fully upgraded: Thick Glowing Green border
-			s.bg_color = Color(0.04, 0.16, 0.08, 0.95)
-			s.border_color = Color(0.25, 0.95, 0.45, 0.95)
-			s.set_border_width_all(3)
+			bg_color = Color(0.02, 0.1, 0.05, 0.95)
+			border_color = Color(0.25, 0.95, 0.45, 1.0)
+			shadow_color = Color(0.25, 0.95, 0.45, 0.3)
+			border_width = 2.0
 		elif cur_lv > 0:
-			# Partially upgraded (e.g. Lv. 3/10): Glowing Orange / Amber border
-			s.bg_color = Color(0.14, 0.12, 0.06, 0.9)
-			s.border_color = Color(0.95, 0.65, 0.25, 0.85)
-			s.set_border_width_all(2)
+			bg_color = Color(0.1, 0.08, 0.02, 0.95)
+			border_color = Color(0.95, 0.65, 0.25, 0.9)
+			shadow_color = Color(0.95, 0.65, 0.25, 0.2)
+			border_width = 2.0
 		elif purchasable:
-			# Purchasable: Cyan border
-			s.bg_color = Color(0.06, 0.12, 0.22, 0.9)
-			s.border_color = Color(0.3, 0.65, 0.95, 0.75)
-			s.set_border_width_all(2)
-		else:
-			# Locked / Unpurchasable: Dark / Grey border
-			s.bg_color = Color(0.08, 0.09, 0.12, 0.9)
-			s.border_color = Color(0.2, 0.22, 0.28, 0.5)
-			s.set_border_width_all(1)
+			bg_color = Color(0.04, 0.08, 0.15, 0.95)
+			border_color = Color(0.15, 0.85, 0.95, 0.85)
+			shadow_color = Color(0.15, 0.85, 0.95, 0.2)
+			border_width = 2.0
 
-		card.add_theme_stylebox_override("panel", s)
+		card.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 
 		# Add a wrapper Control inside the PanelContainer to escape Container alignment rules
 		var wrapper := Control.new()
@@ -178,6 +202,32 @@ func _build_tree_graph() -> void:
 		# Fill the PanelContainer space completely
 		wrapper.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		card.add_child(wrapper)
+
+		# Custom Hexagon Drawing Layer
+		var hex_bg := Control.new()
+		hex_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		hex_bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		hex_bg.draw.connect(func() -> void:
+			var r := 22.0 # Radius for 48x48 box
+			var c := Vector2(24.0, 24.0)
+			
+			var pts := PackedVector2Array()
+			var glow_pts := PackedVector2Array()
+			# Flat-topped hexagon (points at 30, 90, 150, 210, 270, 330 degrees)
+			for i in range(7):
+				var angle = i * PI / 3.0 + PI / 6.0
+				pts.append(c + Vector2(cos(angle), sin(angle)) * r)
+				glow_pts.append(c + Vector2(cos(angle), sin(angle)) * (r + 2.0))
+			
+			# Draw Glow (Shadow)
+			if shadow_color.a > 0:
+				hex_bg.draw_polyline(glow_pts, shadow_color, 4.0, true)
+			
+			# Draw Fill & Outline
+			hex_bg.draw_colored_polygon(pts, bg_color)
+			hex_bg.draw_polyline(pts, border_color, border_width, true)
+		)
+		wrapper.add_child(hex_bg)
 
 		# Add procedural icon in center of the wrapper
 		var center := CenterContainer.new()
@@ -196,37 +246,145 @@ func _build_tree_graph() -> void:
 		# Define unique colors and shapes per upgrade type (T1-T5 base shapes)
 		match id:
 			"root":
-				icon_col = Color(0.9, 0.8, 0.4) # Gold Core
-				icon_tier = 5 # Hollow Diamond
+				icon_col = Color(0.9, 0.8, 0.4) # Gold
+				icon_tier = 5 # Core
+			# Energy
+			"unlock_thermal_plant":
+				icon_col = Color(1.0, 0.4, 0.1) # Fire Orange
+				icon_tier = 3 # Energy
 			"solar_efficiency":
 				icon_col = Color(1.0, 0.9, 0.2) # Sun Yellow
-				icon_tier = 4 # Cross (Solar grid)
-			"mine_speed":
-				icon_col = Color(0.8, 0.4, 0.9) # Laser Pink
-				icon_tier = 2 # Hex Crystal (Drill shard)
+				icon_tier = 4 # Grid
 			"generator_efficiency":
-				icon_col = Color(1.0, 0.4, 0.1) # Fire Orange
-				icon_tier = 3 # Rhombus Gem (Thermal)
-			"credit_boost":
-				icon_col = Color(0.2, 0.95, 0.4) # Emerald Green (Money)
-				icon_tier = 3 # Gem
-			"deep_mining":
-				icon_col = Color(0.3, 0.85, 1.0) # Diamond Cyan
-				icon_tier = 2 # Crystal
+				icon_col = Color(1.0, 0.3, 0.0) # Deep Orange
+				icon_tier = 3 # Energy
+			"supercharged_generators":
+				icon_col = Color(1.0, 0.5, 0.0) # Bright Orange
+				icon_tier = 5 # Core
 			"power_transmission":
-				icon_col = Color(0.9, 0.5, 1.0) # Violet plasma
-				icon_tier = 4 # Cross
-			"omega_core":
-				icon_col = Color(1.0, 0.2, 0.3) # Crimson core
-				icon_tier = 5 # Hollow Diamond
+				icon_col = Color(0.4, 0.9, 1.0) # Light Cyan
+				icon_tier = 4 # Grid
+			"energy_efficiency":
+				icon_col = Color(0.2, 1.0, 0.8) # Bright Cyan
+				icon_tier = 4 # Grid
+			"unlock_fusion_reactor":
+				icon_col = Color(0.4, 0.9, 1.0) # Cyan/Blue plasma
+				icon_tier = 5 # Core
+			"dyson_swarm":
+				icon_col = Color(1.0, 0.8, 0.0) # Bright Sun Gold
+				icon_tier = 9 # Sun
+			# Mining
+			"unlock_deep_drill":
+				icon_col = Color(1.0, 0.5, 0.2) # Industrial Orange
+				icon_tier = 2 # Drill
+			"mine_speed":
+				icon_col = Color(0.8, 0.7, 0.6) # Copper/Bronze
+				icon_tier = 2 # Drill
+			"unlock_refinery":
+				icon_col = Color(0.5, 0.5, 0.5) # Steel/Iron
+				icon_tier = 3 # Energy/Furnace
+			"deep_mining":
+				icon_col = Color(0.6, 0.4, 0.2) # Deep Brown
+				icon_tier = 2 # Drill
+			"core_extractor":
+				icon_col = Color(0.9, 0.3, 0.1) # Magma Orange
+				icon_tier = 2 # Drill
+			"deep_core_drilling":
+				icon_col = Color(1.0, 0.1, 0.0) # Bright Red
+				icon_tier = 5 # Core
+			"mineral_compression":
+				icon_col = Color(0.6, 0.3, 1.0) # Deep Purple
+				icon_tier = 1 # Data
+			"omega_drill":
+				icon_col = Color(1.0, 0.0, 0.0) # Pure Red
+				icon_tier = 5 # Core
+			"unlock_commercial":
+				icon_col = Color(0.2, 0.95, 0.4) # Emerald Green (Money)
+				icon_tier = 1 # Data/Node
+			"unlock_luxury_complex":
+				icon_col = Color(0.9, 0.2, 0.6) # Pink/Magenta (Luxury)
+				icon_tier = 1 # Data
+			"credit_boost":
+				icon_col = Color(0.4, 1.0, 0.5) # Bright Green
+				icon_tier = 1 # Data
+			"unlock_trade_hub":
+				icon_col = Color(0.1, 0.8, 0.6) # Turquoise
+				icon_tier = 4 # Cargo/Trade -> Grid
+			"planetary_architecture":
+				icon_col = Color(0.8, 0.6, 1.0) # Light Purple
+				icon_tier = 4 # Grid
+			"global_logistics":
+				icon_col = Color(0.2, 0.8, 1.0) # Bright Cyan
+				icon_tier = 4 # Grid
+			"unlock_commercial_hub":
+				icon_col = Color(0.2, 1.0, 0.5) # Neon Green
+				icon_tier = 4 # Grid
+			"unlock_logistics_center":
+				icon_col = Color(0.8, 0.8, 0.2) # Yellow
+				icon_tier = 4 # Grid
+			"unlock_command_center":
+				icon_col = Color(0.9, 0.1, 0.3) # Deep Red
+				icon_tier = 5 # Core
+			"unlock_research_academy":
+				icon_col = Color(0.5, 0.2, 1.0) # Deep Purple
+				icon_tier = 3 # Data
+			# Science/Space
+			"unlock_advanced_lab":
+				icon_col = Color(0.2, 0.6, 1.0) # Science Blue
+				icon_tier = 2 # Flask/Data
+			"unlock_space_station":
+				icon_col = Color(0.8, 0.8, 0.8) # Silver/White
+				icon_tier = 3 # Station/Core
+			"unlock_orbital_shipyard":
+				icon_col = Color(0.4, 0.6, 1.0) # Steel Blue
+				icon_tier = 4 # Grid
+			"unlock_moon":
+				icon_col = Color(0.7, 0.7, 0.75) # Moon Grey
+				icon_tier = 3 # Moon
+			"unlock_lunar_observatory":
+				icon_col = Color(0.2, 0.6, 1.0) # Science Blue
+				icon_tier = 4 # Grid
+			"unlock_asteroids":
+				icon_col = Color(0.5, 0.4, 0.3) # Asteroid Brown
+				icon_tier = 4 # Asteroid
+			"unlock_asteroid_harvester":
+				icon_col = Color(1.0, 0.5, 0.2) # Industrial Orange
+				icon_tier = 4 # Grid
+			"colonize_ice":
+				icon_col = Color(0.5, 0.9, 1.0) # Ice Blue
+				icon_tier = 5 # Planet
+			"unlock_cryo_vault":
+				icon_col = Color(0.2, 0.8, 1.0) # Deep Ice Blue
+				icon_tier = 4 # Grid
+			"colonize_desert":
+				icon_col = Color(0.9, 0.8, 0.4) # Sand Yellow
+				icon_tier = 5 # Planet
+			"unlock_solar_matrix":
+				icon_col = Color(1.0, 0.9, 0.2) # Sun Yellow
+				icon_tier = 4 # Grid
+			"colonize_gas":
+				icon_col = Color(0.8, 0.4, 0.9) # Gas Purple
+				icon_tier = 5 # Planet
+			"unlock_atmospheric_siphon":
+				icon_col = Color(0.6, 0.2, 1.0) # Deep Purple
+				icon_tier = 4 # Grid
+			"colonize_volcanic":
+				icon_col = Color(1.0, 0.3, 0.1) # Magma Orange
+				icon_tier = 5 # Planet
+			"unlock_geothermal_plant":
+				icon_col = Color(1.0, 0.1, 0.0) # Bright Red
+				icon_tier = 4 # Grid
+			"unlock_interstellar":
+				icon_col = Color(1.0, 1.0, 1.0) # Pure White (Star)
+				icon_tier = 5 # Star -> Core
 
 		# De-saturate color slightly if locked/unpurchasable
 		if not unlocked and not purchasable:
-			icon_col = icon_col.lerp(Color(0.25, 0.27, 0.32), 0.75)
+			icon_col = icon_col.lerp(Color(0.25, 0.27, 0.32), 0.4)
 		elif purchasable:
 			icon_col = icon_col.lightened(0.1)
 
-		texture_rect.texture = MineralIcon.make(icon_tier, icon_col)
+		texture_rect.texture = TechIcon.make(icon_tier, icon_col)
 		center.add_child(texture_rect)
 
 		# Display level badge at the bottom-center of the wrapper
@@ -249,42 +407,6 @@ func _build_tree_graph() -> void:
 			lv_badge.offset_bottom = 2
 			lv_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			wrapper.add_child(lv_badge)
-
-		# Display type badge on the bottom-right of the wrapper itself (overlapping/floating)
-		var type_symbol := "⚡"
-		match id:
-			"root":
-				type_symbol = "✦"
-			"solar_efficiency", "generator_efficiency":
-				type_symbol = "⚡"
-			"mine_speed", "omega_core":
-				type_symbol = "⚡"
-			"credit_boost":
-				type_symbol = "◈"
-			"deep_mining":
-				type_symbol = "🔓" if unlocked else "🔒"
-			"power_transmission":
-				type_symbol = "▼"
-
-		# Uniform iconography style colors: ALWAYS sleek flat white-grey (grimtrak iconography)
-		var symbol_color := Color(0.8, 0.82, 0.85)
-
-		# Build type label (enlarged iconography badge)
-		var type_badge := Label.new()
-		type_badge.text = type_symbol
-		if _font: type_badge.add_theme_font_override("font", _font)
-		type_badge.add_theme_font_size_override("font_size", 16) # Further enlarged Badge Icon (16 pt)
-		type_badge.add_theme_color_override("font_color", symbol_color)
-		type_badge.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
-		type_badge.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-		type_badge.grow_vertical = Control.GROW_DIRECTION_BEGIN
-		# Offset slightly down and right to overflow the card boundary nicely
-		type_badge.offset_left = -3
-		type_badge.offset_right = 6
-		type_badge.offset_top = -3
-		type_badge.offset_bottom = 6
-		type_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		wrapper.add_child(type_badge)
 
 		# Position absolute coordinate
 		card.position = node.pos - Vector2(24, 24)
@@ -314,16 +436,11 @@ func _build_tree_graph() -> void:
 			# Normal nodes
 			if max_lv > 1:
 				# Leveled Upgrades
-				var next_lv := mini(cur_lv + 1, max_lv)
-				var bonus_per_lv := 5.0 # For Excavation Drills: +5% speed per lv
-				var current_bonus := cur_lv * bonus_per_lv
-				var next_bonus := next_lv * bonus_per_lv
-				
 				tip_body = node.description
 				if cur_lv > 0:
-					tip_body += "\n\n[color=#55f58c]Current: +%.0f%% Mining speed[/color]" % current_bonus
+					tip_body += "\n\n[color=#55f58c]Current Level: %d/%d[/color]" % [cur_lv, max_lv]
 				if cur_lv < max_lv:
-					tip_body += "\n[color=#55aaff]Next Level: +%.0f%% Mining speed[/color]" % next_bonus
+					tip_body += "\n[color=#55aaff]Effect: %s[/color]" % node.effect_desc
 				else:
 					tip_body += "\n\n[color=#55f58c]✦ MAX LEVEL ✦[/color]"
 			else:
@@ -338,26 +455,30 @@ func _build_tree_graph() -> void:
 				tip_cost = "%.0f Science" % next_cost
 			
 			# Requirements checking
-			if cur_lv == 0 and not purchasable:
-				var parents_list: Array[String] = []
+			if cur_lv == 0:
+				var missing_parents: Array[String] = []
 				for p in node.parents:
-					parents_list.append(st.get("nodes")[p].name)
-				tip_body += "\n\n[color=#ff5544]Requires: " + ", ".join(parents_list) + "[/color]"
+					if st.call("get_skill_level", p) == 0:
+						missing_parents.append(st.get("nodes")[p].name)
+				
+				if missing_parents.size() > 0:
+					tip_body += "\n\n[color=#ff5544]Requires: " + ", ".join(missing_parents) + "[/color]"
 
 		# Pivot offset at center for clean scaling
 		card.pivot_offset = Vector2(24, 24)
 
 		var cap_cost := tip_cost
 		card.mouse_entered.connect(func() -> void:
+			AudioManager.play("hover")
 			if unlocked or purchasable:
 				CursorManager.set_state(CursorManager.State.POINTER)
 			else:
 				CursorManager.set_state(CursorManager.State.NORMAL)
-				
+
 			# Smooth scale up animation (Juicy Hover)
 			var tween := create_tween()
 			tween.tween_property(card, "scale", Vector2(1.15, 1.15), 0.15).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
-			
+
 			TooltipManager.show_tip(tip_title, tip_body, cap_cost))
 			
 		card.mouse_exited.connect(func() -> void:
@@ -373,13 +494,19 @@ func _build_tree_graph() -> void:
 		var cap_id: String = id
 		card.gui_input.connect(func(e: InputEvent) -> void:
 			if e is InputEventMouseButton and (e as InputEventMouseButton).pressed and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+				card.accept_event() # Stop propagation to canvas drag
 				if st.call("can_purchase", cap_id):
 					TooltipManager.hide_tip()
-					st.call("purchase_skill", cap_id))
+					AudioManager.play("skill_buy")
+					st.call("purchase_skill", cap_id)
+				else:
+					AudioManager.play("error"))
 
 func _draw_connections() -> void:
 	# Draw all connection lines between parent/child nodes
 	var st: Node = get_node("/root/SkillTree")
+	var draw_offset := Vector2(10000, 10000)
+	
 	for id in st.get("nodes").keys():
 		var node = st.get("nodes")[id]
 		# Only draw if child node is visible
@@ -390,22 +517,52 @@ func _draw_connections() -> void:
 			if not st.call("is_visible", parent_id):
 				continue
 				
-			var start_pos: Vector2 = st.get("nodes")[parent_id].pos
-			var end_pos: Vector2 = node.pos
+			# Offset drawing coordinates to account for _connections_draw's -10000 position shift
+			var start_pos: Vector2 = st.get("nodes")[parent_id].pos + draw_offset
+			var end_pos: Vector2 = node.pos + draw_offset
 
 			# Determine line color
 			var is_active: bool = parent_id in (st.get("unlocked_skills") as Array) and id in (st.get("unlocked_skills") as Array)
-			var line_col := Color(0.25, 0.85, 0.45, 0.8) if is_active else Color(0.2, 0.25, 0.35, 0.4)
-			var line_width := 3.0 if is_active else 1.5
+			var line_col := Color(0.15, 0.9, 0.85, 0.9) if is_active else Color(0.15, 0.2, 0.3, 0.5)
+			if is_active and id in (st.get("unlocked_skills") as Array):
+				# If both are fully upgraded, maybe make it green? Nah, Cyan is very cyberpunk.
+				line_col = Color(0.15, 0.85, 0.95, 0.9) # Cyan active circuit
+			
+			var line_width := 4.0 if is_active else 2.0
 
-			_connections_draw.draw_line(start_pos, end_pos, line_col, line_width, true)
+			# Circuit Board 45-Degree Chamfer Routing
+			var dx = end_pos.x - start_pos.x
+			var dy = end_pos.y - start_pos.y
+			var pts := PackedVector2Array()
+
+			if absf(dx) < 2.0 or absf(dy) < 2.0 or absf(absf(dx) - absf(dy)) < 2.0:
+				# Zaten tam yatay, tam dikey veya tam 45 dereceyse düz çizgi çek
+				pts.append(start_pos)
+				pts.append(end_pos)
+			else:
+				var p1 = start_pos
+				var p4 = end_pos
+				
+				# 45 Derecelik PCB Traces (Merkezden çapraz çıkıp sonra düze dönen)
+				if absf(dx) > absf(dy):
+					var p2 = p1 + Vector2(signf(dx) * absf(dy), dy)
+					pts.append_array([p1, p2, p4])
+					_connections_draw.draw_circle(p2, line_width * 1.2, line_col)
+				else:
+					var p2 = p1 + Vector2(dx, signf(dy) * absf(dx))
+					pts.append_array([p1, p2, p4])
+					_connections_draw.draw_circle(p2, line_width * 1.2, line_col)
+
+			_connections_draw.draw_polyline(pts, line_col, line_width, true)
+
+var _zoom: float = 1.0
 
 func _on_skill_unlocked(_id: String) -> void:
 	# Rebuild tree to show newly unlocked nodes & connections
 	_build_tree_graph()
 	_connections_draw.queue_redraw()
 
-func _on_bg_gui_input(event: InputEvent) -> void:
+func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.button_index == MOUSE_BUTTON_LEFT:
@@ -416,6 +573,43 @@ func _on_bg_gui_input(event: InputEvent) -> void:
 			else:
 				_is_dragging = false
 				CursorManager.set_state(CursorManager.State.NORMAL)
+		elif mb.button_index == MOUSE_BUTTON_WHEEL_UP and mb.pressed:
+			var old_zoom = _zoom
+			_zoom *= 1.15
+			_zoom = clampf(_zoom, 0.25, 2.0)
+			# Mouse bazlı zoom için offset düzeltmesi (center_ctrl.scale)
+			var mouse_pos = mb.global_position
+			_center_ctrl.position = mouse_pos + (_center_ctrl.position - mouse_pos) * (_zoom / old_zoom)
+			_center_ctrl.scale = Vector2(_zoom, _zoom)
+			_bg.queue_redraw()
+		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
+			var old_zoom = _zoom
+			_zoom /= 1.15
+			_zoom = clampf(_zoom, 0.25, 2.0)
+			var mouse_pos = mb.global_position
+			_center_ctrl.position = mouse_pos + (_center_ctrl.position - mouse_pos) * (_zoom / old_zoom)
+			_center_ctrl.scale = Vector2(_zoom, _zoom)
+			_bg.queue_redraw()
+			
+	elif event is InputEventMagnifyGesture:
+		# Trackpad Pinch to Zoom
+		var mag := event as InputEventMagnifyGesture
+		var old_zoom = _zoom
+		_zoom *= mag.factor
+		_zoom = clampf(_zoom, 0.25, 2.0)
+		var mouse_pos = mag.position
+		_center_ctrl.position = mouse_pos + (_center_ctrl.position - mouse_pos) * (_zoom / old_zoom)
+		_center_ctrl.scale = Vector2(_zoom, _zoom)
+		_bg.queue_redraw()
+
+	elif event is InputEventPanGesture:
+		# Trackpad Two Finger Scroll (Panning)
+		var pan := event as InputEventPanGesture
+		# Pan delta is usually very small, needs a multiplier
+		_center_ctrl.position -= pan.delta * 25.0
+		_connections_draw.queue_redraw()
+		_bg.queue_redraw()
+		
 	elif event is InputEventMouseMotion and _is_dragging:
 		var mm := event as InputEventMouseMotion
 		_center_ctrl.position = mm.global_position + _drag_offset

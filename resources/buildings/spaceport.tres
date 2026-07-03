@@ -18,3 +18,4 @@ construct_duration = 3.0
 tick_duration = 45.0
 energy_per_tick = 0.0
 logic = SubResource("Resource_logic")
+unlocked_by_default = false

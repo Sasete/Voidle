@@ -24,7 +24,7 @@ static func fmt_credits(val: float) -> String:
 	return "%.0f cr" % val
 
 func _ready() -> void:
-	layer = 210  # Energy + Science sit below SkillTree (220)
+	layer = 226  # Energy above DevConsole (225), hidden when SkillTree opens
 	_orbitron = load("res://Fonts/Orbitron-VariableFont_wght.ttf")
 
 	var panel := PanelContainer.new()
@@ -98,6 +98,7 @@ func _ready() -> void:
 	skill_btn.add_theme_stylebox_override("hover", skill_h)
 
 	skill_btn.pressed.connect(func() -> void:
+		AudioManager.play("click")
 		var root := get_tree().root
 		var existing_layer: CanvasLayer = null
 		for child in root.get_children():
@@ -117,11 +118,14 @@ func _ready() -> void:
 			st_layer.layer = 220
 			var st_view = load("res://scripts/ui/SkillTreeView.gd").new()
 			st_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			st_view.tree_opened.connect(func() -> void: _energy_hud_node.visible = false)
+			st_view.tree_closed.connect(func() -> void: _energy_hud_node.visible = true)
 			st_layer.add_child(st_view)
 			root.add_child(st_layer))
 
 		
 	skill_btn.mouse_entered.connect(func() -> void:
+		AudioManager.play("hover")
 		CursorManager.set_state(CursorManager.State.POINTER)
 		TooltipManager.show_tip("Upgrades & Tech Tree", "Open system upgrade matrix using credits."))
 	skill_btn.mouse_exited.connect(func() -> void:
