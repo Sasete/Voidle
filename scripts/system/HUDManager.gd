@@ -24,7 +24,7 @@ static func fmt_credits(val: float) -> String:
 	return "%.0f cr" % val
 
 func _ready() -> void:
-	layer = 210
+	layer = 210  # Energy + Science sit below SkillTree (220)
 	_orbitron = load("res://Fonts/Orbitron-VariableFont_wght.ttf")
 
 	var panel := PanelContainer.new()
@@ -114,7 +114,7 @@ func _ready() -> void:
 			existing_layer.queue_free()
 		else:
 			var st_layer := CanvasLayer.new()
-			st_layer.layer = 200
+			st_layer.layer = 220
 			var st_view = load("res://scripts/ui/SkillTreeView.gd").new()
 			st_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 			st_layer.add_child(st_view)
@@ -142,7 +142,12 @@ func _ready() -> void:
 	vbox.mouse_filter = Control.MOUSE_FILTER_STOP
 	hbox.mouse_filter = Control.MOUSE_FILTER_STOP
 
-	add_child(panel)
+	# Credits + Science go into a top layer (above SkillTree at 220)
+	var top_layer := CanvasLayer.new()
+	top_layer.layer = 230
+	get_parent().call_deferred("add_child", top_layer)
+
+	top_layer.call_deferred("add_child", panel)
 	credits_panel = panel
 
 	# Science + Upgrade Tree panel — bottom-left
@@ -197,7 +202,7 @@ func _ready() -> void:
 	sci_panel.grow_vertical   = Control.GROW_DIRECTION_BEGIN
 	sci_panel.offset_left   = 0.0
 	sci_panel.offset_bottom = 0.0
-	add_child(sci_panel)
+	top_layer.call_deferred("add_child", sci_panel)
 
 	_credits_display = GameState.credits
 
