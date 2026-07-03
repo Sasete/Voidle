@@ -14,6 +14,7 @@ signal back_pressed
 @onready var _panel_content: VBoxContainer = $UICanvas/RightPanel/PanelContent
 
 var _survey_btn: Button = null
+var _scan_wrap: VBoxContainer = null
 
 var _current:      SolarData
 var _star:         ColorRect
@@ -598,10 +599,19 @@ func _update_panel() -> void:
 			btn.pressed.connect(func() -> void: planet_selected.emit(md))
 			_planet_list.add_child(btn)
 
-	# remove old survey button if any
+	# remove old survey / scan buttons
 	if _survey_btn and is_instance_valid(_survey_btn):
 		_survey_btn.queue_free()
 		_survey_btn = null
+	if _scan_wrap and is_instance_valid(_scan_wrap):
+		_scan_wrap.queue_free()
+		_scan_wrap = null
+
+	# Scan Asteroid button — only in SOLAR mode, only if skill unlocked, only if belts exist
+	if _mode == Mode.SOLAR and _current != null \
+			and not _current.asteroid_belt_slots.is_empty() \
+			and SkillTree.call("is_unlocked", "unlock_asteroids"):
+		_build_scan_asteroid_section()
 
 	# home system is already unlocked — no button needed
 	if _current.is_home:
@@ -666,6 +676,90 @@ func _update_panel() -> void:
 	_survey_btn.pressed.connect(func() -> void: _show_survey_popup(gd, star_idx, SURVEY_CREDITS, SURVEY_SCIENCE))
 
 	survey_wrap.add_child(_survey_btn)
+
+const SCAN_SCIENCE: float = 5_000.0
+
+func _build_scan_asteroid_section() -> void:
+	var orbitron := load("res://Fonts/Orbitron-VariableFont_wght.ttf") as Font
+
+	_scan_wrap = VBoxContainer.new()
+	_scan_wrap.add_theme_constant_override("separation", 6)
+	_panel_content.add_child(_scan_wrap)
+
+	var sep := HSeparator.new()
+	var sep_s := StyleBoxFlat.new()
+	sep_s.bg_color = Color(0.2, 0.25, 0.4, 0.35)
+	sep.add_theme_stylebox_override("separator", sep_s)
+	_scan_wrap.add_child(sep)
+
+	# Show scan status per belt
+	var st_lbl := Label.new()
+	var belts: Array = _current.asteroid_belt_slots
+	var scanned_total: int = 0
+	for slot: int in belts:
+		scanned_total += GameState.asteroid_scan_counts.get(slot, 0)
+	var max_total: int = belts.size() * 3
+	st_lbl.text = "Asteroids: %d / %d scanned" % [scanned_total, max_total]
+	st_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if orbitron: st_lbl.add_theme_font_override("font", orbitron)
+	st_lbl.add_theme_font_size_override("font_size", 8)
+	st_lbl.add_theme_color_override("font_color", Color(0.55, 0.75, 1.0))
+	_scan_wrap.add_child(st_lbl)
+
+	var scan_btn := Button.new()
+	scan_btn.text = "SCAN ASTEROID BELT"
+	scan_btn.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if orbitron: scan_btn.add_theme_font_override("font", orbitron)
+	scan_btn.add_theme_font_size_override("font_size", 11)
+
+	# Find next unsaturated belt
+	var next_slot: int = -1
+	for slot: int in belts:
+		if GameState.asteroid_scan_counts.get(slot, 0) < 3:
+			next_slot = slot
+			break
+
+	var all_scanned := next_slot < 0
+	var can_afford  := GameState.science_points >= SCAN_SCIENCE
+
+	var nb := StyleBoxFlat.new()
+	nb.bg_color = Color(0.08, 0.28, 0.22) if (can_afford and not all_scanned) else Color(0.10, 0.12, 0.18)
+	nb.content_margin_top = 10; nb.content_margin_bottom = 10
+	nb.set_border_width_all(1)
+	nb.border_color = Color(0.20, 0.75, 0.55, 0.8) if (can_afford and not all_scanned) else Color(0.25, 0.30, 0.40, 0.5)
+	nb.set_corner_radius_all(3)
+	scan_btn.add_theme_stylebox_override("normal", nb)
+	var hb := nb.duplicate() as StyleBoxFlat
+	hb.bg_color = Color(0.12, 0.42, 0.32) if (can_afford and not all_scanned) else Color(0.12, 0.14, 0.22)
+	scan_btn.add_theme_stylebox_override("hover", hb)
+	scan_btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	scan_btn.add_theme_color_override("font_color",
+		Color(0.65, 1.0, 0.85) if (can_afford and not all_scanned) else Color(0.35, 0.42, 0.55))
+
+	if all_scanned:
+		scan_btn.disabled = true
+		scan_btn.text = "ALL BELTS SCANNED"
+	elif not can_afford:
+		scan_btn.disabled = true
+
+	var cost_lbl := Label.new()
+	cost_lbl.text = "○ %s Science" % HUDManager.fmt_science(SCAN_SCIENCE)
+	cost_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if orbitron: cost_lbl.add_theme_font_override("font", orbitron)
+	cost_lbl.add_theme_font_size_override("font_size", 8)
+	cost_lbl.add_theme_color_override("font_color",
+		Color(0.45, 0.78, 1.0) if can_afford else Color(0.80, 0.30, 0.30))
+	_scan_wrap.add_child(cost_lbl)
+	_scan_wrap.add_child(scan_btn)
+
+	scan_btn.mouse_entered.connect(func() -> void: AudioManager.play("hover"))
+	scan_btn.pressed.connect(func() -> void:
+		if not GameState.spend_science(SCAN_SCIENCE):
+			AudioManager.play("error")
+			return
+		AudioManager.play("survey", -2.0)
+		GameState.discover_asteroid(next_slot)
+		_update_panel())
 
 func _show_survey_popup(gd: GalaxyData, star_idx: int, cost_cr: float, cost_sci: float) -> void:
 	var orbitron := load("res://Fonts/Orbitron-VariableFont_wght.ttf") as Font
@@ -827,6 +921,7 @@ func _survey_system(gd: GalaxyData, star_idx: int, cost_cr: float, cost_sci: flo
 		GameState.credits_changed.emit(GameState.credits)
 		return
 	gd.unlock(star_idx)
+	AchievementManager.notify_trigger(AchievementDef.Trigger.FIRST_SURVEY)
 	# Remove the whole survey_wrap (sep + cost + button)
 	if is_instance_valid(_survey_btn):
 		var wrap := _survey_btn.get_parent()

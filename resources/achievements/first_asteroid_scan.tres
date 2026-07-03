@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="AchievementDef" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://resources/achievements/AchievementDef.gd" id="1_achievement"]
+
+[resource]
+script = ExtResource("1_achievement")
+achievement_id = "first_asteroid_scan"
+title = "Rock Collector"
+description = "Scan an asteroid belt for the first time."
+icon = "☄"
+trigger = 3
+steam_id = "ACH_FIRST_ASTEROID"

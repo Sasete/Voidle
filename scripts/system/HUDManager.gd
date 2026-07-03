@@ -14,6 +14,7 @@ var _credits_tween: Tween = null
 var _orbitron: Font
 ## The credits panel node — exposed so PlanetaryView can read its screen height for toast offset.
 var credits_panel: PanelContainer = null
+var science_panel: PanelContainer = null
 static func fmt_credits(val: float) -> String:
 	if val >= 1_000_000_000.0:
 		return "%.2fb cr" % (val / 1_000_000_000.0)
@@ -22,6 +23,15 @@ static func fmt_credits(val: float) -> String:
 	elif val >= 1_000.0:
 		return "%.1fk cr" % (val / 1_000.0)
 	return "%.0f cr" % val
+
+static func fmt_science(val: float) -> String:
+	if val >= 1_000_000_000.0:
+		return "%.2fB" % (val / 1_000_000_000.0)
+	elif val >= 1_000_000.0:
+		return "%.2fM" % (val / 1_000_000.0)
+	elif val >= 1_000.0:
+		return "%.1fK" % (val / 1_000.0)
+	return "%.0f" % val
 
 func _ready() -> void:
 	layer = 226  # Energy above DevConsole (225), hidden when SkillTree opens
@@ -112,7 +122,15 @@ func _ready() -> void:
 				break
 		if existing_layer != null:
 			CursorManager.set_state(CursorManager.State.NORMAL)
+			
+			# Find SkillTreeView to update its static state
+			for gc in existing_layer.get_children():
+				if gc.get_script() != null and gc.get_script().resource_path.ends_with("SkillTreeView.gd"):
+					gc.set("is_open", false)
+					break
+					
 			existing_layer.queue_free()
+			_energy_hud_node.visible = true
 		else:
 			var st_layer := CanvasLayer.new()
 			st_layer.layer = 220
@@ -154,6 +172,42 @@ func _ready() -> void:
 	top_layer.call_deferred("add_child", panel)
 	credits_panel = panel
 
+	var settings_btn := Button.new()
+	settings_btn.text = "⚙" # Cogwheel
+	settings_btn.add_theme_font_size_override("font_size", 20)
+	var sb_style := StyleBoxFlat.new()
+	sb_style.bg_color = Color(0.05, 0.06, 0.11, 0.8)
+	sb_style.border_color = Color(0.25, 0.32, 0.55, 0.45)
+	sb_style.set_border_width_all(1)
+	sb_style.corner_radius_bottom_left = 8
+	sb_style.content_margin_left = 10
+	sb_style.content_margin_right = 10
+	sb_style.content_margin_top = 4
+	sb_style.content_margin_bottom = 4
+	settings_btn.add_theme_stylebox_override("normal", sb_style)
+	var sb_hover := sb_style.duplicate() as StyleBoxFlat
+	sb_hover.bg_color = Color(0.15, 0.16, 0.22, 0.9)
+	settings_btn.add_theme_stylebox_override("hover", sb_hover)
+	settings_btn.mouse_filter = Control.MOUSE_FILTER_STOP
+	
+	settings_btn.anchor_left = 1.0
+	settings_btn.anchor_right = 1.0
+	settings_btn.anchor_top = 0.0
+	settings_btn.anchor_bottom = 0.0
+	settings_btn.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	settings_btn.grow_vertical = Control.GROW_DIRECTION_END
+	settings_btn.offset_right = 0
+	settings_btn.offset_top = 0
+	
+	settings_btn.mouse_entered.connect(func() -> void:
+		CursorManager.set_state(CursorManager.State.POINTER)
+		AudioManager.play("hover"))
+	settings_btn.mouse_exited.connect(func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
+	settings_btn.pressed.connect(_show_settings_panel)
+	
+	top_layer.call_deferred("add_child", settings_btn)
+
+
 	# Science + Upgrade Tree panel — bottom-left
 	var sci_panel := PanelContainer.new()
 	var ss := StyleBoxFlat.new()
@@ -189,7 +243,7 @@ func _ready() -> void:
 	sci_hbox.add_child(sci_icon)
 
 	_science_lbl = Label.new()
-	_science_lbl.text = "0 Science"
+	_science_lbl.text = "%s Science" % fmt_science(GameState.science_points)
 	if _orbitron: _science_lbl.add_theme_font_override("font", _orbitron)
 	_science_lbl.add_theme_font_size_override("font_size", 12)
 	_science_lbl.add_theme_color_override("font_color", Color(0.65, 0.90, 1.0))
@@ -206,6 +260,7 @@ func _ready() -> void:
 	sci_panel.grow_vertical   = Control.GROW_DIRECTION_BEGIN
 	sci_panel.offset_left   = 0.0
 	sci_panel.offset_bottom = 0.0
+	science_panel = sci_panel
 	top_layer.call_deferred("add_child", sci_panel)
 
 	_credits_display = GameState.credits
@@ -213,6 +268,114 @@ func _ready() -> void:
 	GameState.credits_changed.connect(_on_credits_changed)
 	GameState.science_changed.connect(_on_science_changed)
 	_setup_energy_hud()
+	AchievementManager.achievement_unlocked.connect(_on_achievement_unlocked)
+
+func _show_settings_panel() -> void:
+	AudioManager.play("ui_click")
+	if get_tree().paused:
+		return
+	
+	get_tree().paused = true
+	
+	var overlay := CanvasLayer.new()
+	overlay.layer = 250
+	
+	# The overlay itself must process when paused!
+	overlay.process_mode = Node.PROCESS_MODE_ALWAYS
+	
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.6)
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.add_child(dim)
+	
+	var panel := PanelContainer.new()
+	var ps := StyleBoxFlat.new()
+	ps.bg_color = Color(0.06, 0.07, 0.12, 0.95)
+	ps.border_color = Color(0.3, 0.4, 0.6, 0.5)
+	ps.set_border_width_all(2)
+	ps.corner_radius_top_left = 12
+	ps.corner_radius_top_right = 12
+	ps.corner_radius_bottom_left = 12
+	ps.corner_radius_bottom_right = 12
+	ps.content_margin_left = 40
+	ps.content_margin_right = 40
+	ps.content_margin_top = 30
+	ps.content_margin_bottom = 30
+	panel.add_theme_stylebox_override("panel", ps)
+	
+	panel.anchor_left = 0.5
+	panel.anchor_right = 0.5
+	panel.anchor_top = 0.5
+	panel.anchor_bottom = 0.5
+	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+	
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 20)
+	panel.add_child(vbox)
+	
+	var title := Label.new()
+	title.text = "SETTINGS"
+	if _orbitron: title.add_theme_font_override("font", _orbitron)
+	title.add_theme_font_size_override("font_size", 24)
+	title.add_theme_color_override("font_color", Color(0.8, 0.9, 1.0))
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vbox.add_child(title)
+	
+	var sep := HSeparator.new()
+	vbox.add_child(sep)
+	
+	var mv_lbl := Label.new()
+	mv_lbl.text = "Master Volume"
+	if _orbitron: mv_lbl.add_theme_font_override("font", _orbitron)
+	mv_lbl.add_theme_font_size_override("font_size", 14)
+	mv_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vbox.add_child(mv_lbl)
+	
+	var mv_slider := HSlider.new()
+	mv_slider.custom_minimum_size = Vector2(200, 0)
+	mv_slider.min_value = 0.0001
+	mv_slider.max_value = 1.0
+	mv_slider.step = 0.01
+	var master_bus := AudioServer.get_bus_index("Master")
+	var current_db := AudioServer.get_bus_volume_db(master_bus)
+	mv_slider.value = db_to_linear(current_db)
+	mv_slider.value_changed.connect(func(v: float) -> void:
+		AudioServer.set_bus_volume_db(master_bus, linear_to_db(v))
+	)
+	vbox.add_child(mv_slider)
+	
+	var sep2 := HSeparator.new()
+	vbox.add_child(sep2)
+	
+	var btn := Button.new()
+	btn.text = "RESUME"
+	if _orbitron: btn.add_theme_font_override("font", _orbitron)
+	btn.add_theme_font_size_override("font_size", 16)
+	var bs := StyleBoxFlat.new()
+	bs.bg_color = Color(0.15, 0.25, 0.35)
+	bs.corner_radius_top_left = 6; bs.corner_radius_top_right = 6
+	bs.corner_radius_bottom_left = 6; bs.corner_radius_bottom_right = 6
+	bs.content_margin_top = 10; bs.content_margin_bottom = 10
+	btn.add_theme_stylebox_override("normal", bs)
+	var bsh := bs.duplicate() as StyleBoxFlat
+	bsh.bg_color = Color(0.2, 0.35, 0.5)
+	btn.add_theme_stylebox_override("hover", bsh)
+	
+	btn.pressed.connect(func() -> void:
+		AudioManager.play("ui_click")
+		get_tree().paused = false
+		overlay.queue_free()
+	)
+	
+	btn.mouse_entered.connect(func() -> void:
+		CursorManager.set_state(CursorManager.State.POINTER)
+		AudioManager.play("hover"))
+	btn.mouse_exited.connect(func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
+	
+	vbox.add_child(btn)
+	overlay.add_child(panel)
+	get_tree().root.add_child(overlay)
 
 func _on_credits_changed(new_val: float) -> void:
 	if not is_instance_valid(_credits_lbl):
@@ -243,7 +406,7 @@ func _on_credits_changed(new_val: float) -> void:
 func _on_science_changed(new_val: float) -> void:
 	if not is_instance_valid(_science_lbl):
 		return
-	_science_lbl.text = "%.0f Science" % new_val
+	_science_lbl.text = "%s Science" % fmt_science(new_val)
 
 func _process(delta: float) -> void:
 	_energy_hud_poll += delta
@@ -390,6 +553,96 @@ func _center_energy_hud(hbox: Control) -> void:
 	hbox.offset_top    = 0.0
 	hbox.offset_right  = hbox.offset_left + pw
 	hbox.offset_bottom = hbox.size.y
+
+func _on_achievement_unlocked(def) -> void:
+	AudioManager.play("achievement", 2.0)
+	# Build a gold-bordered achievement popup anchored bottom-right
+	var overlay := CanvasLayer.new()
+	overlay.layer = 240
+	get_tree().root.add_child(overlay)
+
+	var panel := PanelContainer.new()
+	var ps := StyleBoxFlat.new()
+	ps.bg_color = Color(0.06, 0.05, 0.02, 0.96)
+	ps.border_color = Color(0.95, 0.78, 0.15, 0.9)
+	ps.set_border_width_all(2)
+	ps.corner_radius_top_left     = 8
+	ps.corner_radius_top_right    = 8
+	ps.corner_radius_bottom_left  = 8
+	ps.corner_radius_bottom_right = 8
+	ps.content_margin_left   = 16
+	ps.content_margin_right  = 16
+	ps.content_margin_top    = 10
+	ps.content_margin_bottom = 10
+	panel.add_theme_stylebox_override("panel", ps)
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var hbox := HBoxContainer.new()
+	hbox.add_theme_constant_override("separation", 10)
+	hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(hbox)
+
+	var icon_lbl := Label.new()
+	icon_lbl.text = def.icon if def.icon != "" else "★"
+	if _orbitron: icon_lbl.add_theme_font_override("font", _orbitron)
+	icon_lbl.add_theme_font_size_override("font_size", 24)
+	icon_lbl.add_theme_color_override("font_color", Color(0.95, 0.78, 0.15))
+	icon_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hbox.add_child(icon_lbl)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 2)
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hbox.add_child(vbox)
+
+	var header := Label.new()
+	header.text = "Achievement Unlocked"
+	if _orbitron: header.add_theme_font_override("font", _orbitron)
+	header.add_theme_font_size_override("font_size", 9)
+	header.add_theme_color_override("font_color", Color(0.95, 0.78, 0.15, 0.75))
+	header.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(header)
+
+	var title_lbl := Label.new()
+	title_lbl.text = def.title
+	if _orbitron: title_lbl.add_theme_font_override("font", _orbitron)
+	title_lbl.add_theme_font_size_override("font_size", 13)
+	title_lbl.add_theme_color_override("font_color", Color(1.0, 0.92, 0.55))
+	title_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(title_lbl)
+
+	if def.description != "":
+		var desc_lbl := Label.new()
+		desc_lbl.text = def.description
+		if _orbitron: desc_lbl.add_theme_font_override("font", _orbitron)
+		desc_lbl.add_theme_font_size_override("font_size", 9)
+		desc_lbl.add_theme_color_override("font_color", Color(0.75, 0.72, 0.60, 0.85))
+		desc_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		vbox.add_child(desc_lbl)
+
+	panel.anchor_right  = 1.0
+	panel.anchor_bottom = 1.0
+	panel.anchor_left   = 1.0
+	panel.anchor_top    = 1.0
+	panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	panel.grow_vertical   = Control.GROW_DIRECTION_BEGIN
+	panel.offset_right  = -12.0
+	panel.offset_bottom = -12.0
+	overlay.add_child(panel)
+
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var h := panel.size.y
+	panel.offset_bottom = -12.0
+	panel.offset_top    = panel.offset_bottom - h
+
+	# Slide in, hold, fade out
+	panel.modulate = Color(1, 1, 1, 0)
+	var tw := panel.create_tween()
+	tw.tween_property(panel, "modulate", Color(1, 1, 1, 1), 0.35).set_ease(Tween.EASE_OUT)
+	tw.tween_interval(3.5)
+	tw.tween_property(panel, "modulate", Color(1, 1, 1, 0), 0.6).set_ease(Tween.EASE_IN)
+	tw.tween_callback(func() -> void: overlay.queue_free())
 
 func _energy_breakdown_text() -> String:
 	var pm: Node = get_node_or_null("/root/ProductionManager")

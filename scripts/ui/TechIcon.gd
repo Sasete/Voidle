@@ -112,7 +112,7 @@ static func make(tier: int, base_color: Color) -> ImageTexture:
 		_noise_tex.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
 		_noise_tex.frequency = 0.5
 
-	var img := Image.create_empty(BASE_SIZE, BASE_SIZE, false, Image.FORMAT_RGBA8)
+	var img := Image.create(BASE_SIZE, BASE_SIZE, false, Image.FORMAT_RGBA8)
 	var template: Array = TEMPLATES.get(tier, TEMPLATES[1])
 
 	for y in range(BASE_SIZE):

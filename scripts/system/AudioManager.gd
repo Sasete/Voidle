@@ -7,6 +7,7 @@ const CREDITS_THROTTLE := 0.25   # min seconds between cash sounds
 var _players: Array[AudioStreamPlayer] = []
 var _ambient_player: AudioStreamPlayer = null
 var _construct_loop_player: AudioStreamPlayer = null
+var _music_player: AudioStreamPlayer = null
 var _cache: Dictionary = {}
 var _credits_timer: float = 0.0
 var _construct_active: bool = false
@@ -41,10 +42,20 @@ func _ready() -> void:
 	_cache["poi_ping"]      = _gen_poi_ping()
 	_cache["poi_select"]    = _gen_poi_select()
 	_cache["cash"]          = _gen_cash()
+	_cache["achievement"]   = _gen_achievement()
+	_cache["tick"]          = _gen_tick()
+	_cache["terrain_earth"] = _gen_terrain_earth()
+	_cache["terrain_water"] = _gen_terrain_water()
+	_cache["terrain_sand"]  = _gen_terrain_sand()
+	_cache["terrain_ice"]   = _gen_terrain_ice()
+	_cache["terrain_fire"]  = _gen_terrain_fire()
+	_cache["terrain_dust"]  = _gen_terrain_dust()
+	_cache["terrain_gas"]   = _gen_terrain_gas()
 
 	_construct_loop_player.stream = _gen_construct_loop()
 
 	_play_ambient()
+	_play_music()
 
 	GameState.credits_changed.connect(func(_v: float) -> void:
 		if _credits_timer <= 0.0:
@@ -232,6 +243,18 @@ func _gen_clink() -> AudioStreamWAV:
 		var env: float = exp(-t * 80.0)
 		buf[i]  = (_sine(ph) * 0.5 + _sine(ph2) * 0.3) * env * 0.30
 	return _make_wav(buf)
+
+func _play_music() -> void:
+	var path := "res://resources/The Void.mp3"
+	if not ResourceLoader.exists(path):
+		return
+	_music_player = AudioStreamPlayer.new()
+	_music_player.volume_db = -22.0
+	var stream = load(path)
+	stream.loop = true
+	_music_player.stream = stream
+	add_child(_music_player)
+	_music_player.play()
 
 func _play_ambient() -> void:
 	# Deep space drone: two detuned low sines + slow LFO, looping
@@ -446,3 +469,146 @@ func _gen_construct_loop() -> AudioStreamWAV:
 	wav.loop_begin = 0
 	wav.loop_end   = n - 1
 	return wav
+
+func _gen_achievement() -> AudioStreamWAV:
+	# Triumphant 4-note fanfare: ascending + final sustained chord shimmer, 700ms
+	var notes: Array[float]   = [523.25, 659.25, 783.99, 1046.50]  # C5 E5 G5 C6
+	var offsets: Array[float] = [0.0,    0.100,  0.200,  0.340]
+	var total := 0.700
+	var n     := int(SAMPLE_RATE * total)
+	var buf   := PackedFloat32Array(); buf.resize(n)
+	for fi in 4:
+		var note_dur := 0.36 if fi == 3 else 0.14
+		var start    := int(offsets[fi] * SAMPLE_RATE)
+		var count    := int(note_dur * SAMPLE_RATE)
+		var ph       := 0.0; var ph2 := 0.0
+		for j in count:
+			var idx := start + j
+			if idx >= n: break
+			var t: float   = float(j) / SAMPLE_RATE
+			var env: float = _envelope(t, 0.004, 0.030, 0.55, 0.12, note_dur)
+			ph  += TAU * notes[fi]       / SAMPLE_RATE
+			ph2 += TAU * notes[fi] * 2.0 / SAMPLE_RATE
+			buf[idx] += (_sine(ph) * 0.55 + _sine(ph2) * 0.18) * env * 0.55
+	return _make_wav(buf)
+
+# ── terrain hit sounds ────────────────────────────────────────────────────────
+
+func _gen_terrain_earth() -> AudioStreamWAV:
+	# Damp thud: low-pass filtered noise burst, 110ms
+	var dur := 0.110; var n := int(SAMPLE_RATE * dur)
+	var buf := PackedFloat32Array(); buf.resize(n)
+	var rng := RandomNumberGenerator.new(); rng.seed = 1001
+	var prev := 0.0
+	for i in n:
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = exp(-t * 28.0)
+		var raw: float = rng.randf_range(-1.0, 1.0)
+		# Low-pass (IIR): cutoff ~300 Hz
+		prev = prev * 0.94 + raw * 0.06
+		buf[i] = prev * env * 0.9
+	return _make_wav(buf)
+
+func _gen_terrain_water() -> AudioStreamWAV:
+	# Wet splash: band-pass noise + rising sine bubble, 140ms
+	var dur := 0.140; var n := int(SAMPLE_RATE * dur)
+	var buf := PackedFloat32Array(); buf.resize(n)
+	var rng := RandomNumberGenerator.new(); rng.seed = 1002
+	var lp := 0.0; var hp := 0.0; var ph := 0.0
+	for i in n:
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = exp(-t * 18.0)
+		var raw: float = rng.randf_range(-1.0, 1.0)
+		lp = lp * 0.88 + raw * 0.12      # LP ~800 Hz
+		hp = raw - lp                      # HP residual
+		var band: float = lp * 0.6 + hp * 0.3
+		var freq: float = lerp(280.0, 560.0, t / dur)
+		ph += TAU * freq / SAMPLE_RATE
+		buf[i] = (band * 0.5 + _sine(ph) * 0.25) * env * 0.8
+	return _make_wav(buf)
+
+func _gen_terrain_sand() -> AudioStreamWAV:
+	# Gritty hiss: high-freq noise with slight pitch curve, 90ms
+	var dur := 0.090; var n := int(SAMPLE_RATE * dur)
+	var buf := PackedFloat32Array(); buf.resize(n)
+	var rng := RandomNumberGenerator.new(); rng.seed = 1003
+	var hp := 0.0
+	for i in n:
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = exp(-t * 30.0) * (1.0 + t * 4.0)
+		var raw: float = rng.randf_range(-1.0, 1.0)
+		hp = raw * 0.55 + hp * 0.45      # HP ~5kHz band
+		buf[i] = hp * env * 0.55
+	return _make_wav(buf)
+
+func _gen_terrain_ice() -> AudioStreamWAV:
+	# Crystalline tink: sharp click + high resonance decay, 120ms
+	var dur := 0.120; var n := int(SAMPLE_RATE * dur)
+	var buf := PackedFloat32Array(); buf.resize(n)
+	var ph1 := 0.0; var ph2 := 0.0; var ph3 := 0.0
+	for i in n:
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = exp(-t * 22.0)
+		ph1 += TAU * 3800.0 / SAMPLE_RATE
+		ph2 += TAU * 5400.0 / SAMPLE_RATE
+		ph3 += TAU * 7200.0 / SAMPLE_RATE
+		buf[i] = (_sine(ph1) * 0.50 + _sine(ph2) * 0.30 + _sine(ph3) * 0.15) * env * 0.65
+	return _make_wav(buf)
+
+func _gen_terrain_fire() -> AudioStreamWAV:
+	# Crackle-pop: random impulses riding a low rumble, 160ms
+	var dur := 0.160; var n := int(SAMPLE_RATE * dur)
+	var buf := PackedFloat32Array(); buf.resize(n)
+	var rng := RandomNumberGenerator.new(); rng.seed = 1004
+	var lp1 := 0.0; var lp2 := 0.0; var ph := 0.0
+	for i in n:
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = exp(-t * 14.0)
+		var raw: float = rng.randf_range(-1.0, 1.0)
+		lp1 = lp1 * 0.90 + raw * 0.10   # ~1.1kHz
+		lp2 = lp2 * 0.97 + raw * 0.03   # rumble ~200Hz
+		ph += TAU * 120.0 / SAMPLE_RATE
+		var crackle: float = lp1 if abs(raw) > 0.75 else lp2 * 0.4
+		buf[i] = (crackle * 0.55 + _sine(ph) * 0.12) * env * 0.85
+	return _make_wav(buf)
+
+func _gen_terrain_dust() -> AudioStreamWAV:
+	# Dry scrape: very short mid noise burst, 70ms
+	var dur := 0.070; var n := int(SAMPLE_RATE * dur)
+	var buf := PackedFloat32Array(); buf.resize(n)
+	var rng := RandomNumberGenerator.new(); rng.seed = 1005
+	var lp := 0.0
+	for i in n:
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = exp(-t * 35.0)
+		var raw: float = rng.randf_range(-1.0, 1.0)
+		lp = lp * 0.80 + raw * 0.20     # ~1.8kHz mid band
+		buf[i] = lp * env * 0.6
+	return _make_wav(buf)
+
+func _gen_terrain_gas() -> AudioStreamWAV:
+	# Atmospheric whoosh: sweeping band noise, 180ms
+	var dur := 0.180; var n := int(SAMPLE_RATE * dur)
+	var buf := PackedFloat32Array(); buf.resize(n)
+	var rng := RandomNumberGenerator.new(); rng.seed = 1006
+	var lp := 0.0
+	for i in n:
+		var t: float = float(i) / SAMPLE_RATE
+		var env: float = t / dur * exp(-t * 12.0) * 2.2
+		var raw: float = rng.randf_range(-1.0, 1.0)
+		var alpha: float = lerp(0.04, 0.14, t / dur)
+		lp = lp * (1.0 - alpha) + raw * alpha
+		buf[i] = lp * env * 0.75
+	return _make_wav(buf)
+
+func _gen_tick() -> AudioStreamWAV:
+	# Crisp typewriter key click: sharp transient at ~3kHz, 10ms
+	var dur := 0.010; var n := int(SAMPLE_RATE * dur)
+	var buf := PackedFloat32Array(); buf.resize(n)
+	var ph := 0.0
+	for i in n:
+		var t: float   = float(i) / SAMPLE_RATE
+		var env: float = exp(-t * 380.0)
+		ph += TAU * 2800.0 / SAMPLE_RATE
+		buf[i] = _sine(ph) * env * 0.55
+	return _make_wav(buf)

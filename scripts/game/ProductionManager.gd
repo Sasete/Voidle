@@ -59,6 +59,14 @@ func invalidate(planet_seed: int) -> void:
 # ── Internal ──────────────────────────────────────────────────────────────────
 
 func _tick_all(delta: float) -> void:
+	for pp: PlanetProgress in GameState._planet_progress.values():
+		if pp.is_colonizing:
+			pp.colonize_progress += delta / max(0.1, pp.colonize_duration)
+			if pp.colonize_progress >= 1.0:
+				GameState.finish_colonization(pp.planet_seed)
+			else:
+				building_progress_changed.emit(pp.planet_seed, "colonize", pp.colonize_progress)
+
 	for pp: PlanetProgress in _all_colonies():
 		var planet_seed: int = pp.planet_seed
 		var pd: PlanetData = GameState.get_planet_data(planet_seed)

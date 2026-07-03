@@ -168,11 +168,16 @@ func _build_tree_graph() -> void:
 
 		var card := PanelContainer.new()
 		card.mouse_filter = Control.MOUSE_FILTER_PASS
-		card.custom_minimum_size = Vector2(48, 48)
+		var shape_type: int = node.get("shape") if "shape" in node else 0
+		var card_size := 48.0
+		if shape_type == 2:
+			card_size = 72.0
+			
+		card.custom_minimum_size = Vector2(card_size, card_size)
 		card.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		card.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 
-		# Style based on status (Cyberpunk Hexagon)
+		# Style based on status (Cyberpunk Theme)
 		var bg_color := Color(0.08, 0.09, 0.12, 0.9)
 		var border_color := Color(0.5, 0.6, 0.7, 0.8) # <--- Brighter border for locked nodes
 		var shadow_color := Color(0.0, 0.0, 0.0, 0.0)
@@ -203,31 +208,44 @@ func _build_tree_graph() -> void:
 		wrapper.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		card.add_child(wrapper)
 
-		# Custom Hexagon Drawing Layer
-		var hex_bg := Control.new()
-		hex_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		hex_bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		hex_bg.draw.connect(func() -> void:
-			var r := 22.0 # Radius for 48x48 box
-			var c := Vector2(24.0, 24.0)
+		# Custom Shape Drawing Layer
+		var bg_shape := Control.new()
+		bg_shape.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		bg_shape.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		bg_shape.draw.connect(func() -> void:
+			var c := Vector2(card_size * 0.5, card_size * 0.5)
+			var r := 22.0
 			
 			var pts := PackedVector2Array()
 			var glow_pts := PackedVector2Array()
-			# Flat-topped hexagon (points at 30, 90, 150, 210, 270, 330 degrees)
-			for i in range(7):
-				var angle = i * PI / 3.0 + PI / 6.0
-				pts.append(c + Vector2(cos(angle), sin(angle)) * r)
-				glow_pts.append(c + Vector2(cos(angle), sin(angle)) * (r + 2.0))
+			
+			if shape_type == 2: # CIRCLE (Large)
+				r = 30.0
+				for i in range(13):
+					var angle = i * PI * 2.0 / 12.0
+					pts.append(c + Vector2(cos(angle), sin(angle)) * r)
+					glow_pts.append(c + Vector2(cos(angle), sin(angle)) * (r + 2.0))
+			elif shape_type == 1: # DIAMOND (Small)
+				r = 16.0
+				for i in range(5):
+					var angle = i * PI / 2.0
+					pts.append(c + Vector2(cos(angle), sin(angle)) * r)
+					glow_pts.append(c + Vector2(cos(angle), sin(angle)) * (r + 2.0))
+			else: # HEXAGON
+				for i in range(7):
+					var angle = i * PI / 3.0 + PI / 6.0
+					pts.append(c + Vector2(cos(angle), sin(angle)) * r)
+					glow_pts.append(c + Vector2(cos(angle), sin(angle)) * (r + 2.0))
 			
 			# Draw Glow (Shadow)
 			if shadow_color.a > 0:
-				hex_bg.draw_polyline(glow_pts, shadow_color, 4.0, true)
+				bg_shape.draw_polyline(glow_pts, shadow_color, 4.0, true)
 			
 			# Draw Fill & Outline
-			hex_bg.draw_colored_polygon(pts, bg_color)
-			hex_bg.draw_polyline(pts, border_color, border_width, true)
+			bg_shape.draw_colored_polygon(pts, bg_color)
+			bg_shape.draw_polyline(pts, border_color, border_width, true)
 		)
-		wrapper.add_child(hex_bg)
+		wrapper.add_child(bg_shape)
 
 		# Add procedural icon in center of the wrapper
 		var center := CenterContainer.new()
@@ -409,7 +427,7 @@ func _build_tree_graph() -> void:
 			wrapper.add_child(lv_badge)
 
 		# Position absolute coordinate
-		card.position = node.pos - Vector2(24, 24)
+		card.position = node.pos - Vector2(card_size * 0.5, card_size * 0.5)
 		_nodes_container.add_child(card)
 		_ui_nodes[id] = card
 
@@ -528,7 +546,11 @@ func _draw_connections() -> void:
 				# If both are fully upgraded, maybe make it green? Nah, Cyan is very cyberpunk.
 				line_col = Color(0.15, 0.85, 0.95, 0.9) # Cyan active circuit
 			
-			var line_width := 4.0 if is_active else 2.0
+			var p_shape: int = st.get("nodes")[parent_id].get("shape") if "shape" in st.get("nodes")[parent_id] else 0
+			var c_shape: int = node.get("shape") if "shape" in node else 0
+			var is_main_path: bool = p_shape != 1 and c_shape != 1 # 1 is DIAMOND
+
+			var line_width := (8.0 if is_main_path else 4.0) if is_active else (4.0 if is_main_path else 2.0)
 
 			# Circuit Board 45-Degree Chamfer Routing
 			var dx = end_pos.x - start_pos.x

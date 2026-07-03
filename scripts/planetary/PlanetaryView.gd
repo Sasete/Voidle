@@ -71,10 +71,11 @@ func _ready() -> void:
 	get_tree().root.size_changed.connect(_on_resize)
 	# back button removed — navigation handled via system dock / unlock flow
 	GameState.unlock_changed.connect(_on_unlock_changed)
-	GameState.planet_progress_changed.connect(func(_s: int) -> void:
+	GameState.planet_progress_changed.connect(func(seed_val: int) -> void:
 		_build_system_panel()
-		if current_data != null:
+		if current_data != null and seed_val == current_data.seed:
 			_update_panel(current_data)
+			_refresh_pois(current_data)
 			_build_details_panel(current_data)
 			if _active_district_poi == null:
 				_build_planet_overview(current_data)
@@ -236,6 +237,38 @@ func load_planet(data: PlanetData) -> void:
 	_setup_orbital_layer(data.seed)
 	_build_details_panel(data)
 
+	_refresh_pois(data)
+	# rotate so the first (primary) POI faces the viewer at load (if any)
+	if poi_layer._pois.size() > 0:
+		planet_renderer.set_rotation_offset(poi_layer._pois[0]["lon"])
+	_build_planet_overview(data)
+
+func _clean_custom_pois(data: PlanetData) -> void:
+	if data == null or data.custom_pois.is_empty():
+		return
+	var cleaned: Array[POIData] = []
+	for item in data.custom_pois:
+		if typeof(item) == TYPE_DICTIONARY:
+			var untyped = [item][0]
+			var pd := POIData.new()
+			pd.lon_deg = float(untyped.get("lon_deg", 0.0))
+			pd.lat_deg = float(untyped.get("lat_deg", 0.0))
+			pd.label = str(untyped.get("label", ""))
+			pd.manual_position = true
+			if untyped.has("data") and typeof(untyped["data"]) == TYPE_DICTIONARY:
+				var pdata: Dictionary = untyped["data"]
+				pd.type_tag = str(pdata.get("type", ""))
+				pd.light_intensity = float(pdata.get("light_intensity", 1.0))
+				if pd.type_tag == "station":
+					pd.poi_type = POIData.POIType.STATION
+			cleaned.append(pd)
+		elif item is POIData:
+			cleaned.append(item as POIData)
+	data.custom_pois = cleaned
+
+func _refresh_pois(data: PlanetData) -> void:
+	_clean_custom_pois(data)
+	poi_layer.clear_pois()
 	var pois: Array[Dictionary] = []
 	if data.custom_pois.size() > 0:
 		var lf := LocationFinder.new(data.seed, data.sea_level,
@@ -265,11 +298,6 @@ func load_planet(data: PlanetData) -> void:
 					"night_size": _district_night_size(data, pd.label),
 				}
 			})
-	# no auto-generated POIs — only custom_pois are shown
-
-	# rotate so the first (primary) POI faces the viewer at load
-	if pois.size() > 0:
-		planet_renderer.set_rotation_offset(deg_to_rad(pois[0]["lon_deg"]))
 
 	for poi in pois:
 		poi_layer.add_poi(poi["lon_deg"], poi["lat_deg"], poi["label"], poi["data"])
@@ -524,6 +552,8 @@ func _spawn_district(data: PlanetData, lbl: String, def: DistrictDef) -> void:
 		if launch_poi != null:
 			_rotate_to_lon(launch_poi.lon_deg, 0.5)
 		AudioManager.play("construct")
+		AchievementManager.notify_trigger(AchievementDef.Trigger.FIRST_DISTRICT)
+		AchievementManager.notify_trigger(AchievementDef.Trigger.FIRST_ORBITAL)
 		# Add immediately so panel shows "Constructing"; OrbitalLayer skips constructing=true pois
 		data.custom_pois.append(poi)
 		_play_rocket_animation(data.seed, launch_poi, func() -> void:
@@ -548,6 +578,7 @@ func _spawn_district(data: PlanetData, lbl: String, def: DistrictDef) -> void:
 		poi.lat_deg = rad_to_deg(pos.y)
 		poi.manual_position = true
 		AudioManager.play("construct")
+		AchievementManager.notify_trigger(AchievementDef.Trigger.FIRST_DISTRICT)
 		data.custom_pois.append(poi)
 		load_planet(data)
 
@@ -744,21 +775,6 @@ func _mineral_grid_card(rd: ResourceData, stored: float, show_count: bool, sub_l
 			Color(0.95, 0.97, 1.0) if stored > 0.0 else Color(0.42, 0.45, 0.55))
 		count_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		vbox.add_child(count_lbl)
-
-		# Hover juice: scale up + yellow border highlight, z_index brings to front
-		card.mouse_entered.connect(func() -> void:
-			AudioManager.play("poi_hover")
-			card.z_index = 10
-			card.pivot_offset = card.size * 0.5
-			var tw := card.create_tween().set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-			tw.tween_property(card, "scale", Vector2(1.10, 1.10), 0.12)
-			s.border_color = Color(1.0, 0.90, 0.25))
-		card.mouse_exited.connect(func() -> void:
-			card.z_index = 0
-			card.pivot_offset = card.size * 0.5
-			var tw := card.create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-			tw.tween_property(card, "scale", Vector2(1.0, 1.0), 0.10)
-			s.border_color = rarity_col)
 	else:
 		var vbox2 := VBoxContainer.new()
 		vbox2.add_theme_constant_override("separation", 2)
@@ -779,6 +795,21 @@ func _mineral_grid_card(rd: ResourceData, stored: float, show_count: bool, sub_l
 			sl.add_theme_color_override("font_color", Color(0.70, 0.75, 0.90))
 			sl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			vbox2.add_child(sl)
+
+	# Hover juice: scale up + yellow border highlight, z_index brings to front
+	card.mouse_entered.connect(func() -> void:
+		AudioManager.play("poi_hover")
+		card.z_index = 10
+		card.pivot_offset = card.size * 0.5
+		var tw := card.create_tween().set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		tw.tween_property(card, "scale", Vector2(1.10, 1.10), 0.12)
+		s.border_color = Color(1.0, 0.90, 0.25))
+	card.mouse_exited.connect(func() -> void:
+		card.z_index = 0
+		card.pivot_offset = card.size * 0.5
+		var tw := card.create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		tw.tween_property(card, "scale", Vector2(1.0, 1.0), 0.10)
+		s.border_color = rarity_col)
 
 	var tier_suffix := ResourceData.TIER_SUFFIXES[clampi(rd.tier - 1, 0, ResourceData.TIER_SUFFIXES.size() - 1)]
 	var cap_rd := rd
@@ -1748,16 +1779,87 @@ func _on_planet_clicked(_screen_pos: Vector2) -> void:
 		var lat_rad := asin(-ny)
 		var lon_rad := atan2(nx, z)
 		var actual_lon := fposmod(planet_renderer.get_rotation_offset() + lon_rad, TAU)
-		
+
 		var lat_d := rad_to_deg(lat_rad)
 		var lon_d := rad_to_deg(actual_lon)
-		
+
 		if DevConsole.show_planet_coords:
 			var text := "%.1f : %.1f" % [lon_d, lat_d]
 			poi_layer.spawn_floating_text(lon_d, lat_d, text, Color(0.4, 1.0, 0.4), 7)
 
+		# Terrain sound + particle burst based on planet type
+		if current_data != null:
+			_spawn_terrain_hit(_screen_pos, current_data.planet_type)
+
 	poi_layer.deselect_all()
 	_build_planet_overview(current_data)
+
+func _show_colonize_popup(data: PlanetData, pp: PlanetProgress) -> void:
+	var overlay := ColorRect.new()
+	overlay.color = Color(0.0, 0.0, 0.0, 0.6)
+	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	overlay.z_index = 250
+	
+	var popup := PanelContainer.new()
+	var ps := StyleBoxFlat.new()
+	ps.bg_color = Color(0.06, 0.09, 0.18, 0.97)
+	ps.border_color = Color(0.25, 0.45, 0.80, 0.55)
+	ps.set_border_width_all(1)
+	ps.set_corner_radius_all(6)
+	ps.content_margin_left = 20; ps.content_margin_right = 20
+	ps.content_margin_top = 20; ps.content_margin_bottom = 20
+	popup.add_theme_stylebox_override("panel", ps)
+	
+	popup.set_anchors_preset(Control.PRESET_CENTER)
+	popup.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	popup.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 16)
+	
+	var title := Label.new()
+	title.text = "Establish Outpost" if data.planet_type == PlanetData.Type.MOON else "Colonize Planet"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_apply_orbitron(title, 14)
+	title.add_theme_color_override("font_color", Color(0.8, 0.9, 1.0))
+	vbox.add_child(title)
+	
+	var desc := Label.new()
+	desc.text = "Cost: %s Credits\nTime: 30 Seconds" % HUDManager.fmt_credits(1000.0)
+	desc.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_apply_orbitron(desc, 12)
+	desc.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7))
+	vbox.add_child(desc)
+	
+	var btn_row := HBoxContainer.new()
+	btn_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	btn_row.add_theme_constant_override("separation", 12)
+	
+	var confirm := Button.new()
+	confirm.text = "CONFIRM"
+	_apply_orbitron(confirm, 12)
+	confirm.add_theme_color_override("font_color", Color(0.4, 0.9, 0.4))
+	confirm.pressed.connect(func():
+		overlay.queue_free()
+		if GameState.colonize_planet(data.seed):
+			_build_planet_overview(data)
+	)
+	if GameState.credits < 1000.0:
+		confirm.disabled = true
+	
+	var cancel := Button.new()
+	cancel.text = "CANCEL"
+	_apply_orbitron(cancel, 12)
+	cancel.add_theme_color_override("font_color", Color(0.9, 0.4, 0.4))
+	cancel.pressed.connect(func(): overlay.queue_free())
+	
+	btn_row.add_child(confirm)
+	btn_row.add_child(cancel)
+	vbox.add_child(btn_row)
+	
+	popup.add_child(vbox)
+	overlay.add_child(popup)
+	get_viewport().add_child(overlay)
 
 func _show_level_up_popup(pp: PlanetProgress) -> void:
 	if pp.is_upgrading:
@@ -1986,6 +2088,11 @@ func _make_overview_tab_btn(label: String, is_active: bool) -> Button:
 	btn.add_theme_color_override("font_hover_color",   Color(0.75, 0.82, 1.0))
 	return btn
 
+func _on_colonize_progress_changed(planet_seed: int, key: String, progress: float, pbar: ProgressBar, bind_seed: int) -> void:
+	if planet_seed == bind_seed and key == "colonize":
+		if is_instance_valid(pbar):
+			pbar.value = progress
+
 func _build_planet_overview(data: PlanetData) -> void:
 	if data == null:
 		return
@@ -2022,21 +2129,58 @@ func _build_planet_overview(data: PlanetData) -> void:
 		var col_sep_s := StyleBoxFlat.new(); col_sep_s.bg_color = Color(0.2, 0.25, 0.4, 0.35)
 		col_sep.add_theme_stylebox_override("separator", col_sep_s)
 		unc_page.add_child(col_sep)
-		var col_btn := Button.new()
-		col_btn.text = "COLONIZE"
-		_apply_orbitron(col_btn, 12)
-		var col_sb := StyleBoxFlat.new()
-		col_sb.bg_color = Color(0.10, 0.28, 0.45)
-		col_sb.content_margin_top = 10; col_sb.content_margin_bottom = 10
-		col_btn.add_theme_stylebox_override("normal", col_sb)
-		var col_hb := col_sb.duplicate() as StyleBoxFlat
-		col_hb.bg_color = Color(0.15, 0.42, 0.65)
-		col_btn.add_theme_stylebox_override("hover", col_hb)
-		col_btn.add_theme_color_override("font_color", Color.WHITE)
-		col_btn.pressed.connect(func() -> void:
-			if GameState.colonize_planet(data.seed):
-				_build_planet_overview(data))
-		unc_page.add_child(col_btn)
+		if pp.is_colonizing:
+			var pbar := ProgressBar.new()
+			pbar.custom_minimum_size = Vector2(0, 32)
+			pbar.max_value = 1.0
+			pbar.value = pp.colonize_progress
+			pbar.show_percentage = false
+			
+			var bg := StyleBoxFlat.new()
+			bg.bg_color = Color(0.1, 0.15, 0.25)
+			bg.corner_radius_top_left = 4; bg.corner_radius_top_right = 4
+			bg.corner_radius_bottom_left = 4; bg.corner_radius_bottom_right = 4
+			
+			var fg := StyleBoxFlat.new()
+			fg.bg_color = Color(0.3, 0.8, 0.4)
+			fg.corner_radius_top_left = 4; fg.corner_radius_top_right = 4
+			fg.corner_radius_bottom_left = 4; fg.corner_radius_bottom_right = 4
+			
+			pbar.add_theme_stylebox_override("background", bg)
+			pbar.add_theme_stylebox_override("fill", fg)
+			
+			var plabel := Label.new()
+			plabel.text = "Establishing..." if data.planet_type == PlanetData.Type.MOON else "Colonizing..."
+			plabel.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			plabel.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			plabel.set_anchors_preset(Control.PRESET_FULL_RECT)
+			_apply_orbitron(plabel, 12)
+			pbar.add_child(plabel)
+			
+			unc_page.add_child(pbar)
+			
+			# Listen for progress updates
+			if not ProductionManager.building_progress_changed.is_connected(_on_colonize_progress_changed):
+				ProductionManager.building_progress_changed.connect(_on_colonize_progress_changed.bind(pbar, data.seed))
+		else:
+			var col_btn := Button.new()
+			if data.planet_type == PlanetData.Type.MOON:
+				col_btn.text = "BUILD OUTPOST"
+			else:
+				col_btn.text = "COLONIZE"
+			_apply_orbitron(col_btn, 12)
+			var col_sb := StyleBoxFlat.new()
+			col_sb.bg_color = Color(0.10, 0.28, 0.45)
+			col_sb.content_margin_top = 10; col_sb.content_margin_bottom = 10
+			col_btn.add_theme_stylebox_override("normal", col_sb)
+			var col_hb := col_sb.duplicate() as StyleBoxFlat
+			col_hb.bg_color = Color(0.15, 0.42, 0.65)
+			col_btn.add_theme_stylebox_override("hover", col_hb)
+			col_btn.add_theme_color_override("font_color", Color.WHITE)
+			col_btn.pressed.connect(func() -> void:
+				_show_colonize_popup(data, pp)
+			)
+			unc_page.add_child(col_btn)
 		panel_content.add_child(root)
 		return
 
@@ -3665,18 +3809,22 @@ func _get_toast_container() -> VBoxContainer:
 ## toasts always stack just above the credits bar. Safe to call every time.
 func _reanchor_toast_above_credits() -> void:
 	var tc := _get_toast_container()
-	# HUDManager lives on a CanvasLayer sibling — find it in the scene tree
 	var hud: Node = get_tree().root.find_child("HUDManager", true, false)
-	var credits_h: float = 38.0   # fallback
+	var credits_h: float = 38.0
+	var science_h: float = 38.0
 	if hud != null:
 		var cp = hud.get("credits_panel")
 		if cp != null and is_instance_valid(cp as Node):
 			var real_h: float = (cp as Control).size.y
 			if real_h > 4.0:
 				credits_h = real_h
-	# credits panel: offset_bottom = -12, height = credits_h
-	# gap between credits top and toast bottom = 8px
-	tc.offset_bottom = -(12.0 + credits_h + 8.0)
+		var sp = hud.get("science_panel")
+		if sp != null and is_instance_valid(sp as Node):
+			var real_h: float = (sp as Control).size.y
+			if real_h > 4.0:
+				science_h = real_h
+	var hud_bar_h: float = maxf(credits_h, science_h)
+	tc.offset_bottom = -(12.0 + hud_bar_h + 8.0)
 
 ## Shows a brief construction-complete notification at the bottom-left,
 ## then fades it out after a few seconds.
@@ -3739,6 +3887,7 @@ func _show_construction_toast(building_name: String, district_label: String) -> 
 		tvbox.add_child(sub)
 
 	tc.add_child(panel)
+	AudioManager.play("building_done", 2.0)
 
 	# ── Tween: fade-in → hold → fade-out → free ─────────────────────────────
 	panel.modulate.a = 0.0
@@ -5823,6 +5972,7 @@ func _toggle_slot_dropdown(card: PanelContainer, poi: POIData, planet: PlanetDat
 						and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
 					if GameState.spend_credits(cap_def.base_cost):
 						AudioManager.play("construct")
+						AchievementManager.notify_trigger(AchievementDef.Trigger.FIRST_BUILDING)
 						pp.build_in_district(cap_poi, cap_def.building_id)
 						if is_instance_valid(cap_overlay):
 							cap_overlay.queue_free()
@@ -6372,6 +6522,75 @@ func _sync_station_buildings() -> void:
 	for b: Dictionary in pp.buildings:
 		if b.get("district_id", "") == dist_id:
 			_active_station_ship.buildings.append(b)
+
+func _spawn_terrain_hit(screen_pos: Vector2, ptype: int) -> void:
+	# Map planet type → sound key and particle color
+	var sound_key: String
+	var particle_color: Color
+	match ptype:
+		PlanetData.Type.TERRAN:
+			sound_key      = "terrain_earth"
+			particle_color = Color(0.18, 0.40, 0.15)   # grass green
+		PlanetData.Type.ARID:
+			sound_key      = "terrain_sand"
+			particle_color = Color(0.68, 0.52, 0.22)   # sand ochre
+		PlanetData.Type.ICE:
+			sound_key      = "terrain_ice"
+			particle_color = Color(0.82, 0.92, 1.00)   # ice blue-white
+		PlanetData.Type.VOLCANIC:
+			sound_key      = "terrain_fire"
+			particle_color = Color(1.00, 0.32, 0.05)   # lava orange
+		PlanetData.Type.GAS_GIANT:
+			sound_key      = "terrain_gas"
+			particle_color = Color(0.72, 0.58, 0.38)   # gas amber
+		PlanetData.Type.MOON, PlanetData.Type.ASTEROID:
+			sound_key      = "terrain_dust"
+			particle_color = Color(0.55, 0.53, 0.49)   # grey dust
+		_:
+			sound_key      = "terrain_earth"
+			particle_color = Color(0.40, 0.36, 0.28)
+
+	# TERRAN: deeper inside the circle, bias toward water vs land by longitude (simple heuristic)
+	if ptype == PlanetData.Type.TERRAN:
+		var local_pos := screen_pos - planet_renderer.global_position - planet_renderer.size * 0.5
+		if local_pos.x < 0:
+			sound_key      = "terrain_water"
+			particle_color = Color(0.08, 0.42, 0.72)
+
+	AudioManager.play(sound_key, -3.0)
+	_burst_particles(screen_pos, particle_color)
+
+func _burst_particles(pos: Vector2, col: Color) -> void:
+	var particles := CPUParticles2D.new()
+	particles.position = pos
+	particles.emitting = false
+	particles.one_shot = true
+	particles.explosiveness = 1.0
+	particles.amount = 3
+	particles.lifetime = 0.55
+	particles.speed_scale = 1.0
+
+	particles.direction = Vector2(0, -1)
+	particles.spread = 180.0
+	particles.gravity = Vector2(0, 280)
+	particles.initial_velocity_min = 60.0
+	particles.initial_velocity_max = 140.0
+	particles.scale_amount_min = 2.5
+	particles.scale_amount_max = 5.0
+	particles.color = col
+
+	# Slight color variation
+	var gradient := Gradient.new()
+	gradient.set_color(0, col)
+	gradient.set_color(1, Color(col.r, col.g, col.b, 0.0))
+	particles.color_ramp = gradient
+
+	add_child(particles)
+	particles.emitting = true
+	# Auto-free after particles finish
+	get_tree().create_timer(1.2).timeout.connect(func() -> void:
+		if is_instance_valid(particles):
+			particles.queue_free())
 
 func _on_seed_clicked(event: InputEvent, s: int) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:

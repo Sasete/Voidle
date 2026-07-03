@@ -310,9 +310,41 @@ func colonize_planet(planet_seed: int, cost: float = 1000.0) -> bool:
 	if not spend_credits(cost):
 		return false
 	var pp := get_planet(planet_seed)
-	pp.is_colonized = true
+	pp.is_colonizing = true
+	pp.colonize_progress = 0.0
+	pp.colonize_duration = 30.0 # 30 seconds
+	
 	planet_progress_changed.emit(planet_seed)
 	return true
+
+func finish_colonization(planet_seed: int) -> void:
+	var pp := get_planet(planet_seed)
+	pp.is_colonizing = false
+	pp.colonize_progress = 1.0
+	pp.is_colonized = true
+	
+	var pd := get_planet_data(planet_seed)
+	if pd != null:
+		var has_poi := false
+		for p in pd.custom_pois:
+			if p.poi_type == POIData.POIType.CITY or p.poi_type == POIData.POIType.OUTPOST:
+				has_poi = true
+				break
+		if not has_poi:
+			var poi := POIData.new()
+			poi.placement = 0 # LocationFinder.Placement.LAND
+			if pd.planet_type == PlanetData.Type.MOON:
+				poi.label = "Lunar Outpost"
+				poi.poi_type = POIData.POIType.OUTPOST
+				poi.type_tag = "outpost"
+			else:
+				poi.label = "Colony"
+				poi.poi_type = POIData.POIType.CITY
+				poi.type_tag = "city"
+			poi.light_intensity = 2.0
+			pd.custom_pois.append(poi)
+
+	planet_progress_changed.emit(planet_seed)
 
 # ── Save / Load ───────────────────────────────────────────────────────────────
 const SAVE_PATH := "user://voidle_save.dat"
@@ -337,11 +369,19 @@ func save() -> void:
 	for seed_val in _planet_progress:
 		var pp: PlanetProgress = _planet_progress[seed_val]
 		data["planet_progress"][str(seed_val)] = {
-			"level":            pp.level,
-			"districts_used":   pp.districts_used,
-			"buildings":        pp.buildings,
-			"has_spaceport":    pp.has_spaceport,
-			"moons_unlocked":   pp.moons_unlocked,
+			"level":             pp.level,
+			"is_upgrading":      pp.is_upgrading,
+			"upgrade_progress":  pp.upgrade_progress,
+			"upgrade_duration":  pp.upgrade_duration,
+			"is_colonizing":     pp.is_colonizing,
+			"colonize_progress": pp.colonize_progress,
+			"colonize_duration": pp.colonize_duration,
+			"is_colonized":      pp.is_colonized,
+			"districts_used":    pp.districts_used,
+			"buildings":         pp.buildings,
+			"stored_resources":  pp.stored_resources,
+			"has_spaceport":     pp.has_spaceport,
+			"moons_unlocked":    pp.moons_unlocked,
 		}
 	data["global_resources"] = global_resources
 	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
@@ -386,6 +426,13 @@ func load_save() -> bool:
 		var d: Dictionary    = data["planet_progress"][key]
 		var pp               := PlanetProgress.make(seed_val)
 		pp.level             = d.get("level",            1)
+		pp.is_upgrading      = d.get("is_upgrading",     false)
+		pp.upgrade_progress  = d.get("upgrade_progress", 0.0)
+		pp.upgrade_duration  = d.get("upgrade_duration", 60.0)
+		pp.is_colonizing     = d.get("is_colonizing",    false)
+		pp.colonize_progress = d.get("colonize_progress", 0.0)
+		pp.colonize_duration = d.get("colonize_duration", 30.0)
+		pp.is_colonized      = d.get("is_colonized",     false)
 		pp.districts_used    = d.get("districts_used",   0)
 		pp.buildings         = d.get("buildings",        [])
 		pp.has_spaceport     = d.get("has_spaceport",    false)

@@ -3,7 +3,7 @@
 ## Usage: CursorManager.set_state(CursorManager.State.HOVER)
 extends Node
 
-enum State { NORMAL, HOVER, SPACE, GRAB, EXIT, POINTER }
+enum State { NORMAL, HOVER, SPACE, GRAB, EXIT, POINTER, IBEAM }
 
 const SCALE := 2
 const SZ    := 16
@@ -36,6 +36,7 @@ func _ready() -> void:
 	_register(_grab(),    Vector2(5, 3) * SCALE)   # GRAB
 	_register(_exit(),    Vector2(7, 7) * SCALE)   # EXIT
 	_register(_pointer(), Vector2(4, 1) * SCALE)   # POINTER
+	_register(_ibeam(),   Vector2(7, 8) * SCALE)   # IBEAM
 
 	# Hide OS cursor
 	DisplayServer.mouse_set_mode(DisplayServer.MOUSE_MODE_HIDDEN)
@@ -196,6 +197,27 @@ func _pointer() -> Array:
 		T,T,T,K,K,K,K,K,K,T,T,T,T,T,T,T,
 		T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,
 		T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,
+		T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,
+	]
+
+func _ibeam() -> Array:
+	# Classic I-beam text cursor — serif bar top & bottom, thin stem
+	return [
+		T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,
+		T,T,T,T,K,W,W,W,W,W,K,T,T,T,T,T,
+		T,T,T,T,T,K,K,W,K,K,T,T,T,T,T,T,
+		T,T,T,T,T,T,K,W,K,T,T,T,T,T,T,T,
+		T,T,T,T,T,T,K,W,K,T,T,T,T,T,T,T,
+		T,T,T,T,T,T,K,W,K,T,T,T,T,T,T,T,
+		T,T,T,T,T,T,K,W,K,T,T,T,T,T,T,T,
+		T,T,T,T,T,T,K,W,K,T,T,T,T,T,T,T,
+		T,T,T,T,T,T,K,C,K,T,T,T,T,T,T,T,
+		T,T,T,T,T,T,K,W,K,T,T,T,T,T,T,T,
+		T,T,T,T,T,T,K,W,K,T,T,T,T,T,T,T,
+		T,T,T,T,T,T,K,W,K,T,T,T,T,T,T,T,
+		T,T,T,T,T,T,K,W,K,T,T,T,T,T,T,T,
+		T,T,T,T,T,K,K,W,K,K,T,T,T,T,T,T,
+		T,T,T,T,K,W,W,W,W,W,K,T,T,T,T,T,
 		T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,
 	]
 

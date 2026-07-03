@@ -32,6 +32,10 @@ func has_building(bid: String) -> bool:
 	return false
 
 # ── Unlock flags ─────────────────────────────────────────────────────────────
+@export var is_colonizing:      bool = false
+@export var colonize_progress:  float = 0.0
+@export var colonize_duration:  float = 30.0
+
 @export var is_colonized:   bool = false
 @export var has_spaceport:  bool = false
 @export var moons_unlocked: bool = false
