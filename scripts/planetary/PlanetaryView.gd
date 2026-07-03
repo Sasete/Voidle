@@ -717,6 +717,7 @@ func _mineral_grid_card(rd: ResourceData, stored: float, show_count: bool, sub_l
 	var icon_rect := TextureRect.new()
 	icon_rect.texture   = tex
 	icon_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 
 	if show_count:
 		var vbox := VBoxContainer.new()
@@ -725,7 +726,7 @@ func _mineral_grid_card(rd: ResourceData, stored: float, show_count: bool, sub_l
 		vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		card.add_child(vbox)
 
-		icon_rect.custom_minimum_size   = Vector2(22, 22)
+		icon_rect.custom_minimum_size   = Vector2(28, 28)
 		icon_rect.stretch_mode          = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		icon_rect.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		vbox.add_child(icon_rect)
@@ -733,7 +734,7 @@ func _mineral_grid_card(rd: ResourceData, stored: float, show_count: bool, sub_l
 		var count_lbl := Label.new()
 		count_lbl.text = _fmt_amount(stored)
 		count_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		_apply_orbitron(count_lbl, 8)
+		_apply_orbitron(count_lbl, 10)
 		count_lbl.add_theme_color_override("font_color",
 			Color(0.95, 0.97, 1.0) if stored > 0.0 else Color(0.42, 0.45, 0.55))
 		count_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -759,7 +760,7 @@ func _mineral_grid_card(rd: ResourceData, stored: float, show_count: bool, sub_l
 		vbox2.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		card.add_child(vbox2)
 
-		icon_rect.custom_minimum_size   = Vector2(24, 24)
+		icon_rect.custom_minimum_size   = Vector2(32, 32)
 		icon_rect.stretch_mode          = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		icon_rect.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		vbox2.add_child(icon_rect)
