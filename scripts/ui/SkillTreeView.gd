@@ -335,7 +335,7 @@ func _build_tree_graph() -> void:
 			# Cost handling
 			if cur_lv < max_lv:
 				var next_cost: float = st.call("get_next_cost", id)
-				tip_cost = "%.0f cr" % next_cost
+				tip_cost = "%.0f Science" % next_cost
 			
 			# Requirements checking
 			if cur_lv == 0 and not purchasable:

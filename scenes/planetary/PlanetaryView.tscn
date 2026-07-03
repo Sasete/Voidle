@@ -75,6 +75,7 @@ anchor_right = 0.7
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+offset_top = 50.0
 
 [node name="PlanetRenderer" type="ColorRect" parent="PlanetContainer" unique_id=1423969338]
 material = SubResource("ShaderMaterial_o0343")

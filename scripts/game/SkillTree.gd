@@ -112,14 +112,14 @@ func can_purchase(id: String) -> bool:
 			return false
 
 	var next_cost := get_next_cost(id)
-	return GameState.credits >= next_cost
+	return GameState.science_points >= next_cost
 
 # Buy or upgrade a skill node
 func purchase_skill(id: String) -> bool:
 	if not can_purchase(id):
 		return false
 	var next_cost := get_next_cost(id)
-	if GameState.spend_credits(next_cost):
+	if GameState.spend_science(next_cost):
 		var cur_lv := get_skill_level(id)
 		if cur_lv == 0:
 			unlocked_skills.append(id)

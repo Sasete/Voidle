@@ -14,15 +14,15 @@ var _progress:    Dictionary = {}
 var _paused:      Dictionary = {}
 ## { pm_key -> bool } true = user manually toggled off
 var _user_paused: Dictionary = {}
-## planet energy balance cache { planet_seed -> float }
-var _energy:        Dictionary = {}
-## energy throttle ratio cache { planet_seed -> float 0.0-1.0 }
-var _energy_ratio:  Dictionary = {}
+## global energy balance (sum across all colonies, updated each frame)
+var _global_energy:       float = 0.0
+## global energy throttle ratio (0.0-1.0)
+var _global_energy_ratio: float = 1.0
 ## { "construct:pm_key" -> float 0.0-1.0 }
 var _construct:     Dictionary = {}
 
 func _process(delta: float) -> void:
-	_energy.clear()
+	_calc_global_energy()
 	_tick_all(delta)
 
 func get_progress(key: String) -> float:
@@ -44,9 +44,13 @@ func toggle_user_pause(key: String) -> void:
 func is_user_paused(key: String) -> bool:
 	return _user_paused.get(key, false)
 
-## Returns 0.0–1.0: fraction of energy demand covered. < 1.0 = energy crisis.
-func get_energy_ratio(planet_seed: int) -> float:
-	return _energy_ratio.get(planet_seed, 1.0)
+## Returns 0.0–1.0: global energy coverage ratio. < 1.0 = energy crisis.
+func get_energy_ratio(_planet_seed: int = 0) -> float:
+	return _global_energy_ratio
+
+## Returns the global net energy balance (positive = surplus, negative = deficit).
+func get_global_energy() -> float:
+	return _global_energy
 
 ## Called by PlanetaryView after building is placed so UI can refresh immediately.
 func invalidate(planet_seed: int) -> void:
@@ -82,42 +86,7 @@ func _tick_all(delta: float) -> void:
 			if district_changed:
 				GameState.planet_progress_changed.emit(planet_seed)
 
-		_planet_energy(pp)  # refresh net energy cache for HUD
-
-		# Throttle ratio: production-only (never negative) vs total demand.
-		# energy_ratio < 1.0 → all consumers slow proportionally; 0 → pause.
-		var total_production: float = 0.0
-		var total_demand:     float = 0.0
-		for i in pp.buildings.size():
-			var eb: Dictionary = pp.buildings[i]
-			if eb.get("constructing", false): continue
-			var ekey: String = _key(planet_seed, eb.get("district_id", ""), i)
-			if _paused.get(ekey, false) or _user_paused.get(ekey, false):
-				continue
-			var edef := BuildingDef.find(eb.get("building_id", ""))
-			if edef == null: continue
-			var eamt: int = eb.get("amount", 1)
-			if edef.output_type == BuildingDef.OutputType.ENERGY:
-				var emult: float = 1.0
-				if edef.building_id == "solar_panel":
-					emult = get_node("/root/SkillTree").get_solar_mult()
-				elif edef.building_id == "generator":
-					emult = get_node("/root/SkillTree").get_generator_output_mult()
-					var in_min: String = eb.get("burning_mineral", "")
-					if in_min != "":
-						var rd: ResourceData = GameState.known_resources.get(in_min)
-						if rd: emult *= float(rd.rarity)
-					else:
-						emult = 0.0 # No fuel, no production
-				total_production += edef.output_amount * eamt * emult
-			if edef.energy_per_tick > 0.0:
-				total_production += edef.energy_per_tick * eamt
-			elif edef.energy_per_tick < 0.0:
-				total_demand += abs(edef.energy_per_tick) * eamt
-		var energy_ratio: float = 1.0
-		if total_demand > 0.0:
-			energy_ratio = clampf(total_production / total_demand, 0.0, 1.0)
-		_energy_ratio[planet_seed] = energy_ratio
+		var energy_ratio: float = _global_energy_ratio
 
 		var mods := PlanetModifier.for_planet(_planet_type(planet_seed))
 
@@ -170,15 +139,16 @@ func _tick_all(delta: float) -> void:
 						intended_input = _resource_key(def.input_type, pp.planet_seed, entry)
 
 					var required_amt := def.input_amount * amount
-					if pp.stored_resources.get(intended_input, 0.0) < required_amt:
+					if GameState.global_resources.get(intended_input, 0.0) < required_amt:
 						if not _paused.get(key, false):
 							_paused[key] = true
 							building_ticked.emit(planet_seed, key)
 						_emit_progress(planet_seed, key)
 						continue   # can't start — wait for resource
-					
-					# Resource available: consume it immediately
-					pp.stored_resources[intended_input] -= required_amt
+
+					# Resource available: consume it immediately from global pool
+					GameState.global_resources[intended_input] = \
+						GameState.global_resources.get(intended_input, 0.0) - required_amt
 					# Lock this resource as the one currently burning for this cycle
 					var old_burning: String = entry.get("burning_mineral", "")
 					entry["burning_mineral"] = intended_input
@@ -259,9 +229,54 @@ func _on_tick_complete(pp: PlanetProgress, def: BuildingDef,
 		var txt := "+%.0f%s" % [display_val, suffix]
 		resource_produced.emit(pp.planet_seed, poi_lbl, txt, def.output_color(), icon_tex)
 
-func _planet_energy(pp: PlanetProgress) -> float:
-	if _energy.has(pp.planet_seed):
-		return _energy[pp.planet_seed]
+## Computes global energy balance and ratio across ALL colonized planets.
+## Called once per frame before _tick_all.
+func _calc_global_energy() -> void:
+	var total_prod: float = 0.0
+	var total_demand: float = 0.0
+	var net: float = 0.0
+	var st := get_node("/root/SkillTree")
+	for pp: PlanetProgress in _all_colonies():
+		for i in pp.buildings.size():
+			var entry: Dictionary = pp.buildings[i]
+			if entry.get("constructing", false):
+				continue
+			var def := BuildingDef.find(entry.get("building_id", ""))
+			if def == null:
+				continue
+			var amt: int     = entry.get("amount", 1)
+			var ekey: String = _key(pp.planet_seed, entry.get("district_id", ""), i)
+			if _paused.get(ekey, false) or _user_paused.get(ekey, false):
+				continue
+			if def.energy_per_tick > 0.0:
+				var mult: float = st.get_solar_mult() if def.building_id == "solar_panel" else 1.0
+				var contrib := def.energy_per_tick * amt * mult
+				total_prod += contrib
+				net += contrib
+			elif def.energy_per_tick < 0.0:
+				var contrib := def.energy_per_tick * amt * (st.get_energy_consume_mult() as float)
+				total_demand += abs(contrib)
+				net += contrib
+			if def.output_type == BuildingDef.OutputType.ENERGY:
+				var mult: float = 1.0
+				if def.building_id == "solar_panel":
+					mult = st.get_solar_mult()
+				elif def.building_id == "generator":
+					mult = st.get_generator_output_mult()
+					var in_min: String = entry.get("burning_mineral", "")
+					if in_min != "":
+						var rd: ResourceData = GameState.known_resources.get(in_min)
+						if rd: mult *= float(rd.rarity)
+					else:
+						mult = 0.0
+				total_prod += def.output_amount * amt * mult
+				net        += def.output_amount * amt * mult
+	_global_energy = net
+	_global_energy_ratio = 1.0 if total_demand <= 0.0 else clampf(total_prod / total_demand, 0.0, 1.0)
+
+## Per-planet energy contribution (used by PlanetaryView for breakdown display).
+func planet_energy_net(pp: PlanetProgress) -> float:
+	var st := get_node("/root/SkillTree")
 	var total: float = 0.0
 	for i in pp.buildings.size():
 		var entry: Dictionary = pp.buildings[i]
@@ -270,34 +285,28 @@ func _planet_energy(pp: PlanetProgress) -> float:
 		var def := BuildingDef.find(entry.get("building_id", ""))
 		if def == null:
 			continue
-		var amt: int        = entry.get("amount", 1)
-		var poi_lbl: String = entry.get("district_id", "")
-		var ekey: String    = _key(pp.planet_seed, poi_lbl, i)
-		# Skip paused (waiting for fuel/resource) and user-paused buildings
+		var amt: int     = entry.get("amount", 1)
+		var ekey: String = _key(pp.planet_seed, entry.get("district_id", ""), i)
 		if _paused.get(ekey, false) or _user_paused.get(ekey, false):
 			continue
-		
-		# Direct energy flow (positive energy_per_tick = passive producer)
 		if def.energy_per_tick > 0.0:
-			var mult: float = get_node("/root/SkillTree").get_solar_mult() if def.building_id == "solar_panel" else 1.0
+			var mult: float = st.get_solar_mult() if def.building_id == "solar_panel" else 1.0
 			total += def.energy_per_tick * amt * mult
 		elif def.energy_per_tick < 0.0:
-			# Apply energy consumption reducer skill
-			total += def.energy_per_tick * amt * (get_node("/root/SkillTree").get_energy_consume_mult() as float)
-			
-		# Energy-output buildings (Solar Panel, Generator, Power Plant)
+			total += def.energy_per_tick * amt * (st.get_energy_consume_mult() as float)
 		if def.output_type == BuildingDef.OutputType.ENERGY:
 			var mult: float = 1.0
 			if def.building_id == "solar_panel":
-				mult = get_node("/root/SkillTree").get_solar_mult()
+				mult = st.get_solar_mult()
 			elif def.building_id == "generator":
-				mult = get_node("/root/SkillTree").get_generator_output_mult()
+				mult = st.get_generator_output_mult()
 				var in_min: String = entry.get("burning_mineral", "")
 				if in_min != "":
 					var rd: ResourceData = GameState.known_resources.get(in_min)
 					if rd: mult *= float(rd.rarity)
+				else:
+					mult = 0.0
 			total += def.output_amount * amt * mult
-	_energy[pp.planet_seed] = total
 	return total
 
 func _planet_type(planet_seed: int) -> PlanetData.Type:

@@ -573,6 +573,12 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	elif event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_RIGHT and mb.pressed:
+			if _selected_station != "":
+				_selected_station = ""
+				queue_redraw()
+				accept_event()
+				return
 		if mb.button_index == MOUSE_BUTTON_LEFT:
 			if mb.pressed:
 				# Check station click first

@@ -3,10 +3,12 @@
 extends Node
 
 signal credits_changed(new_val: float)
+signal science_changed(new_val: float)
 signal world_ready
 signal unlock_changed(key: String, value: bool)
 signal planet_progress_changed(seed_val: int)
 signal asteroid_discovered(slot: int, count: int)
+signal global_resources_changed
 
 # ── Starting Config (edit these to change new-game defaults) ─────────────────
 ## Starting credits for a new game.
@@ -19,10 +21,33 @@ signal asteroid_discovered(slot: int, count: int)
 @export var start_colonized:      bool  = true
 
 # ── Economy ──────────────────────────────────────────────────────────────────
+## Global mineral/resource pool shared across all planets and facilities.
+var global_resources: Dictionary = {}
+
+func add_resource(resource_id: String, amount: float) -> void:
+	global_resources[resource_id] = global_resources.get(resource_id, 0.0) + amount
+	global_resources_changed.emit()
+
+func consume_resource(resource_id: String, amount: float) -> bool:
+	var have: float = global_resources.get(resource_id, 0.0)
+	if have < amount:
+		return false
+	global_resources[resource_id] = have - amount
+	global_resources_changed.emit()
+	return true
+
+func get_resource(resource_id: String) -> float:
+	return global_resources.get(resource_id, 0.0)
+
 var credits: float = 500.0 :
 	set(v):
 		credits = maxf(v, 0.0)
 		credits_changed.emit(credits)
+
+var science_points: float = 0.0 :
+	set(v):
+		science_points = maxf(v, 0.0)
+		science_changed.emit(science_points)
 
 # ── Unlock flags ─────────────────────────────────────────────────────────────
 var solar_unlocked:    bool = false
@@ -92,12 +117,12 @@ func _seed_starting_resources() -> void:
 	var r1t4 := ResourceData.generate(home_planet_seed, ResourceData.Tag.RAW_MINERAL, 1, 4)
 	var r1t5 := ResourceData.generate(home_planet_seed, ResourceData.Tag.RAW_MINERAL, 1, 5)
 	var r2t1 := ResourceData.generate(home_planet_seed, ResourceData.Tag.RAW_MINERAL, 2, 1)
-	home_pp.stored_resources[r1t1.resource_id()] = 50.0
-	home_pp.stored_resources[r1t2.resource_id()] = 10.0
-	home_pp.stored_resources[r1t3.resource_id()] = 10.0
-	home_pp.stored_resources[r1t4.resource_id()] = 10.0
-	home_pp.stored_resources[r1t5.resource_id()] = 10.0
-	home_pp.stored_resources[r2t1.resource_id()] = 10.0
+	global_resources[r1t1.resource_id()] = 50.0
+	global_resources[r1t2.resource_id()] = 10.0
+	global_resources[r1t3.resource_id()] = 10.0
+	global_resources[r1t4.resource_id()] = 10.0
+	global_resources[r1t5.resource_id()] = 10.0
+	global_resources[r2t1.resource_id()] = 10.0
 	for rd: ResourceData in [r1t1, r1t2, r1t3, r1t4, r1t5, r2t1]:
 		var key := rd.resource_id()
 		if not known_resources.has(key):
@@ -271,6 +296,15 @@ func spend_credits(amount: float) -> bool:
 func earn_credits(amount: float) -> void:
 	credits += amount
 
+func add_science(amount: float) -> void:
+	science_points += amount
+
+func spend_science(amount: float) -> bool:
+	if science_points < amount:
+		return false
+	science_points -= amount
+	return true
+
 ## Stub colonize — no ship requirement yet. Returns false if can't afford.
 func colonize_planet(planet_seed: int, cost: float = 1000.0) -> bool:
 	if not spend_credits(cost):
@@ -286,6 +320,7 @@ const SAVE_PATH := "user://voidle_save.dat"
 func save() -> void:
 	var data := {
 		"credits":              credits,
+		"science_points":       science_points,
 		"solar_unlocked":       solar_unlocked,
 		"moon_unlocked":        moon_unlocked,
 		"galaxy_unlocked":      galaxy_unlocked,
@@ -305,10 +340,10 @@ func save() -> void:
 			"level":            pp.level,
 			"districts_used":   pp.districts_used,
 			"buildings":        pp.buildings,
-			"stored_resources": pp.stored_resources,
 			"has_spaceport":    pp.has_spaceport,
 			"moons_unlocked":   pp.moons_unlocked,
 		}
+	data["global_resources"] = global_resources
 	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if file:
 		file.store_var(data)
@@ -321,6 +356,7 @@ func load_save() -> bool:
 		return false
 	var data: Dictionary     = file.get_var()
 	credits                  = data.get("credits",              500.0)
+	science_points           = data.get("science_points",       0.0)
 	solar_unlocked           = data.get("solar_unlocked",       false)
 	moon_unlocked            = data.get("moon_unlocked",        false)
 	galaxy_unlocked          = data.get("galaxy_unlocked",      false)
@@ -340,6 +376,8 @@ func load_save() -> bool:
 	else:
 		get_node("/root/SkillTree").skill_levels = {}
 
+	global_resources = data.get("global_resources", {})
+
 	if has_node("/root/ShipManager"):
 		get_node("/root/ShipManager").deserialize(data.get("ships", []))
 
@@ -350,7 +388,6 @@ func load_save() -> bool:
 		pp.level             = d.get("level",            1)
 		pp.districts_used    = d.get("districts_used",   0)
 		pp.buildings         = d.get("buildings",        [])
-		pp.stored_resources  = d.get("stored_resources", {})
 		pp.has_spaceport     = d.get("has_spaceport",    false)
 		pp.moons_unlocked    = d.get("moons_unlocked",   false)
 		pp.recalculate_limits()

@@ -122,7 +122,7 @@ func stack_building_unchecked(district_label: String, building_id: String) -> bo
 	return false
 
 func add_resource(resource_id: String, amount: float) -> void:
-	stored_resources[resource_id] = stored_resources.get(resource_id, 0.0) + amount
+	GameState.add_resource(resource_id, amount)
 
 ## Returns the true array index of an entry using reference equality.
 ## Avoids the value-equality bug with pp.buildings.find(entry) when two
@@ -134,11 +134,7 @@ func building_real_index(entry: Dictionary) -> int:
 	return -1
 
 func consume_resource(resource_id: String, amount: float) -> bool:
-	var have: float = stored_resources.get(resource_id, 0.0)
-	if have < amount:
-		return false
-	stored_resources[resource_id] = have - amount
-	return true
+	return GameState.consume_resource(resource_id, amount)
 
 static func make(seed_val: int) -> PlanetProgress:
 	var p := PlanetProgress.new()

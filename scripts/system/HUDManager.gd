@@ -2,13 +2,13 @@
 extends CanvasLayer
 
 var _credits_lbl: Label
+var _science_lbl: Label
 ## Current displayed value (tweened, may lag behind GameState.credits)
 var _credits_display: float = 0.0
 var _credits_tween: Tween = null
 var _orbitron: Font
 ## The credits panel node — exposed so PlanetaryView can read its screen height for toast offset.
 var credits_panel: PanelContainer = null
-
 static func fmt_credits(val: float) -> String:
 	if val >= 1_000_000_000.0:
 		return "%.2fb cr" % (val / 1_000_000_000.0)
@@ -24,16 +24,15 @@ func _ready() -> void:
 
 	var panel := PanelContainer.new()
 	var s := StyleBoxFlat.new()
-	s.bg_color    = Color(0.05, 0.06, 0.11, 0.82)
-	s.border_width_top = 1
-	s.border_width_right = 1
-	s.border_color = Color(0.25, 0.32, 0.55, 0.35)
-	s.corner_radius_top_left  = 6
-	s.corner_radius_top_right = 6
-	s.content_margin_left   = 12
-	s.content_margin_right  = 12
-	s.content_margin_top    = 4
-	s.content_margin_bottom = 5
+	s.bg_color    = Color(0.05, 0.06, 0.11, 0.92)
+	s.border_width_right  = 1
+	s.border_width_bottom = 1
+	s.border_color = Color(0.25, 0.32, 0.55, 0.45)
+	s.corner_radius_bottom_right = 8
+	s.content_margin_left   = 14
+	s.content_margin_right  = 14
+	s.content_margin_top    = 8
+	s.content_margin_bottom = 8
 	panel.add_theme_stylebox_override("panel", s)
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
@@ -118,17 +117,15 @@ func _ready() -> void:
 		CursorManager.set_state(CursorManager.State.NORMAL)
 		TooltipManager.hide_tip())
 		
-	vbox.add_child(skill_btn)
-
-	# Anchor bottom-left
+	# Anchor top-left
 	panel.anchor_left   = 0.0
 	panel.anchor_right  = 0.0
-	panel.anchor_top    = 1.0
-	panel.anchor_bottom = 1.0
+	panel.anchor_top    = 0.0
+	panel.anchor_bottom = 0.0
 	panel.grow_horizontal = Control.GROW_DIRECTION_END
-	panel.grow_vertical   = Control.GROW_DIRECTION_BEGIN
-	panel.offset_left   = 12.0
-	panel.offset_bottom = -12.0
+	panel.grow_vertical   = Control.GROW_DIRECTION_END
+	panel.offset_left   = 0.0
+	panel.offset_top    = 0.0
 	# Allow mouse clicks on HUD panel buttons
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	vbox.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -137,9 +134,64 @@ func _ready() -> void:
 	add_child(panel)
 	credits_panel = panel
 
+	# Science + Upgrade Tree panel — bottom-left
+	var sci_panel := PanelContainer.new()
+	var ss := StyleBoxFlat.new()
+	ss.bg_color    = Color(0.05, 0.06, 0.11, 0.82)
+	ss.border_width_top   = 1
+	ss.border_width_right = 1
+	ss.border_color = Color(0.25, 0.32, 0.55, 0.45)
+	ss.corner_radius_top_right = 8
+	ss.content_margin_left   = 14
+	ss.content_margin_right  = 14
+	ss.content_margin_top    = 8
+	ss.content_margin_bottom = 8
+	sci_panel.add_theme_stylebox_override("panel", ss)
+	sci_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+
+	var sci_vbox := VBoxContainer.new()
+	sci_vbox.add_theme_constant_override("separation", 6)
+	sci_vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	sci_panel.add_child(sci_vbox)
+
+	var sci_hbox := HBoxContainer.new()
+	sci_hbox.add_theme_constant_override("separation", 6)
+	sci_hbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	sci_hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	sci_vbox.add_child(sci_hbox)
+
+	var sci_icon := Label.new()
+	sci_icon.text = "⬡"
+	if _orbitron: sci_icon.add_theme_font_override("font", _orbitron)
+	sci_icon.add_theme_font_size_override("font_size", 12)
+	sci_icon.add_theme_color_override("font_color", Color(0.45, 0.78, 1.0))
+	sci_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	sci_hbox.add_child(sci_icon)
+
+	_science_lbl = Label.new()
+	_science_lbl.text = "0 Science"
+	if _orbitron: _science_lbl.add_theme_font_override("font", _orbitron)
+	_science_lbl.add_theme_font_size_override("font_size", 12)
+	_science_lbl.add_theme_color_override("font_color", Color(0.65, 0.90, 1.0))
+	_science_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	sci_hbox.add_child(_science_lbl)
+
+	sci_vbox.add_child(skill_btn)
+
+	sci_panel.anchor_left   = 0.0
+	sci_panel.anchor_right  = 0.0
+	sci_panel.anchor_top    = 1.0
+	sci_panel.anchor_bottom = 1.0
+	sci_panel.grow_horizontal = Control.GROW_DIRECTION_END
+	sci_panel.grow_vertical   = Control.GROW_DIRECTION_BEGIN
+	sci_panel.offset_left   = 0.0
+	sci_panel.offset_bottom = 0.0
+	add_child(sci_panel)
+
 	_credits_display = GameState.credits
 
 	GameState.credits_changed.connect(_on_credits_changed)
+	GameState.science_changed.connect(_on_science_changed)
 
 func _on_credits_changed(new_val: float) -> void:
 	if not is_instance_valid(_credits_lbl):
@@ -166,3 +218,8 @@ func _on_credits_changed(new_val: float) -> void:
 		old_val, new_val, 0.55).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
 	_credits_tween.tween_property(_credits_lbl, "theme_override_colors/font_color",
 		Color(1.0, 0.92, 0.55), 0.3).set_ease(Tween.EASE_IN)
+
+func _on_science_changed(new_val: float) -> void:
+	if not is_instance_valid(_science_lbl):
+		return
+	_science_lbl.text = "%.0f Science" % new_val
