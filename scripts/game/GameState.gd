@@ -113,12 +113,25 @@ func _seed_starting_resources() -> void:
 		home_pd.mineral_densities[r1t1.resource_id()] = 0.80
 		home_pd.mineral_densities[r2t1.resource_id()] = 0.10
 
-	# Seed a test ship in orbit for visual testing
-	if has_node("/root/ShipManager"):
-		var sm := get_node("/root/ShipManager")
-		if sm.ships_for(home_planet_seed).is_empty():
-			var _test_ship: ShipData = sm.launch(home_planet_seed, "Pioneer I", {r1t1.resource_id(): 25.0})
-			_test_ship.ship_type = "station"
+	# Add a starting Space Station as an orbital district POI
+	if home_pd != null:
+		var has_station := false
+		for poi: POIData in home_pd.custom_pois:
+			if poi.poi_type == POIData.POIType.STATION:
+				has_station = true
+				break
+		if not has_station:
+			var st := POIData.new()
+			st.label             = "Pioneer Station"
+			st.poi_type          = POIData.POIType.STATION
+			st.manual_position   = true
+			st.light_intensity   = 0.0
+			st.orbit_radius      = 1.06
+			st.orbit_angle       = 0.8
+			st.orbit_inclination = 0.55
+			st.orbit_node        = 1.2
+			st.orbit_speed       = 0.01
+			home_pd.custom_pois.append(st)
 
 func _build_home_solar() -> SolarData:
 	# Use the galaxy star's own seed so the system matches what the galaxy would generate

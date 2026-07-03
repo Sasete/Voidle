@@ -3,7 +3,7 @@
 class_name DistrictDef
 extends Resource
 
-enum Type { CITY, GENERATOR, MINING }
+enum Type { CITY, GENERATOR, MINING, SPACE_STATION }
 
 @export var id:           Type
 @export var display_name: String
@@ -12,6 +12,10 @@ enum Type { CITY, GENERATOR, MINING }
 @export var placement:    LocationFinder.Placement
 @export var base_cost:    float
 @export var construction_duration: float = 15.0
+## If true, this district orbits the planet instead of sitting on the surface.
+@export var is_orbital:   bool = false
+## Max number of this district type per planet. 0 = unlimited.
+@export var max_per_planet: int = 0
 ## Empty = available on all planet types.
 @export var allowed_planet_types: Array[PlanetData.Type] = []
 ## Which BuildingDef building_ids are available inside this district type.
@@ -74,7 +78,16 @@ func suggest_name(data: PlanetData) -> String:
 ## Convert DistrictDef.Type → POIData.POIType for placement.
 func to_poi_type() -> POIData.POIType:
 	match id:
-		Type.CITY:      return POIData.POIType.CITY
-		Type.GENERATOR: return POIData.POIType.ENERGY
-		Type.MINING:    return POIData.POIType.MINING
-		_:              return POIData.POIType.CITY
+		Type.CITY:          return POIData.POIType.CITY
+		Type.GENERATOR:     return POIData.POIType.ENERGY
+		Type.MINING:        return POIData.POIType.MINING
+		Type.SPACE_STATION: return POIData.POIType.STATION
+		_:                  return POIData.POIType.CITY
+
+## Returns how many of this district type exist on the planet.
+static func count_on_planet(def: DistrictDef, data: PlanetData) -> int:
+	var n := 0
+	for poi: POIData in data.custom_pois:
+		if poi.poi_type == def.to_poi_type():
+			n += 1
+	return n

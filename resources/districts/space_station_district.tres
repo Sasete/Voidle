@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="DistrictDef" load_steps=2 format=3 uid="uid://b_space_station_01"]
+
+[ext_resource type="Script" path="res://scripts/game/DistrictDef.gd" id="1_def"]
+
+[resource]
+script = ExtResource("1_def")
+id = 3
+display_name = "Space Station"
+description = "An orbital platform above the planet. Houses advanced facilities unavailable on the surface."
+icon = "◈"
+placement = 3
+base_cost = 800.0
+construction_duration = 30.0
+is_orbital = true
+max_per_planet = 1
+building_ids = Array[String]([])
+name_pool = Array[String](["Alpha Station", "Beta Station", "Orbital Hub", "Outpost Prime", "Helix Platform", "Apex Outpost", "Zenith Base"])

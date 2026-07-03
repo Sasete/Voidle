@@ -233,6 +233,8 @@ func load_planet(data: PlanetData) -> void:
 		var lf := LocationFinder.new(data.seed, data.sea_level,
 				data.terrain_roughness, data.continent_scale)
 		for pd: POIData in data.custom_pois:
+			if pd.is_orbital():
+				continue  # orbital districts drawn by OrbitalLayer, not POILayer
 			var lon: float
 			var lat: float
 			if pd.manual_position:
@@ -482,31 +484,46 @@ func _spawn_district(data: PlanetData, lbl: String, def: DistrictDef) -> void:
 	poi.poi_type     = def.to_poi_type()
 	poi.type_tag     = DistrictDef.Type.keys()[def.id].to_lower()
 	poi.placement    = def.placement
-	poi.light_intensity = 0.0 if def.placement == LocationFinder.Placement.ANY else 1.0
 	poi.constructing = true
 	poi.construct_progress = 0.0
 	poi.construct_duration = def.construction_duration
 
-	# Pre-seed LocationFinder with existing district positions so new ones spread out.
-	# Same-type districts use double the avoidance angle to push them further apart.
-	var lf := LocationFinder.new(
-		data.seed ^ (data.custom_pois.size() * 0xBEEF),
-		data.sea_level, data.terrain_roughness, data.continent_scale)
-	for existing: POIData in data.custom_pois:
-		if existing.manual_position:
-			var lon := deg_to_rad(existing.lon_deg)
-			lf._used_lons.append(lon)
-			# double-add same-type districts so avoidance loop hits twice → bigger gap
-			if existing.poi_type == def.to_poi_type():
-				lf._used_lons.append(fposmod(lon + deg_to_rad(5.0), TAU))
-
-	var pos := lf.find(def.placement)
-	poi.lon_deg = rad_to_deg(pos.x)
-	poi.lat_deg = rad_to_deg(pos.y)
-	poi.manual_position = true
-
-	data.custom_pois.append(poi)
-	load_planet(data)   # refresh
+	if def.is_orbital:
+		# Temp orbit params; _finish_rocket_anim will overwrite with analytically-computed values
+		var rng := RandomNumberGenerator.new()
+		rng.seed = data.seed ^ 0xC4F3A1
+		poi.orbit_angle       = rng.randf_range(0.0, TAU)
+		poi.orbit_speed       = 0.01
+		poi.orbit_inclination = rng.randf_range(0.35, 1.1)
+		poi.orbit_node        = rng.randf_range(0.0, TAU)
+		poi.orbit_radius      = 1.06
+		poi.light_intensity   = 0.0
+		poi.manual_position   = true
+		data.custom_pois.append(poi)
+		# Launch animation plays; _finish_rocket_anim sets final orbit params on poi
+		_play_rocket_animation(data.seed, null, func() -> void:
+			poi.constructing = false
+			GameState.planet_progress_changed.emit(data.seed),
+			"", "Pioneer", "station", {}, "", "", "", 0, false, [], poi)
+		load_planet(data)
+	else:
+		poi.light_intensity = 1.0
+		# Pre-seed LocationFinder with existing district positions so new ones spread out.
+		var lf := LocationFinder.new(
+			data.seed ^ (data.custom_pois.size() * 0xBEEF),
+			data.sea_level, data.terrain_roughness, data.continent_scale)
+		for existing: POIData in data.custom_pois:
+			if existing.manual_position:
+				var lon := deg_to_rad(existing.lon_deg)
+				lf._used_lons.append(lon)
+				if existing.poi_type == def.to_poi_type():
+					lf._used_lons.append(fposmod(lon + deg_to_rad(5.0), TAU))
+		var pos := lf.find(def.placement)
+		poi.lon_deg = rad_to_deg(pos.x)
+		poi.lat_deg = rad_to_deg(pos.y)
+		poi.manual_position = true
+		data.custom_pois.append(poi)
+		load_planet(data)
 
 func _apply_orbitron(node: CanvasItem, size: int) -> void:
 	if _orbitron == null:
@@ -1112,6 +1129,15 @@ func _setup_orbital_layer(planet_seed: int) -> void:
 		if current_data != null: _build_planet_overview(current_data))
 	ShipManager.ship_arrived.connect(_on_ship_roster_changed)
 	ShipManager.ship_added.connect(_on_ship_roster_changed)
+	layer.station_poi_clicked.connect(func(poi_label: String) -> void:
+		if current_data == null: return
+		for poi: POIData in current_data.custom_pois:
+			if poi.label == poi_label and poi.is_orbital():
+				_active_district_poi = poi
+				layer.set_selected_station(poi_label)
+				poi_layer.deselect_all()
+				_build_district_panel(poi, current_data)
+				return)
 	_orbital_layer = layer
 	_add_orbit_toggle(planet_renderer.get_parent(), layer)
 	_register_ship_commands(layer)
@@ -1594,6 +1620,11 @@ func _process(delta: float) -> void:
 		_orbital_layer._planet_rotation = planet_renderer.get_rotation_offset()
 		var _oc: Control = planet_renderer.get_parent()
 		_orbital_layer._planet_center   = planet_renderer.global_position + planet_renderer.size * 0.5 - _oc.get_global_rect().position
+		# Advance space station orbit angles
+		if current_data != null:
+			for poi: POIData in current_data.custom_pois:
+				if poi.is_orbital():
+					poi.orbit_angle = fposmod(poi.orbit_angle + poi.orbit_speed * delta, TAU)
 		_orbital_layer.queue_redraw()
 		# Keep ship panel glued to selected ship, on opposite side from nameplate leader
 		if _ship_panel != null and is_instance_valid(_ship_panel):
@@ -1957,6 +1988,8 @@ func _build_planet_overview(data: PlanetData) -> void:
 		_active_slot_dropdown = null
 	poi_layer.deselect_all()
 	_active_district_poi = null   # overview shown — don’t auto-reopen on construction
+	if _orbital_layer != null and is_instance_valid(_orbital_layer):
+		_orbital_layer.set_selected_station("")
 
 	var pp := GameState.get_planet(data.seed)
 
@@ -2056,10 +2089,7 @@ func _build_planet_overview(data: PlanetData) -> void:
 
 	_build_resources_section(root, data, pp)
 
-	# ── Tab bar: DISTRICTS + ORBITAL (only when ships present) ───────────────
-	var ships := ShipManager.ships_for(data.seed)
-	var has_orbital := not ships.is_empty()
-
+	# ── Tab bar ───────────────────────────────────────────────────────────────
 	var tab_sep := HSeparator.new()
 	var tab_sep_s := StyleBoxFlat.new()
 	tab_sep_s.bg_color = Color(0.2, 0.25, 0.4, 0.35)
@@ -2070,43 +2100,12 @@ func _build_planet_overview(data: PlanetData) -> void:
 	tab_row.add_theme_constant_override("separation", 0)
 	root.add_child(tab_row)
 
-	# Tab content containers (only one visible at a time)
-	var districts_page := VBoxContainer.new()
-	districts_page.add_theme_constant_override("separation", 8)
-	var orbital_page := VBoxContainer.new()
-	orbital_page.add_theme_constant_override("separation", 6)
-	orbital_page.visible = false
-
-	var dist_btn: Button    = _make_overview_tab_btn("DISTRICTS", true)
+	var dist_btn: Button = _make_overview_tab_btn("DISTRICTS", true)
 	tab_row.add_child(dist_btn)
 
-	var orbital_btn: Button = null
-	if has_orbital:
-		orbital_btn = _make_overview_tab_btn("ORBITAL", false)
-		tab_row.add_child(orbital_btn)
-
-	# Switch logic
-	var cap_dist_btn:    Button      = dist_btn
-	var cap_orbital_btn: Button      = orbital_btn
-	var cap_dist_page:   VBoxContainer = districts_page
-	var cap_orb_page:    VBoxContainer = orbital_page
-
-	dist_btn.pressed.connect(func() -> void:
-		cap_dist_page.visible = true
-		cap_orb_page.visible  = false
-		cap_dist_btn.button_pressed = true
-		if cap_orbital_btn != null:
-			cap_orbital_btn.button_pressed = false)
-
-	if orbital_btn != null:
-		orbital_btn.pressed.connect(func() -> void:
-			cap_dist_page.visible = false
-			cap_orb_page.visible  = true
-			cap_dist_btn.button_pressed = false
-			cap_orbital_btn.button_pressed = true)
-
+	var districts_page := VBoxContainer.new()
+	districts_page.add_theme_constant_override("separation", 8)
 	root.add_child(districts_page)
-	root.add_child(orbital_page)
 
 	# ── DISTRICTS page content ────────────────────────────────────────────────
 	if not data.custom_pois.is_empty():
@@ -2117,12 +2116,6 @@ func _build_planet_overview(data: PlanetData) -> void:
 	var can_add_district := data.custom_pois.size() < pp.max_districts
 	var add_dist_card := _build_add_district_card(data, can_add_district)
 	districts_page.add_child(add_dist_card)
-
-	# ── ORBITAL page content ──────────────────────────────────────────────────
-	if has_orbital:
-		for ship: ShipData in ships:
-			var ship_card := _build_orbital_ship_card(ship)
-			orbital_page.add_child(ship_card)
 			
 	# Push the rest to the bottom
 	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -2385,8 +2378,17 @@ func _build_district_overview_card(poi: POIData, planet: PlanetData, pp: PlanetP
 	card.gui_input.connect(func(e: InputEvent) -> void:
 		if e is InputEventMouseButton and (e as InputEventMouseButton).pressed \
 				and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
-			_select_district_on_planet(cap_poi.label)
-			_rotate_to_lon(cap_poi.lon_deg)
+			if cap_poi.is_orbital():
+				# Rotate planet so station faces camera, then highlight
+				if _orbital_layer != null and is_instance_valid(_orbital_layer):
+					_orbital_layer.set_selected_station(cap_poi.label)
+				var eq_lon: float = rad_to_deg(cap_poi.orbit_node + atan2(
+					sin(cap_poi.orbit_angle) * cos(cap_poi.orbit_inclination),
+					cos(cap_poi.orbit_angle)))
+				_rotate_to_lon(eq_lon)
+			else:
+				_select_district_on_planet(cap_poi.label)
+				_rotate_to_lon(cap_poi.lon_deg)
 			if cap_poi.constructing:
 				TooltipManager.show_tip("Constructing", "This District is not fully operational yet.")
 				return
@@ -2394,6 +2396,8 @@ func _build_district_overview_card(poi: POIData, planet: PlanetData, pp: PlanetP
 	return card
 
 func _select_district_on_planet(label: String) -> void:
+	if _orbital_layer != null and is_instance_valid(_orbital_layer):
+		_orbital_layer.set_selected_station("")
 	for i in poi_layer._pois.size():
 		if poi_layer._pois[i].get("label", "") == label:
 			poi_layer.select_poi(i)
@@ -2491,9 +2495,13 @@ func _build_district_type_row(data: PlanetData, def: DistrictDef,
 	_apply_orbitron(btn, 9)
 	var cost: float = DistrictDef.placement_cost(def, data)
 	var can_afford: bool = GameState.credits >= cost
+	var at_limit: bool = def.max_per_planet > 0 and \
+		DistrictDef.count_on_planet(def, data) >= def.max_per_planet
 
-	btn.disabled = not can_afford
-	if not can_afford:
+	btn.disabled = not can_afford or at_limit
+	if at_limit:
+		btn.add_theme_color_override("font_disabled_color", Color(0.5, 0.5, 0.6))
+	elif not can_afford:
 		btn.add_theme_color_override("font_disabled_color", Color(0.9, 0.3, 0.3))
 	else:
 		btn.add_theme_color_override("font_color",       Color(0.75, 0.82, 1.0))
@@ -2516,7 +2524,9 @@ func _build_district_type_row(data: PlanetData, def: DistrictDef,
 		CursorManager.set_state(CursorManager.State.POINTER)
 		var t_title = def.display_name
 		var t_desc = def.description
-		if not can_afford:
+		if at_limit:
+			t_desc += "\n\n[color=gray]Already built (limit: %d)[/color]" % def.max_per_planet
+		elif not can_afford:
 			t_desc += "\n\n[color=red]Insufficient Credits[/color]"
 		TooltipManager.show_tip(t_title, t_desc, cost_str))
 	btn.mouse_exited.connect(func() -> void:
@@ -2538,6 +2548,8 @@ func _build_district_type_row(data: PlanetData, def: DistrictDef,
 func _on_district_clicked(index: int, _data: Dictionary) -> void:
 	if index >= poi_layer._pois.size():
 		return
+	if _orbital_layer != null and is_instance_valid(_orbital_layer):
+		_orbital_layer.set_selected_station("")
 	var poi_dict: Dictionary = poi_layer._pois[index]
 	var poi_label: String    = poi_dict.get("label", "")
 	if current_data == null:
@@ -2651,41 +2663,8 @@ func _refresh_bar_label_status(key: String) -> void:
 	var m: Dictionary = _bar_meta[key]
 	if m.get("construction", false):
 		return
-	# Spaceport (new phase system): rebuild card when phase changes
-	if m.get("spaceport", false):
-		var sp_entry: Dictionary = m.get("sp_entry", {})
-		var cur_phase: String    = sp_entry.get("phase", "idle")
-		var last_phase: String   = m.get("last_phase", "")
-		if cur_phase != last_phase:
-			m["last_phase"] = cur_phase
-			var rebuild: Callable = m.get("rebuild_sp", Callable())
-			if rebuild.is_valid():
-				rebuild.call()
-		else:
-			# Same phase — just refresh the fill bar
-			var fc: Control = m.get("fill", null)
-			if is_instance_valid(fc):
-				fc.queue_redraw()
-		return
-	# Legacy spaceport path (launch_btn based) — kept as fallback
-	if m.has("launch_btn"):
-		(m["prog"] as Array)[0] = ProductionManager.get_progress(key)
-		var btn: Button  = m["launch_btn"]
-		var slbl: Label  = m.get("status_lbl", null)
-		var sp_entry: Dictionary = m.get("sp_entry", {})
-		var is_paused    := ProductionManager.is_user_paused(key)
-		var is_launching: bool = sp_entry.get("launching", false)
-		if is_instance_valid(btn) and is_paused and not is_launching:
-			btn.text     = "Launch"
-			btn.disabled = false
-			sp_entry["cooldown_only"] = false
-		if is_instance_valid(slbl):
-			if is_launching:
-				slbl.text = "–8 ⚡   Launching…"
-			elif is_paused:
-				slbl.text = "–8 ⚡   Ready to launch"
-			else:
-				slbl.text = "–8 ⚡   Recharging…"
+	# Spaceport stub — no live labels to refresh
+	if not m.has("out_lbl"):
 		return
 	var out_lbl: Label = m.get("out_lbl", null)
 	var def: BuildingDef = m.get("def", null)
@@ -2790,7 +2769,8 @@ func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callabl
 		sp_pm_key: String = "", ship_name: String = "Pioneer", ship_type: String = "shuttle",
 		ship_cargo: Dictionary = {}, destination_ship_id: String = "",
 		transfer_dir: String = "", transfer_resource: String = "", transfer_amount: int = 0,
-		auto_land: bool = false, mission_tasks: Array = []) -> void:
+		auto_land: bool = false, mission_tasks: Array = [],
+		station_district_poi: POIData = null) -> void:
 	var container: Control = planet_renderer.get_parent()
 	var planet_r:  float   = planet_renderer._planet_radius_px
 	const ORBIT_FRAC:       float = 1.06
@@ -2951,6 +2931,7 @@ func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callabl
 		"transfer_amount":      transfer_amount,
 		"auto_land":            auto_land,
 		"mission_tasks":        mission_tasks,
+		"station_district_poi": station_district_poi,
 	}
 	anim_ref.append(anim_d)
 	_rocket_anims.append(anim_d)
@@ -3272,35 +3253,42 @@ func _finish_rocket_anim(d: Dictionary) -> void:
 	var p1: Vector2      = _orbital_project_2d(orbit_angle,         orbit_inc, orbit_r, eff_rot2)
 	var p2: Vector2      = _orbital_project_2d(orbit_angle + 0.002, orbit_inc, orbit_r, eff_rot2)
 	var speed_sign: float = 1.0 if (p2 - p1).x * rdx_raw >= 0.0 else -1.0
-	var ship := ShipManager.launch(d["planet_seed"], d.get("ship_name", "Pioneer"))
-	ship.ship_type         = d.get("ship_type", "shuttle")
-	ship.cargo             = d.get("ship_cargo", {})
-	ship.orbit_angle       = orbit_angle
-	ship.orbit_inclination = orbit_inc
-	ship.orbit_node        = orbit_node
-	# CRUISE_FRAC=0.10, D=0.55, LAUNCH_DUR=18 → exit_rate ≈ 0.020 → orbit_speed ≈ 0.01 for rlen≈0.5
 	const _CF: float = 0.10
 	const _D:  float = (1.0 + _CF) * 0.5
 	var _LD: float = d["launch_dur"]
 	var exit_rate: float = (_CF / _D) * (2.0 / _LD)
-	ship.orbit_speed = speed_sign * exit_rate
-	if _orbital_layer != null and is_instance_valid(_orbital_layer):
-		_orbital_layer.queue_redraw()
 
-	# Load mission task chain onto ship and advance past move_orbit (already done).
-	var tasks: Array = d.get("mission_tasks", [])
-	ship.mission_tasks      = tasks.duplicate(true)
-	ship.mission_task_index = 0
-	# Skip move_orbit and pick_planet — both are applied at launch time.
-	var _skip_types: Array = ["move_orbit", "pick_planet"]
-	while ship.mission_task_index < ship.mission_tasks.size() \
-			and _skip_types.has((ship.mission_tasks[ship.mission_task_index] as Dictionary).get("type", "")):
-		ship.mission_task_index += 1
-	_advance_mission(ship)
-
-	# Station: spawn a brief solar-panel deploy animation at insertion point
-	if ship.ship_type == "station" and _orbital_layer != null:
-		_spawn_station_deploy(ship, d["container"])
+	var st_poi: POIData = d.get("station_district_poi", null)
+	if st_poi != null:
+		# Orbital district — update POI with analytically computed orbit params
+		st_poi.orbit_angle       = orbit_angle
+		st_poi.orbit_inclination = orbit_inc
+		st_poi.orbit_node        = orbit_node
+		st_poi.orbit_speed       = speed_sign * exit_rate
+		st_poi.orbit_radius      = 1.06
+		if _orbital_layer != null and is_instance_valid(_orbital_layer):
+			_spawn_station_deploy_poi(st_poi, d["container"])
+			_orbital_layer.queue_redraw()
+	else:
+		var ship := ShipManager.launch(d["planet_seed"], d.get("ship_name", "Pioneer"))
+		ship.ship_type         = d.get("ship_type", "shuttle")
+		ship.cargo             = d.get("ship_cargo", {})
+		ship.orbit_angle       = orbit_angle
+		ship.orbit_inclination = orbit_inc
+		ship.orbit_node        = orbit_node
+		ship.orbit_speed       = speed_sign * exit_rate
+		if _orbital_layer != null and is_instance_valid(_orbital_layer):
+			_orbital_layer.queue_redraw()
+		var tasks: Array = d.get("mission_tasks", [])
+		ship.mission_tasks      = tasks.duplicate(true)
+		ship.mission_task_index = 0
+		var _skip_types: Array = ["move_orbit", "pick_planet"]
+		while ship.mission_task_index < ship.mission_tasks.size() \
+				and _skip_types.has((ship.mission_tasks[ship.mission_task_index] as Dictionary).get("type", "")):
+			ship.mission_task_index += 1
+		_advance_mission(ship)
+		if ship.ship_type == "station" and _orbital_layer != null:
+			_spawn_station_deploy(ship, d["container"])
 
 	var cb: Callable = d["on_complete"]
 	d["_finished"] = true
@@ -3355,6 +3343,47 @@ func _spawn_station_deploy(ship: ShipData, container: Control) -> void:
 				ctrl.draw_rect(Rect2(sp, Vector2(2, 2)), spark_col)
 		)
 
+	_deploy_anims.append(da)
+
+func _spawn_station_deploy_poi(poi: POIData, container: Control) -> void:
+	if _orbital_layer == null or not is_instance_valid(_orbital_layer):
+		return
+	var ctrl := Control.new()
+	ctrl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ctrl.z_index = 10
+	container.add_child(ctrl)
+	var da: Dictionary = {
+		"poi":      poi,
+		"ctrl":     ctrl,
+		"t":        0.0,
+		"duration": 2.2,
+	}
+	ctrl.draw.connect(func() -> void:
+		var sv2 := _orbital_layer._project_poi(poi, poi.orbit_angle)
+		if _orbital_layer._is_occluded_r(sv2):
+			return
+		var origin: Vector2 = _orbital_layer._planet_center + Vector2(sv2.x, sv2.y)
+		var p2 := ctrl.get_global_transform().affine_inverse() * origin
+		var t2: float = da.get("t", 0.0)
+		var progress: float = clampf(t2 / da["duration"], 0.0, 1.0)
+		var ease_p: float   = ease(progress, -2.0)
+		var alpha: float    = 1.0 - clampf((progress - 0.7) / 0.3, 0.0, 1.0)
+		var core_col := Color(0.85, 0.90, 1.0, alpha)
+		ctrl.draw_rect(Rect2(p2 + Vector2(-2,-2), Vector2(6,6)), core_col)
+		var panel_ext: float = ease_p * 10.0
+		var panel_col2 := Color(0.30, 0.60, 1.0, alpha * 0.85)
+		if panel_ext > 1.0:
+			ctrl.draw_rect(Rect2(p2 + Vector2(-4.0 - panel_ext, 0), Vector2(panel_ext, 2)), panel_col2)
+			ctrl.draw_rect(Rect2(p2 + Vector2( 4.0,             0), Vector2(panel_ext, 2)), panel_col2)
+		if progress < 0.5:
+			var spark_alpha: float = 1.0 - (progress / 0.5)
+			var spark_col := Color(0.70, 0.88, 1.0, spark_alpha * alpha)
+			var spread: float = ease_p * 14.0
+			for i in 4:
+				var angle: float = (i / 4.0) * TAU + progress * PI
+				var sp: Vector2  = p2 + Vector2(cos(angle), sin(angle)) * spread
+				ctrl.draw_rect(Rect2(sp, Vector2(2, 2)), spark_col)
+		)
 	_deploy_anims.append(da)
 
 func _tick_deploy_anims(delta: float) -> void:
@@ -3933,76 +3962,20 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 func _build_spaceport_card(def: BuildingDef, pm_key: String,
 		pp: PlanetProgress, poi: POIData, entry: Dictionary = {}) -> PanelContainer:
 
-	var phase: String = entry.get("phase", "idle")
-
 	var card := PanelContainer.new()
 	card.add_theme_stylebox_override("panel", _card_panel_style())
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	card.clip_contents = true
-
-	# Rebuild callback: replaces this card in-place when phase changes.
-	var cap_def := def; var cap_pm := pm_key; var cap_pp := pp
-	var cap_poi := poi; var cap_entry := entry
-	var rebuild_sp := func() -> void:
-		if not is_instance_valid(card):
-			return
-		var par := card.get_parent()
-		if not is_instance_valid(par):
-			return
-		var idx := card.get_index()
-		card.queue_free()
-		var nc := _build_spaceport_card(cap_def, cap_pm, cap_pp, cap_poi, cap_entry)
-		par.add_child(nc)
-		par.move_child(nc, idx)
-
-	# Fill bar — used during "preparing" (cyan) and "cooldown" (gold) phases.
-	var fill_ctrl := Control.new()
-	fill_ctrl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	fill_ctrl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-
-	var fill_color := Color(0.15, 0.82, 0.75, 0.25)  # cyan for preparing
-	if phase == "cooldown":
-		fill_color = Color(0.72, 0.52, 0.12, 0.22)
-
-	var edge_color := Color(0.15, 0.95, 0.85, 0.65)
-	if phase == "cooldown":
-		edge_color = Color(0.95, 0.75, 0.25, 0.65)
-
-	var cap_key := pm_key
-	fill_ctrl.draw.connect(func() -> void:
-		if ProductionManager.is_user_paused(cap_key):
-			return
-		var p: float = ProductionManager.get_progress(cap_key)
-		var w: float = fill_ctrl.size.x * p
-		if w > 0.5:
-			fill_ctrl.draw_rect(Rect2(0, 0, w, fill_ctrl.size.y), fill_color)
-			fill_ctrl.draw_rect(Rect2(w - 2.0, 0, 2.0, fill_ctrl.size.y), edge_color))
-
-	# ── Layout ────────────────────────────────────────────────────────────────
-	var stack := Control.new()  # fill bar + content overlap
-	stack.custom_minimum_size = Vector2(0, 56)
-	stack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	card.add_child(stack)
-
-	stack.add_child(fill_ctrl)
 
 	var margin := MarginContainer.new()
-	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	margin.add_theme_constant_override("margin_left",   10)
-	margin.add_theme_constant_override("margin_right",   8)
-	margin.add_theme_constant_override("margin_top",     7)
-	margin.add_theme_constant_override("margin_bottom",  7)
-	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	stack.add_child(margin)
-
-	var hbox := HBoxContainer.new()
-	hbox.add_theme_constant_override("separation", 8)
-	margin.add_child(hbox)
+	margin.add_theme_constant_override("margin_left",  10)
+	margin.add_theme_constant_override("margin_right",  8)
+	margin.add_theme_constant_override("margin_top",    7)
+	margin.add_theme_constant_override("margin_bottom", 7)
+	card.add_child(margin)
 
 	var left_vbox := VBoxContainer.new()
-	left_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	left_vbox.add_theme_constant_override("separation", 2)
-	hbox.add_child(left_vbox)
+	margin.add_child(left_vbox)
 
 	var name_lbl := Label.new()
 	name_lbl.text = def.display_name
@@ -4011,28 +3984,15 @@ func _build_spaceport_card(def: BuildingDef, pm_key: String,
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	left_vbox.add_child(name_lbl)
 
-	# ── Phase-specific content ─────────────────────────────────────────────────
-	match phase:
-		"idle":
-			_sp_build_idle(left_vbox, hbox, def, pm_key, pp, poi, entry, rebuild_sp)
-		"configuring":
-			_sp_build_config(card, stack, left_vbox, hbox, def, pm_key, pp, poi, entry, rebuild_sp)
-		"preparing":
-			_sp_build_progress(left_vbox, hbox, pm_key, pp, entry,
-				"Preparing…", Color(0.15, 0.88, 0.75, 0.85), rebuild_sp)
-		"launch_ready":
-			_sp_build_launch_ready(left_vbox, hbox, def, pm_key, pp, poi, entry, rebuild_sp)
-		"cooldown":
-			_sp_build_progress(left_vbox, hbox, pm_key, pp, entry,
-				"Recharging…", Color(0.85, 0.65, 0.20, 0.80), rebuild_sp)
+	var status_lbl := Label.new()
+	status_lbl.text = "Operational"
+	_apply_orbitron(status_lbl, 8)
+	status_lbl.add_theme_color_override("font_color", Color(0.50, 0.65, 0.90, 0.70))
+	status_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	left_vbox.add_child(status_lbl)
 
 	_bar_meta[pm_key] = {
-		"spaceport":   true,
-		"fill":        fill_ctrl,
 		"planet_seed": pp.planet_seed,
-		"sp_entry":    entry,
-		"rebuild_sp":  rebuild_sp,
-		"last_phase":  phase,
 	}
 
 	return card

@@ -378,6 +378,9 @@ func _draw() -> void:
 	for sid: String in _landing:
 		_draw_landing(_landing[sid])
 
+	# ── Space station districts ───────────────────────────────────────────────
+	_draw_station_pois(center)
+
 func _bezier(p0: Vector2, p1: Vector2, p2: Vector2, t: float) -> Vector2:
 	var mt := 1.0 - t
 	return mt * mt * p0 + 2.0 * mt * t * p1 + t * t * p2
@@ -559,11 +562,26 @@ func _unhandled_input(event: InputEvent) -> void:
 			else:
 				ship_unhovered.emit()
 				CursorManager.set_state(CursorManager.State.NORMAL)
+		# Station hover
+		var local_pos := get_local_mouse_position()
+		var prev_st := _hovered_station
+		_hovered_station = _station_poi_at(local_pos)
+		if _hovered_station != prev_st:
+			queue_redraw()
+			CursorManager.set_state(
+				CursorManager.State.POINTER if _hovered_station != "" else CursorManager.State.NORMAL)
 
 	elif event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.button_index == MOUSE_BUTTON_LEFT:
 			if mb.pressed:
+				# Check station click first
+				var local_pos := get_local_mouse_position()
+				var st := _station_poi_at(local_pos)
+				if st != "":
+					station_poi_clicked.emit(st)
+					accept_event()
+					return
 				var clicked := _ship_at(mb.global_position)
 				if clicked != null:
 					_selected_ship = clicked
@@ -577,6 +595,126 @@ func _unhandled_input(event: InputEvent) -> void:
 			else:
 				if _drag_ship != null:
 					_drag_ship = null
+
+## ── Space Station POI drawing ────────────────────────────────────────────────
+
+signal station_poi_clicked(poi_label: String)
+
+var _hovered_station:  String = ""
+var _selected_station: String = ""
+
+func set_selected_station(label: String) -> void:
+	_selected_station = label
+	queue_redraw()
+
+func _draw_station_pois(center: Vector2) -> void:
+	var pd := GameState.get_planet_data(_planet_seed)
+	if pd == null:
+		return
+	for poi: POIData in pd.custom_pois:
+		if not poi.is_orbital():
+			continue
+		var is_selected: bool = poi.label == _selected_station
+		var is_hovered:  bool = poi.label == _hovered_station
+		var col: Color
+		if poi.constructing:
+			col = Color(0.70, 0.70, 0.35, 0.75)
+		elif is_selected:
+			col = Color(1.0, 0.92, 0.30, 1.0)   # gold — matches ship selected
+		elif is_hovered:
+			col = Color(1.0, 0.95, 0.5, 0.90)
+		else:
+			col = Color(0.65, 0.75, 1.0, 0.85)
+		# Dashed orbit trail
+		var orbit_col: Color
+		if is_selected:
+			orbit_col = Color(1.0, 0.92, 0.30, 0.75)
+		elif is_hovered:
+			orbit_col = Color(1.0, 0.95, 0.5, 0.55)
+		else:
+			orbit_col = Color(col, 0.30)
+		const STEPS := 72
+		var prev_v  := _project_poi(poi, poi.orbit_angle)
+		var prev_p  := center + Vector2(prev_v.x, prev_v.y)
+		for s in range(1, STEPS + 1):
+			var a := poi.orbit_angle + float(s) / float(STEPS) * TAU
+			var v := _project_poi(poi, a)
+			var p := center + Vector2(v.x, v.y)
+			if (s % 6) < 3 and not _is_occluded_r(prev_v) \
+					and not _is_occluded_r(v):
+				draw_line(prev_p, p, orbit_col, 1.5 if is_selected else 1.2, true)
+			prev_v = v; prev_p = p
+		# Icon
+		var sv := _project_poi(poi, poi.orbit_angle)
+		if _is_occluded_r(sv):
+			continue
+		var spos := center + Vector2(sv.x, sv.y)
+		_draw_pixel_station(spos, col)
+		if is_selected:
+			_draw_station_label(spos, poi.label)
+		elif is_hovered and not suppress_label:
+			_draw_station_label(spos, poi.label)
+
+func _draw_station_label(spos: Vector2, label: String) -> void:
+	var font := ThemeDB.fallback_font
+	const FS := 10; const DL := 14.0; const HL := 20.0
+	var center  := _planet_center if _planet_center != Vector2.ZERO else size * 0.5
+	var hd      := 1.0 if spos.x >= center.x else -1.0
+	var vd      := -1.0 if spos.y >= center.y else 1.0
+	var de      := spos + Vector2(hd * DL * 0.7, vd * DL)
+	var he      := de + Vector2(hd * HL, 0.0)
+	var accent  := Color(1.0, 0.92, 0.30, 1.0)
+	var lc      := Color(accent, 0.75)
+	const R := 10.0; const C := 4.0; const W := 1.5
+	var shadow := Color(0, 0, 0, 0.55)
+	for ox: int in [-1, 1]:
+		for oy: int in [-1, 1]:
+			var cx := spos.x + ox * R; var cy := spos.y + oy * R
+			draw_line(Vector2(cx, cy), Vector2(cx - ox * C, cy), shadow, W + 1, true)
+			draw_line(Vector2(cx, cy), Vector2(cx - ox * C, cy), accent, W, true)
+			draw_line(Vector2(cx, cy), Vector2(cx, cy - oy * C), shadow, W + 1, true)
+			draw_line(Vector2(cx, cy), Vector2(cx, cy - oy * C), accent, W, true)
+	draw_line(spos, de, lc, 1.0, true); draw_line(de, he, lc, 1.0, true)
+	var ts  := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, FS)
+	var lp  := he + Vector2(hd * 3.0, ts.y * 0.35)
+	if hd < 0.0: lp.x -= ts.x
+	for ox: int in [-1, 0, 1]:
+		for oy: int in [-1, 0, 1]:
+			if ox == 0 and oy == 0: continue
+			draw_string(font, lp + Vector2(ox, oy), label, HORIZONTAL_ALIGNMENT_LEFT, -1, FS, Color(0,0,0,0.85))
+	draw_string(font, lp, label, HORIZONTAL_ALIGNMENT_LEFT, -1, FS, accent)
+
+## Projects POIData orbital position to 3D (z > 0 = behind planet).
+func _project_poi(poi: POIData, angle: float) -> Vector3:
+	var r   := _planet_radius * poi.orbit_radius
+	var inc := poi.orbit_inclination
+	var px  := r * cos(angle)
+	var py  := r * sin(angle) * sin(inc)
+	var pz  := r * sin(angle) * cos(inc)
+	var rot := _planet_rotation + poi.orbit_node
+	var rx  :=  px * cos(rot) + pz * sin(rot)
+	var rz  := -px * sin(rot) + pz * cos(rot)
+	return Vector3(rx, py, rz)
+
+func _is_occluded_r(proj: Vector3) -> bool:
+	return proj.z > 0.0 and Vector2(proj.x, proj.y).length() < _planet_radius
+
+func _station_poi_at(local_pos: Vector2) -> String:
+	if _planet_seed < 0 or _planet_radius <= 0.0:
+		return ""
+	var center := _planet_center if _planet_center != Vector2.ZERO else size * 0.5
+	var pd := GameState.get_planet_data(_planet_seed)
+	if pd == null:
+		return ""
+	for poi: POIData in pd.custom_pois:
+		if not poi.is_orbital():
+			continue
+		var sv := _project_poi(poi, poi.orbit_angle)
+		if _is_occluded_r(sv):
+			continue
+		if local_pos.distance_to(center + Vector2(sv.x, sv.y)) <= 12.0:
+			return poi.label
+	return ""
 
 func _ship_at(global_pos: Vector2) -> ShipData:
 	if _planet_seed < 0 or _planet_radius <= 0.0:
