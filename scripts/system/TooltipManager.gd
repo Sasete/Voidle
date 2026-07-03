@@ -8,10 +8,10 @@ var _sep:        Control
 var _spacer:     Control
 var _orbitron:   Font
 var _visible:    bool  = false
-var _hide_timer: float = 0.0   # seconds remaining before hide fires
+var _hide_timer: float = 0.0
 
 func _ready() -> void:
-	layer = 150
+	layer = 300
 	_orbitron = load("res://Fonts/Orbitron-VariableFont_wght.ttf")
 
 	_panel = PanelContainer.new()
@@ -97,15 +97,20 @@ func _process(delta: float) -> void:
 		return
 	if not _visible:
 		return
+	# get_combined_minimum_size() is synchronous — no frame delay needed
+	var sz  := _panel.get_combined_minimum_size()
+	var pw  := sz.x
+	var ph  := sz.y
+	if pw <= 1.0 or ph <= 1.0:
+		return
 	var mouse := get_viewport().get_mouse_position()
 	var vp    := get_viewport().get_visible_rect().size
-	var pw: float = _panel.size.x
-	var ph: float = _panel.size.y
 	var pos := mouse + Vector2(10, -ph - 8.0)
 	if pos.x + pw > vp.x: pos.x = vp.x - pw - 4.0
 	if pos.x < 4.0:       pos.x = 4.0
 	if pos.y < 4.0:       pos.y = mouse.y + 14.0
 	_panel.position = pos
+	_panel.visible  = true
 
 ## Show a tooltip.
 ## body: String or Array — Array elements may be String or ImageTexture (rendered inline).
@@ -145,10 +150,9 @@ func show_tip(title: String, body = "", cost = "") -> void:
 	if has_cost:
 		_cost_lbl.text = "\n".join(cost_lines)
 
-	_panel.visible = true
-	_hide_timer    = 0.0   # cancel any pending hide
+	_panel.visible = false
+	_hide_timer    = 0.0
 	_visible       = true
-	_panel.reset_size()    # shrink to content next frame
 
 func set_cost_color(c: Color) -> void:
 	_cost_lbl.add_theme_color_override("font_color", c)

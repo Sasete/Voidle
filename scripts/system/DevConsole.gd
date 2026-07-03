@@ -2,10 +2,11 @@
 ## Type "help" for a list of commands.
 extends CanvasLayer
 
-var _panel:    Control
-var _log:      RichTextLabel
-var _field:    LineEdit
-var _orbitron: Font
+var _panel:        Control
+var _top_spacer:   Control
+var _log:          RichTextLabel
+var _field:        LineEdit
+var _orbitron:     Font
 var _history:  Array[String] = []
 var _hist_idx: int = -1
 var _open:     bool = false
@@ -34,12 +35,18 @@ func _build_ui() -> void:
 	_panel.anchor_top    = 0.0
 	_panel.anchor_bottom = 0.0
 	_panel.grow_vertical = Control.GROW_DIRECTION_END
+	_panel.offset_top    = 0.0
 	_panel.offset_bottom = 320.0
 	add_child(_panel)
 
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 4)
 	_panel.add_child(vbox)
+
+	# Spacer that will be sized to credits panel height at open time
+	_top_spacer = Control.new()
+	_top_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(_top_spacer)
 
 	# Title bar
 	var title := Label.new()
@@ -128,6 +135,14 @@ func _toggle() -> void:
 	_open = not _open
 	_panel.visible = _open
 	if _open:
+		# Background from top; spacer pushes content below credits panel
+		var hud: Node = get_node_or_null("/root/HUDManager")
+		var top_pad: float = 4.0
+		if hud and hud.get("credits_panel") and is_instance_valid(hud.credits_panel):
+			top_pad = hud.credits_panel.size.y + 2.0
+		_panel.offset_top    = 0.0
+		_panel.offset_bottom = 320.0
+		_top_spacer.custom_minimum_size = Vector2(0, top_pad)
 		_field.grab_focus()
 		_field.text = ""
 		_hist_idx = -1

@@ -24,7 +24,7 @@ static func fmt_credits(val: float) -> String:
 	return "%.0f cr" % val
 
 func _ready() -> void:
-	layer = 120
+	layer = 210
 	_orbitron = load("res://Fonts/Orbitron-VariableFont_wght.ttf")
 
 	var panel := PanelContainer.new()

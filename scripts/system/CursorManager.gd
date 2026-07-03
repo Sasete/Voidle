@@ -42,7 +42,7 @@ func _ready() -> void:
 
 	# CanvasLayer on top of everything
 	_layer          = CanvasLayer.new()
-	_layer.layer    = 128
+	_layer.layer    = 500
 	_layer.name     = "CursorLayer"
 	add_child(_layer)
 

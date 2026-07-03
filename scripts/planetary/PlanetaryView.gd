@@ -25,6 +25,8 @@ const LIGHT_SPEED: float = 0.04   # radians per second
 ## Tracks which district POI is currently shown in the district panel.
 ## Used by _on_building_constructed to refresh panel without DOM traversal.
 var _active_district_poi: POIData = null
+var _top_tab_active: String = "DETAILS"    # "DETAILS" or "INVENTORY"
+var _inner_tab_active: String = "SURFACE"  # "SURFACE" or "ORBITAL"
 var _overview_energy_val: Label = null   # kept for live energy updates
 var _orbital_layer: OrbitalLayer = null
 var _mission_builder_overlay: Control = null  # non-null while Mission Builder is open
@@ -209,6 +211,9 @@ func _input(event: InputEvent) -> void:
 			_back_charge = 0
 
 func load_planet(data: PlanetData) -> void:
+	if current_data == null or current_data.seed != data.seed:
+		_top_tab_active   = "DETAILS"
+		_inner_tab_active = "SURFACE"
 	current_data = data
 	_active_district_poi = null   # clear stale reference on planet switch
 	_open_mineral_switchers.clear()
@@ -492,7 +497,6 @@ func _spawn_district(data: PlanetData, lbl: String, def: DistrictDef) -> void:
 	poi.construct_duration = def.construction_duration
 
 	if def.is_orbital:
-		# Temp orbit params; _finish_rocket_anim will overwrite with analytically-computed values
 		var rng := RandomNumberGenerator.new()
 		rng.seed = data.seed ^ 0xC4F3A1
 		poi.orbit_angle       = rng.randf_range(0.0, TAU)
@@ -502,9 +506,23 @@ func _spawn_district(data: PlanetData, lbl: String, def: DistrictDef) -> void:
 		poi.orbit_radius      = 1.06
 		poi.light_intensity   = 0.0
 		poi.manual_position   = true
+		# Pick a surface district as the launch pad (prefer Capital, else first surface POI)
+		var surface_pois_launch: Array[POIData] = []
+		for p: POIData in data.custom_pois:
+			if not p.is_orbital() and not p.constructing:
+				surface_pois_launch.append(p)
+		var launch_poi: POIData = null
+		for p: POIData in surface_pois_launch:
+			if p.label.to_lower().contains("capital"):
+				launch_poi = p; break
+		if launch_poi == null and not surface_pois_launch.is_empty():
+			launch_poi = surface_pois_launch[0]
+		# Rotate planet to face the launch pad, then start rocket
+		if launch_poi != null:
+			_rotate_to_lon(launch_poi.lon_deg, 0.5)
+		# Add immediately so panel shows "Constructing"; OrbitalLayer skips constructing=true pois
 		data.custom_pois.append(poi)
-		# Launch animation plays; _finish_rocket_anim sets final orbit params on poi
-		_play_rocket_animation(data.seed, null, func() -> void:
+		_play_rocket_animation(data.seed, launch_poi, func() -> void:
 			poi.constructing = false
 			GameState.planet_progress_changed.emit(data.seed),
 			"", "Pioneer", "station", {}, "", "", "", 0, false, [], poi)
@@ -1994,8 +2012,8 @@ func _build_planet_overview(data: PlanetData) -> void:
 	var top_tab_row := HBoxContainer.new()
 	top_tab_row.add_theme_constant_override("separation", 0)
 	root.add_child(top_tab_row)
-	var planet_tab_btn:    Button = _make_overview_tab_btn("DETAILS",   true)
-	var inventory_tab_btn: Button = _make_overview_tab_btn("INVENTORY", false)
+	var planet_tab_btn:    Button = _make_overview_tab_btn("DETAILS",   _top_tab_active == "DETAILS")
+	var inventory_tab_btn: Button = _make_overview_tab_btn("INVENTORY", _top_tab_active == "INVENTORY")
 	top_tab_row.add_child(planet_tab_btn)
 	top_tab_row.add_child(inventory_tab_btn)
 
@@ -2063,15 +2081,20 @@ func _build_planet_overview(data: PlanetData) -> void:
 	# Tab switching
 	planet_tab_btn.toggled.connect(func(on: bool) -> void:
 		if on:
+			_top_tab_active = "DETAILS"
 			inventory_tab_btn.button_pressed = false
 			planet_page.visible  = true
 			inv_scroll.visible   = false)
 	inventory_tab_btn.toggled.connect(func(on: bool) -> void:
 		if on:
+			_top_tab_active = "INVENTORY"
 			planet_tab_btn.button_pressed = false
 			planet_page.visible  = false
 			inv_scroll.visible   = true
 			_build_inv_grid.call())
+	# Restore correct visibility based on saved state
+	planet_page.visible = (_top_tab_active == "DETAILS")
+	inv_scroll.visible  = (_top_tab_active == "INVENTORY")
 
 	_overview_energy_val = null  # energy shown in top-center HUD
 
@@ -2224,8 +2247,8 @@ func _build_planet_overview(data: PlanetData) -> void:
 	tab_row.add_theme_constant_override("separation", 0)
 	planet_page.add_child(tab_row)
 
-	var dist_btn:    Button = _make_overview_tab_btn("SURFACE", true)
-	var orbital_btn: Button = _make_overview_tab_btn("ORBITAL", false)
+	var dist_btn:    Button = _make_overview_tab_btn("SURFACE", _inner_tab_active == "SURFACE")
+	var orbital_btn: Button = _make_overview_tab_btn("ORBITAL", _inner_tab_active == "ORBITAL")
 	tab_row.add_child(dist_btn)
 	tab_row.add_child(orbital_btn)
 
@@ -2272,14 +2295,19 @@ func _build_planet_overview(data: PlanetData) -> void:
 	# ── Tab switching ─────────────────────────────────────────────────────────
 	dist_btn.toggled.connect(func(on: bool) -> void:
 		if on:
+			_inner_tab_active = "SURFACE"
 			orbital_btn.button_pressed = false
 			dist_scroll.visible = true
 			orb_scroll.visible  = false)
 	orbital_btn.toggled.connect(func(on: bool) -> void:
 		if on:
+			_inner_tab_active = "ORBITAL"
 			dist_btn.button_pressed = false
 			dist_scroll.visible = false
 			orb_scroll.visible  = true)
+	# Restore correct visibility based on saved state
+	dist_scroll.visible = (_inner_tab_active == "SURFACE")
+	orb_scroll.visible  = (_inner_tab_active == "ORBITAL")
 
 	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
 

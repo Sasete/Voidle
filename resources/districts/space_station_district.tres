@@ -12,6 +12,6 @@ placement = 3
 base_cost = 800.0
 construction_duration = 30.0
 is_orbital = true
-max_per_planet = 1
+max_per_planet = 2
 building_ids = Array[String]([])
 name_pool = Array[String](["Alpha Station", "Beta Station", "Orbital Hub", "Outpost Prime", "Helix Platform", "Apex Outpost", "Zenith Base"])

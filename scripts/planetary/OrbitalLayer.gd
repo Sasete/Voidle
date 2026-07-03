@@ -621,12 +621,12 @@ func _draw_station_pois(center: Vector2) -> void:
 	for poi: POIData in pd.custom_pois:
 		if not poi.is_orbital():
 			continue
+		if poi.constructing:
+			continue   # hidden while rocket is in flight; deploy anim plays on arrival
 		var is_selected: bool = poi.label == _selected_station
 		var is_hovered:  bool = poi.label == _hovered_station
 		var col: Color
-		if poi.constructing:
-			col = Color(0.70, 0.70, 0.35, 0.75)
-		elif is_selected:
+		if is_selected:
 			col = Color(1.0, 0.92, 0.30, 1.0)   # gold — matches ship selected
 		elif is_hovered:
 			col = Color(1.0, 0.95, 0.5, 0.90)
