@@ -2048,18 +2048,25 @@ func _build_planet_overview(data: PlanetData) -> void:
 			entries.append(rd)
 		entries.sort_custom(func(a: ResourceData, b: ResourceData) -> bool:
 			return a.rarity < b.rarity if a.rarity != b.rarity else a.tier < b.tier)
-		var grid := HFlowContainer.new()
+		const INV_COLS    := 5
+		const INV_CELL_SZ := 56
+		var grid := GridContainer.new()
+		grid.columns = INV_COLS
 		grid.add_theme_constant_override("h_separation", 5)
 		grid.add_theme_constant_override("v_separation", 5)
-		grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		grid.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 		for rd: ResourceData in entries:
 			var stored: float = GameState.global_resources.get(rd.resource_id(), 0.0)
-			grid.add_child(_mineral_grid_card(rd, stored, true, "", pp))
-		# Fill remaining slots with empty placeholders (rows of 3, min 18 total)
-		var empty_count: int = int(max(18, entries.size() + (3 - entries.size() % 3) % 3)) - entries.size()
+			var card := _mineral_grid_card(rd, stored, true, "", pp)
+			card.custom_minimum_size = Vector2(INV_CELL_SZ, INV_CELL_SZ)
+			grid.add_child(card)
+		# Fill to complete the last row, minimum 3 full rows total
+		var rows_needed: int = max(3, int(ceil(float(entries.size()) / INV_COLS)))
+		var total_slots: int = rows_needed * INV_COLS
+		var empty_count: int = total_slots - entries.size()
 		for _ei in empty_count:
 			var empty_pc := PanelContainer.new()
-			empty_pc.custom_minimum_size = Vector2(74, 74)
+			empty_pc.custom_minimum_size = Vector2(INV_CELL_SZ, INV_CELL_SZ)
 			var es := StyleBoxFlat.new()
 			es.bg_color    = Color(0.07, 0.08, 0.14, 0.60)
 			es.border_color = Color(0.18, 0.22, 0.36, 0.40)
