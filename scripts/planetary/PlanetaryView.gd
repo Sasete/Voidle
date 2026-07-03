@@ -738,6 +738,20 @@ func _mineral_grid_card(rd: ResourceData, stored: float, show_count: bool, sub_l
 			Color(0.95, 0.97, 1.0) if stored > 0.0 else Color(0.42, 0.45, 0.55))
 		count_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		vbox.add_child(count_lbl)
+
+		# Hover juice: scale up + yellow border highlight, z_index brings to front
+		card.mouse_entered.connect(func() -> void:
+			card.z_index = 10
+			card.pivot_offset = card.size * 0.5
+			var tw := card.create_tween().set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+			tw.tween_property(card, "scale", Vector2(1.10, 1.10), 0.12)
+			s.border_color = Color(1.0, 0.90, 0.25))
+		card.mouse_exited.connect(func() -> void:
+			card.z_index = 0
+			card.pivot_offset = card.size * 0.5
+			var tw := card.create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+			tw.tween_property(card, "scale", Vector2(1.0, 1.0), 0.10)
+			s.border_color = rarity_col)
 	else:
 		var vbox2 := VBoxContainer.new()
 		vbox2.add_theme_constant_override("separation", 2)
@@ -2028,6 +2042,7 @@ func _build_planet_overview(data: PlanetData) -> void:
 	inv_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	inv_scroll.size_flags_vertical    = Control.SIZE_EXPAND_FILL
 	inv_scroll.custom_minimum_size    = Vector2(0, 120)
+	inv_scroll.clip_contents          = false
 	inv_scroll.visible = false
 	root.add_child(inv_scroll)
 
