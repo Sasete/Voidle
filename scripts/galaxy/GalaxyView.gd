@@ -57,6 +57,7 @@ const STAR_TYPE_NAME: Dictionary = {
 }
 
 func _ready() -> void:
+	HUDManager.set_game_hud(true)
 	_orbitron = load("res://Fonts/Orbitron-VariableFont_wght.ttf")
 	_build_right_panel()
 	var gd: GalaxyData = SceneTransition.pending_data as GalaxyData

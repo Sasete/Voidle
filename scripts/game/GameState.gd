@@ -3,6 +3,7 @@
 extends Node
 
 signal credits_changed(new_val: float)
+signal save_deleted
 signal science_changed(new_val: float)
 signal world_ready
 signal unlock_changed(key: String, value: bool)
@@ -80,10 +81,27 @@ var _home_solar: SolarData  = null
 
 # ────────────────────────────────────────────────────────────────────────────
 
+var _autosave_timer: float = 0.0
+const AUTOSAVE_INTERVAL := 60.0
+
 func _ready() -> void:
+	load_save()
 	if home_planet_seed < 0:
 		home_planet_seed = randi_range(1000, 99999)
 	_bootstrap_world()
+
+func _process(delta: float) -> void:
+	_autosave_timer += delta
+	if _autosave_timer >= AUTOSAVE_INTERVAL:
+		_autosave_timer = 0.0
+		save()
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_EXIT_TREE:
+		save()
+
+static func has_save() -> bool:
+	return FileAccess.file_exists(SAVE_PATH)
 
 func unlock_building(building_id: String) -> void:
 	if not unlocked_buildings.has(building_id):
@@ -383,7 +401,9 @@ func save() -> void:
 			"has_spaceport":     pp.has_spaceport,
 			"moons_unlocked":    pp.moons_unlocked,
 		}
-	data["global_resources"] = global_resources
+	data["global_resources"]    = global_resources
+	data["unlocked_buildings"]  = unlocked_buildings
+	data["achievements"]        = AchievementManager.get_save_data()
 	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if file:
 		file.store_var(data)
@@ -406,17 +426,23 @@ func load_save() -> bool:
 	discovered_asteroids     = data.get("discovered_asteroids", [])
 	asteroid_scan_counts     = data.get("asteroid_scan_counts", {})
 	
+	var st := get_node("/root/SkillTree")
+	st.unlocked_skills.clear()
 	if data.has("unlocked_skills"):
-		get_node("/root/SkillTree").unlocked_skills = data["unlocked_skills"]
+		for s in data["unlocked_skills"]:
+			st.unlocked_skills.append(s)
 	else:
-		get_node("/root/SkillTree").unlocked_skills = ["root"]
+		st.unlocked_skills.append("root")
 		
+	st.skill_levels.clear()
 	if data.has("skill_levels"):
-		get_node("/root/SkillTree").skill_levels = data["skill_levels"]
-	else:
-		get_node("/root/SkillTree").skill_levels = {}
+		st.skill_levels.merge(data["skill_levels"])
 
-	global_resources = data.get("global_resources", {})
+	global_resources    = data.get("global_resources",   {})
+	unlocked_buildings  = data.get("unlocked_buildings", {})
+
+	if data.has("achievements"):
+		AchievementManager.load_save(data["achievements"])
 
 	if has_node("/root/ShipManager"):
 		get_node("/root/ShipManager").deserialize(data.get("ships", []))
@@ -444,6 +470,7 @@ func load_save() -> bool:
 func delete_save() -> void:
 	if FileAccess.file_exists(SAVE_PATH):
 		DirAccess.remove_absolute(SAVE_PATH)
+	save_deleted.emit()
 	credits              = 500.0
 	solar_unlocked       = false
 	galaxy_unlocked      = false
@@ -454,7 +481,9 @@ func delete_save() -> void:
 	home_planet_idx      = -1
 	_home_solar          = null
 	home_galaxy          = null
-	get_node("/root/SkillTree").unlocked_skills = ["root"]
-	get_node("/root/SkillTree").skill_levels = {}
+	var st := get_node("/root/SkillTree")
+	st.unlocked_skills.clear()
+	st.unlocked_skills.append("root")
+	st.skill_levels.clear()
 	_planet_progress.clear()
 	_bootstrap_world()

@@ -91,7 +91,10 @@ func _ready() -> void:
 			_current = pd.get_meta("__solar_data") as SolarData
 		else:
 			_current = GameState.get_home_solar()
-		load_local(pd)
+		if pd.planet_type == PlanetData.Type.ASTEROID:
+			load_system(_current)
+		else:
+			load_local(pd)
 	elif pending is SolarData:
 		load_system(pending as SolarData)
 	elif solar_data != null:
@@ -163,8 +166,8 @@ func _on_planet_selected(pd: PlanetData) -> void:
 		return
 		
 	if _mode == Mode.SOLAR:
-		if pd.planet_type == PlanetData.Type.MOON:
-			# Direct jump to moon's surface if somehow clicked from Solar View
+		if pd.planet_type == PlanetData.Type.MOON or pd.planet_type == PlanetData.Type.ASTEROID:
+			# Direct jump to moon/asteroid surface if somehow clicked from Solar View
 			_save_current_angles_to_game_state()
 			pd.set_meta("__solar_data", _current)
 			SceneTransition.go("res://scenes/planetary/PlanetaryView.tscn", pd)
@@ -607,26 +610,26 @@ func _update_panel() -> void:
 		_scan_wrap.queue_free()
 		_scan_wrap = null
 
-	# Scan Asteroid button — only in SOLAR mode, only if skill unlocked, only if belts exist
-	if _mode == Mode.SOLAR and _current != null \
-			and not _current.asteroid_belt_slots.is_empty() \
-			and SkillTree.call("is_unlocked", "unlock_asteroids"):
-		_build_scan_asteroid_section()
+	var is_surveyed := _current.is_home
+	var gd: GalaxyData = null
+	var star_idx: int = -1
 
-	# home system is already unlocked — no button needed
-	if _current.is_home:
+	if not is_surveyed:
+		gd = _current.get_meta("__galaxy_data") as GalaxyData if _current.has_meta("__galaxy_data") else null
+		star_idx = _current.get_meta("__galaxy_star_idx") as int if _current.has_meta("__galaxy_star_idx") else -1
+		if gd != null and star_idx >= 0 and gd.is_unlocked(star_idx):
+			is_surveyed = true
+
+	if is_surveyed:
+		# Scan Asteroid button — only in SOLAR mode, only if skill unlocked, only if belts exist
+		if _mode == Mode.SOLAR and _current != null \
+				and not _current.asteroid_belt_slots.is_empty() \
+				and SkillTree.call("is_unlocked", "unlock_asteroids"):
+			_build_scan_asteroid_section()
 		return
 
-	var gd: GalaxyData = _current.get_meta("__galaxy_data") as GalaxyData if _current.has_meta("__galaxy_data") else null
-	if gd == null:
+	if gd == null or star_idx < 0:
 		return
-
-	var star_idx: int = _current.get_meta("__galaxy_star_idx") as int if _current.has_meta("__galaxy_star_idx") else -1
-	if star_idx < 0:
-		return
-
-	if gd.is_unlocked(star_idx):
-		return   # already surveyed
 
 	const SURVEY_CREDITS: float = 200_000.0
 	const SURVEY_SCIENCE: float = 50_000.0
@@ -922,12 +925,7 @@ func _survey_system(gd: GalaxyData, star_idx: int, cost_cr: float, cost_sci: flo
 		return
 	gd.unlock(star_idx)
 	AchievementManager.notify_trigger(AchievementDef.Trigger.FIRST_SURVEY)
-	# Remove the whole survey_wrap (sep + cost + button)
-	if is_instance_valid(_survey_btn):
-		var wrap := _survey_btn.get_parent()
-		if is_instance_valid(wrap):
-			wrap.queue_free()
-		_survey_btn = null
+	_update_panel()
 
 
 func _input(event: InputEvent) -> void:

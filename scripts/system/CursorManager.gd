@@ -30,6 +30,7 @@ func _notification(what: int) -> void:
 			if _sprite: _sprite.visible = true
 
 func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	_register(_arrow(),   Vector2(1, 1) * SCALE)   # NORMAL
 	_register(_hover(),   Vector2(7, 7) * SCALE)   # HOVER
 	_register(_space(),   Vector2(7, 7) * SCALE)   # SPACE
@@ -78,7 +79,7 @@ func _register(grid: Array, hotspot: Vector2) -> void:
 
 func _bake(grid: Array) -> ImageTexture:
 	var real := SZ * SCALE
-	var img  := Image.create(real, real, false, Image.FORMAT_RGBA8)
+	var img  := Image.create_empty(real, real, false, Image.FORMAT_RGBA8)
 	img.fill(Color(0, 0, 0, 0))
 	for gy in SZ:
 		for gx in SZ:

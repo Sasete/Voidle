@@ -353,7 +353,7 @@ func _deposit_speed(def: BuildingDef, planet_seed: int,
 func _all_colonies() -> Array[PlanetProgress]:
 	var result: Array[PlanetProgress] = []
 	for pp: PlanetProgress in GameState._planet_progress.values():
-		if pp.is_colonized and not pp.buildings.is_empty():
+		if pp.is_colonized:
 			result.append(pp)
 	return result
 

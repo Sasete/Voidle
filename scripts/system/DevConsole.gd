@@ -314,6 +314,9 @@ func _exec(line: String) -> void:
 			_log_info("  [color=#88ddcc]asteroids[/color]")
 			_log_info("[color=#33cc55]── SKILL TREE ───────────────────────────[/color]")
 			_log_info("  [color=#88ddcc]skilltree unhide -all[/color]  [color=#88ddcc]hide -all[/color]")
+			_log_info("[color=#33cc55]── SAVE ──────────────────────────────────[/color]")
+			_log_info("  [color=#88ddcc]save[/color]              — force save now")
+			_log_info("  [color=#88ddcc]clear_save[/color]        — delete save file")
 			_log_info("[color=#33cc55]── DEBUG ─────────────────────────────────[/color]")
 			_log_info("  [color=#88ddcc]state[/color]  [color=#88ddcc]clear[/color]  [color=#88ddcc]debug coords[/color]")
 
@@ -496,6 +499,15 @@ func _exec(line: String) -> void:
 		"clear":
 			_out_gen += 1   # cancel pending drain
 			_log.clear()
+
+		# ── Save ─────────────────────────────────────────────────────────────
+		"save":
+			GameState.save()
+			_log_ok("Game [color=#55ff88]saved[/color].")
+
+		"clear_save":
+			GameState.delete_save()
+			_log_ok("Save [color=#ff5555]deleted[/color]. Restart to begin fresh.")
 
 		_:
 			_log_err("Unknown: '[color=#ffcc55]%s[/color]' — type help" % cmd)

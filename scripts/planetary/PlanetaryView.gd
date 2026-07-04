@@ -2091,7 +2091,7 @@ func _make_overview_tab_btn(label: String, is_active: bool) -> Button:
 func _on_colonize_progress_changed(planet_seed: int, key: String, progress: float, pbar: ProgressBar, bind_seed: int) -> void:
 	if planet_seed == bind_seed and key == "colonize":
 		if is_instance_valid(pbar):
-			pbar.value = progress
+			pbar.value = progress * 100.0
 
 func _build_planet_overview(data: PlanetData) -> void:
 	if data == null:
@@ -2115,74 +2115,7 @@ func _build_planet_overview(data: PlanetData) -> void:
 	root.add_theme_constant_override("separation", 8)
 	root.add_child(HSeparator.new())
 
-	if not pp.is_colonized:
-		var unc_page := VBoxContainer.new()
-		unc_page.size_flags_vertical = Control.SIZE_EXPAND_FILL
-		unc_page.add_theme_constant_override("separation", 8)
-		root.size_flags_vertical = Control.SIZE_EXPAND_FILL
-		root.add_child(unc_page)
-		_build_resources_section(unc_page, data, pp)
-		var unc_spacer := Control.new()
-		unc_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
-		unc_page.add_child(unc_spacer)
-		var col_sep := HSeparator.new()
-		var col_sep_s := StyleBoxFlat.new(); col_sep_s.bg_color = Color(0.2, 0.25, 0.4, 0.35)
-		col_sep.add_theme_stylebox_override("separator", col_sep_s)
-		unc_page.add_child(col_sep)
-		if pp.is_colonizing:
-			var pbar := ProgressBar.new()
-			pbar.custom_minimum_size = Vector2(0, 32)
-			pbar.max_value = 1.0
-			pbar.value = pp.colonize_progress
-			pbar.show_percentage = false
-			
-			var bg := StyleBoxFlat.new()
-			bg.bg_color = Color(0.1, 0.15, 0.25)
-			bg.corner_radius_top_left = 4; bg.corner_radius_top_right = 4
-			bg.corner_radius_bottom_left = 4; bg.corner_radius_bottom_right = 4
-			
-			var fg := StyleBoxFlat.new()
-			fg.bg_color = Color(0.3, 0.8, 0.4)
-			fg.corner_radius_top_left = 4; fg.corner_radius_top_right = 4
-			fg.corner_radius_bottom_left = 4; fg.corner_radius_bottom_right = 4
-			
-			pbar.add_theme_stylebox_override("background", bg)
-			pbar.add_theme_stylebox_override("fill", fg)
-			
-			var plabel := Label.new()
-			plabel.text = "Establishing..." if data.planet_type == PlanetData.Type.MOON else "Colonizing..."
-			plabel.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			plabel.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-			plabel.set_anchors_preset(Control.PRESET_FULL_RECT)
-			_apply_orbitron(plabel, 12)
-			pbar.add_child(plabel)
-			
-			unc_page.add_child(pbar)
-			
-			# Listen for progress updates
-			if not ProductionManager.building_progress_changed.is_connected(_on_colonize_progress_changed):
-				ProductionManager.building_progress_changed.connect(_on_colonize_progress_changed.bind(pbar, data.seed))
-		else:
-			var col_btn := Button.new()
-			if data.planet_type == PlanetData.Type.MOON:
-				col_btn.text = "BUILD OUTPOST"
-			else:
-				col_btn.text = "COLONIZE"
-			_apply_orbitron(col_btn, 12)
-			var col_sb := StyleBoxFlat.new()
-			col_sb.bg_color = Color(0.10, 0.28, 0.45)
-			col_sb.content_margin_top = 10; col_sb.content_margin_bottom = 10
-			col_btn.add_theme_stylebox_override("normal", col_sb)
-			var col_hb := col_sb.duplicate() as StyleBoxFlat
-			col_hb.bg_color = Color(0.15, 0.42, 0.65)
-			col_btn.add_theme_stylebox_override("hover", col_hb)
-			col_btn.add_theme_color_override("font_color", Color.WHITE)
-			col_btn.pressed.connect(func() -> void:
-				_show_colonize_popup(data, pp)
-			)
-			unc_page.add_child(col_btn)
-		panel_content.add_child(root)
-		return
+
 
 	# ── Top tabs: PLANET | INVENTORY ─────────────────────────────────────────
 	var top_tab_row := HBoxContainer.new()
@@ -2369,6 +2302,74 @@ func _build_planet_overview(data: PlanetData) -> void:
 				p_density = data.deposit_density * dep_rng.randf_range(0.75, 1.25)
 			dep_grid.add_child(_mineral_grid_card(rd, 0.0, false, "%d%%" % int(round(p_density * 100.0))))
 		planet_page.add_child(dep_grid)
+
+	if not pp.is_colonized:
+		var unc_spacer := Control.new()
+		unc_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		planet_page.add_child(unc_spacer)
+
+		var col_sep := HSeparator.new()
+		var col_sep_s := StyleBoxFlat.new(); col_sep_s.bg_color = Color(0.2, 0.25, 0.4, 0.35)
+		col_sep.add_theme_stylebox_override("separator", col_sep_s)
+		planet_page.add_child(col_sep)
+
+		if pp.is_colonizing:
+			var pbar := ProgressBar.new()
+			pbar.custom_minimum_size = Vector2(0, 32)
+			pbar.value = pp.colonize_progress * 100.0
+			pbar.show_percentage = false
+			
+			var bg := StyleBoxFlat.new()
+			bg.bg_color = Color(0.1, 0.15, 0.25)
+			bg.corner_radius_top_left = 4; bg.corner_radius_top_right = 4
+			bg.corner_radius_bottom_left = 4; bg.corner_radius_bottom_right = 4
+			
+			var fg := StyleBoxFlat.new()
+			fg.bg_color = Color(0.3, 0.8, 0.4)
+			fg.corner_radius_top_left = 4; fg.corner_radius_top_right = 4
+			fg.corner_radius_bottom_left = 4; fg.corner_radius_bottom_right = 4
+			
+			pbar.add_theme_stylebox_override("background", bg)
+			pbar.add_theme_stylebox_override("fill", fg)
+			
+			var plabel := Label.new()
+			plabel.text = "Establishing..." if (data.planet_type == PlanetData.Type.MOON or data.planet_type == PlanetData.Type.ASTEROID) else "Colonizing..."
+			plabel.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			plabel.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			plabel.set_anchors_preset(Control.PRESET_FULL_RECT)
+			_apply_orbitron(plabel, 12)
+			pbar.add_child(plabel)
+			
+			planet_page.add_child(pbar)
+			
+			# Listen for progress updates
+			for conn in ProductionManager.building_progress_changed.get_connections():
+				if conn["callable"].get_object() == self and conn["callable"].get_method() == "_on_colonize_progress_changed":
+					ProductionManager.building_progress_changed.disconnect(conn["callable"])
+			ProductionManager.building_progress_changed.connect(_on_colonize_progress_changed.bind(pbar, data.seed))
+		else:
+			var col_btn := Button.new()
+			if data.planet_type == PlanetData.Type.MOON or data.planet_type == PlanetData.Type.ASTEROID:
+				col_btn.text = "BUILD OUTPOST"
+			else:
+				col_btn.text = "COLONIZE"
+			_apply_orbitron(col_btn, 12)
+			var col_sb := StyleBoxFlat.new()
+			col_sb.bg_color = Color(0.10, 0.28, 0.45)
+			col_sb.content_margin_top = 10; col_sb.content_margin_bottom = 10
+			col_btn.add_theme_stylebox_override("normal", col_sb)
+			var col_hb := col_sb.duplicate() as StyleBoxFlat
+			col_hb.bg_color = Color(0.15, 0.42, 0.65)
+			col_btn.add_theme_stylebox_override("hover", col_hb)
+			col_btn.add_theme_color_override("font_color", Color.WHITE)
+			col_btn.pressed.connect(func() -> void:
+				_show_colonize_popup(data, pp)
+			)
+			planet_page.add_child(col_btn)
+		
+		root.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		panel_content.add_child(root)
+		return
 
 	# ── District slot indicators ─────────────────────────────────────────────
 	var p_max_orbital := 0
@@ -2743,7 +2744,7 @@ func _build_district_overview_card(poi: POIData, planet: PlanetData, pp: PlanetP
 		AudioManager.play("district_hover")
 		cap_card.add_theme_stylebox_override("panel", hov_s2)
 		if cap_poi.constructing:
-			TooltipManager.show_tip("Constructing", "This District is not fully operational yet.")
+			TooltipManager.show_tip("Constructing", "This District is not fully operational yet.\nBuild time: %.0fs" % cap_poi.construct_duration)
 		CursorManager.set_state(CursorManager.State.POINTER))
 	card.mouse_exited.connect(func() -> void:
 		cap_card.add_theme_stylebox_override("panel", norm_s2)
@@ -2765,7 +2766,7 @@ func _build_district_overview_card(poi: POIData, planet: PlanetData, pp: PlanetP
 				_select_district_on_planet(cap_poi.label)
 				_rotate_to_lon(cap_poi.lon_deg)
 			if cap_poi.constructing:
-				TooltipManager.show_tip("Constructing", "This District is not fully operational yet.")
+				TooltipManager.show_tip("Constructing", "This District is not fully operational yet.\nBuild time: %.0fs" % cap_poi.construct_duration)
 				return
 			_build_district_panel(cap_poi, cap_planet))
 	return card
@@ -5928,6 +5929,9 @@ func _toggle_slot_dropdown(card: PanelContainer, poi: POIData, planet: PlanetDat
 		var tip_body_parts: Array = [def.description, "\n\n"]
 		if def.slot_cost > 1:
 			tip_body_parts.append("Slots    %d\n" % def.slot_cost)
+		
+		var b_time: float = def.construct_duration if def.construct_duration > 0.0 else def.tick_duration
+		tip_body_parts.append("Build    %.0fs\n" % b_time)
 		tip_body_parts.append("Cycle    %.0fs" % cycle_s)
 
 		# Active energy output on the same line as Cycle

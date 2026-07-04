@@ -15,6 +15,12 @@ var _orbitron: Font
 ## The credits panel node — exposed so PlanetaryView can read its screen height for toast offset.
 var credits_panel: PanelContainer = null
 var science_panel: PanelContainer = null
+var _top_layer: CanvasLayer = null
+
+func set_game_hud(visible_state: bool) -> void:
+	visible = visible_state
+	if is_instance_valid(_top_layer):
+		_top_layer.visible = visible_state
 static func fmt_credits(val: float) -> String:
 	if val >= 1_000_000_000.0:
 		return "%.2fb cr" % (val / 1_000_000_000.0)
@@ -167,6 +173,7 @@ func _ready() -> void:
 	# Credits + Science go into a top layer (above SkillTree at 220)
 	var top_layer := CanvasLayer.new()
 	top_layer.layer = 230
+	_top_layer = top_layer
 	get_parent().call_deferred("add_child", top_layer)
 
 	top_layer.call_deferred("add_child", panel)
@@ -203,7 +210,7 @@ func _ready() -> void:
 		CursorManager.set_state(CursorManager.State.POINTER)
 		AudioManager.play("hover"))
 	settings_btn.mouse_exited.connect(func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
-	settings_btn.pressed.connect(_show_settings_panel)
+	settings_btn.pressed.connect(show_pause_menu)
 	
 	top_layer.call_deferred("add_child", settings_btn)
 
@@ -270,7 +277,13 @@ func _ready() -> void:
 	_setup_energy_hud()
 	AchievementManager.achievement_unlocked.connect(_on_achievement_unlocked)
 
-func _show_settings_panel() -> void:
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+		if _top_layer.visible and not get_tree().paused:
+			show_pause_menu()
+			get_viewport().set_input_as_handled()
+
+func show_pause_menu() -> void:
 	AudioManager.play("ui_click")
 	if get_tree().paused:
 		return
@@ -279,8 +292,123 @@ func _show_settings_panel() -> void:
 	
 	var overlay := CanvasLayer.new()
 	overlay.layer = 250
+	overlay.process_mode = Node.PROCESS_MODE_ALWAYS
 	
-	# The overlay itself must process when paused!
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.75)
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.add_child(dim)
+	
+	var panel := PanelContainer.new()
+	var ps := StyleBoxFlat.new()
+	ps.bg_color = Color(0.06, 0.07, 0.12, 0.95)
+	ps.border_color = Color(0.3, 0.4, 0.6, 0.5)
+	ps.set_border_width_all(2)
+	ps.set_corner_radius_all(12)
+	ps.content_margin_left = 60
+	ps.content_margin_right = 60
+	ps.content_margin_top = 40
+	ps.content_margin_bottom = 40
+	panel.add_theme_stylebox_override("panel", ps)
+	
+	panel.anchor_left = 0.5; panel.anchor_right = 0.5
+	panel.anchor_top = 0.5; panel.anchor_bottom = 0.5
+	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+	
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 16)
+	panel.add_child(vbox)
+	
+	var title := Label.new()
+	title.text = "PAUSED"
+	if _orbitron: title.add_theme_font_override("font", _orbitron)
+	title.add_theme_font_size_override("font_size", 28)
+	title.add_theme_color_override("font_color", Color(0.8, 0.9, 1.0))
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vbox.add_child(title)
+	
+	vbox.add_child(HSeparator.new())
+	
+	var _make_btn = func(text: String, action: Callable) -> Button:
+		var btn := Button.new()
+		btn.text = text
+		if _orbitron: btn.add_theme_font_override("font", _orbitron)
+		btn.add_theme_font_size_override("font_size", 16)
+		btn.custom_minimum_size = Vector2(240, 40)
+		
+		var bs := StyleBoxFlat.new()
+		bs.bg_color = Color(0.12, 0.18, 0.28)
+		bs.set_corner_radius_all(6)
+		btn.add_theme_stylebox_override("normal", bs)
+		
+		var bsh := bs.duplicate() as StyleBoxFlat
+		bsh.bg_color = Color(0.2, 0.35, 0.5)
+		btn.add_theme_stylebox_override("hover", bsh)
+		
+		btn.pressed.connect(func():
+			AudioManager.play("ui_click")
+			action.call()
+		)
+		btn.mouse_entered.connect(func():
+			CursorManager.set_state(CursorManager.State.POINTER)
+			AudioManager.play("hover")
+		)
+		btn.mouse_exited.connect(func(): CursorManager.set_state(CursorManager.State.NORMAL))
+		return btn
+
+	vbox.add_child(_make_btn.call("RESUME", func():
+		get_tree().paused = false
+		overlay.queue_free()
+	))
+	
+	vbox.add_child(_make_btn.call("SETTINGS", func():
+		show_settings_popup()
+	))
+	
+	vbox.add_child(_make_btn.call("SAVE GAME", func():
+		GameState.save()
+		title.text = "GAME SAVED"
+		title.add_theme_color_override("font_color", Color(0.4, 1.0, 0.5))
+		var tw := create_tween()
+		tw.tween_interval(1.5)
+		tw.tween_callback(func():
+			if is_instance_valid(title):
+				title.text = "PAUSED"
+				title.add_theme_color_override("font_color", Color(0.8, 0.9, 1.0))
+		)
+	))
+	
+	vbox.add_child(HSeparator.new())
+	
+	var mm_btn: Button = _make_btn.call("MAIN MENU", func():
+		get_tree().paused = false
+		overlay.queue_free()
+		GameState.save()
+		SceneTransition.go("res://scenes/MainMenu.tscn", null)
+	)
+	var mm_sb := mm_btn.get_theme_stylebox("normal").duplicate() as StyleBoxFlat
+	mm_sb.bg_color = Color(0.4, 0.2, 0.2)
+	mm_btn.add_theme_stylebox_override("normal", mm_sb)
+	vbox.add_child(mm_btn)
+	
+	var quit_btn: Button = _make_btn.call("QUIT TO DESKTOP", func():
+		GameState.save()
+		get_tree().quit()
+	)
+	var quit_sb := quit_btn.get_theme_stylebox("normal").duplicate() as StyleBoxFlat
+	quit_sb.bg_color = Color(0.5, 0.15, 0.15)
+	quit_btn.add_theme_stylebox_override("normal", quit_sb)
+	vbox.add_child(quit_btn)
+
+	overlay.add_child(panel)
+	get_tree().root.add_child(overlay)
+
+
+func show_settings_popup() -> void:
+	AudioManager.play("ui_click")
+	var overlay := CanvasLayer.new()
+	overlay.layer = 300 # Above pause menu
 	overlay.process_mode = Node.PROCESS_MODE_ALWAYS
 	
 	var dim := ColorRect.new()
@@ -290,23 +418,16 @@ func _show_settings_panel() -> void:
 	
 	var panel := PanelContainer.new()
 	var ps := StyleBoxFlat.new()
-	ps.bg_color = Color(0.06, 0.07, 0.12, 0.95)
-	ps.border_color = Color(0.3, 0.4, 0.6, 0.5)
+	ps.bg_color = Color(0.08, 0.10, 0.16, 0.98)
+	ps.border_color = Color(0.4, 0.5, 0.7, 0.5)
 	ps.set_border_width_all(2)
-	ps.corner_radius_top_left = 12
-	ps.corner_radius_top_right = 12
-	ps.corner_radius_bottom_left = 12
-	ps.corner_radius_bottom_right = 12
-	ps.content_margin_left = 40
-	ps.content_margin_right = 40
-	ps.content_margin_top = 30
-	ps.content_margin_bottom = 30
+	ps.set_corner_radius_all(12)
+	ps.content_margin_left = 40; ps.content_margin_right = 40
+	ps.content_margin_top = 30; ps.content_margin_bottom = 30
 	panel.add_theme_stylebox_override("panel", ps)
 	
-	panel.anchor_left = 0.5
-	panel.anchor_right = 0.5
-	panel.anchor_top = 0.5
-	panel.anchor_bottom = 0.5
+	panel.anchor_left = 0.5; panel.anchor_right = 0.5
+	panel.anchor_top = 0.5; panel.anchor_bottom = 0.5
 	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	panel.grow_vertical = Control.GROW_DIRECTION_BOTH
 	
@@ -318,12 +439,11 @@ func _show_settings_panel() -> void:
 	title.text = "SETTINGS"
 	if _orbitron: title.add_theme_font_override("font", _orbitron)
 	title.add_theme_font_size_override("font_size", 24)
-	title.add_theme_color_override("font_color", Color(0.8, 0.9, 1.0))
+	title.add_theme_color_override("font_color", Color(0.9, 0.95, 1.0))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vbox.add_child(title)
 	
-	var sep := HSeparator.new()
-	vbox.add_child(sep)
+	vbox.add_child(HSeparator.new())
 	
 	var mv_lbl := Label.new()
 	mv_lbl.text = "Master Volume"
@@ -333,47 +453,60 @@ func _show_settings_panel() -> void:
 	vbox.add_child(mv_lbl)
 	
 	var mv_slider := HSlider.new()
-	mv_slider.custom_minimum_size = Vector2(200, 0)
-	mv_slider.min_value = 0.0001
+	mv_slider.custom_minimum_size = Vector2(240, 0)
+	mv_slider.min_value = 0.0
 	mv_slider.max_value = 1.0
-	mv_slider.step = 0.01
-	var master_bus := AudioServer.get_bus_index("Master")
-	var current_db := AudioServer.get_bus_volume_db(master_bus)
-	mv_slider.value = db_to_linear(current_db)
-	mv_slider.value_changed.connect(func(v: float) -> void:
-		AudioServer.set_bus_volume_db(master_bus, linear_to_db(v))
-	)
+	mv_slider.step = 0.05
+	mv_slider.value = SettingsManager.master_volume
+	mv_slider.value_changed.connect(func(v: float): SettingsManager.set_master_volume(v))
 	vbox.add_child(mv_slider)
 	
-	var sep2 := HSeparator.new()
-	vbox.add_child(sep2)
+	vbox.add_child(HSeparator.new())
 	
-	var btn := Button.new()
-	btn.text = "RESUME"
-	if _orbitron: btn.add_theme_font_override("font", _orbitron)
-	btn.add_theme_font_size_override("font_size", 16)
+	var fs_hbox := HBoxContainer.new()
+	fs_hbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	fs_hbox.add_theme_constant_override("separation", 12)
+	vbox.add_child(fs_hbox)
+	
+	var fs_lbl := Label.new()
+	fs_lbl.text = "Fullscreen"
+	if _orbitron: fs_lbl.add_theme_font_override("font", _orbitron)
+	fs_lbl.add_theme_font_size_override("font_size", 14)
+	fs_hbox.add_child(fs_lbl)
+	
+	var fs_chk := CheckButton.new()
+	fs_chk.button_pressed = SettingsManager.is_fullscreen
+	fs_chk.toggled.connect(func(on: bool): SettingsManager.set_fullscreen(on))
+	fs_chk.mouse_entered.connect(func(): CursorManager.set_state(CursorManager.State.POINTER))
+	fs_chk.mouse_exited.connect(func(): CursorManager.set_state(CursorManager.State.NORMAL))
+	fs_hbox.add_child(fs_chk)
+	
+	vbox.add_child(HSeparator.new())
+	
+	var close_btn := Button.new()
+	close_btn.text = "CLOSE"
+	if _orbitron: close_btn.add_theme_font_override("font", _orbitron)
+	close_btn.add_theme_font_size_override("font_size", 16)
 	var bs := StyleBoxFlat.new()
-	bs.bg_color = Color(0.15, 0.25, 0.35)
-	bs.corner_radius_top_left = 6; bs.corner_radius_top_right = 6
-	bs.corner_radius_bottom_left = 6; bs.corner_radius_bottom_right = 6
+	bs.bg_color = Color(0.2, 0.25, 0.35)
+	bs.set_corner_radius_all(6)
 	bs.content_margin_top = 10; bs.content_margin_bottom = 10
-	btn.add_theme_stylebox_override("normal", bs)
+	close_btn.add_theme_stylebox_override("normal", bs)
 	var bsh := bs.duplicate() as StyleBoxFlat
-	bsh.bg_color = Color(0.2, 0.35, 0.5)
-	btn.add_theme_stylebox_override("hover", bsh)
+	bsh.bg_color = Color(0.3, 0.4, 0.5)
+	close_btn.add_theme_stylebox_override("hover", bsh)
 	
-	btn.pressed.connect(func() -> void:
+	close_btn.pressed.connect(func():
 		AudioManager.play("ui_click")
-		get_tree().paused = false
 		overlay.queue_free()
 	)
-	
-	btn.mouse_entered.connect(func() -> void:
+	close_btn.mouse_entered.connect(func():
 		CursorManager.set_state(CursorManager.State.POINTER)
-		AudioManager.play("hover"))
-	btn.mouse_exited.connect(func() -> void: CursorManager.set_state(CursorManager.State.NORMAL))
+		AudioManager.play("hover")
+	)
+	close_btn.mouse_exited.connect(func(): CursorManager.set_state(CursorManager.State.NORMAL))
 	
-	vbox.add_child(btn)
+	vbox.add_child(close_btn)
 	overlay.add_child(panel)
 	get_tree().root.add_child(overlay)
 

@@ -13,6 +13,7 @@ var _credits_timer: float = 0.0
 var _construct_active: bool = false
 
 func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	for i in MAX_PLAYERS:
 		var p := AudioStreamPlayer.new()
 		p.volume_db = -6.0

@@ -8,7 +8,7 @@
 [ext_resource type="Script" uid="uid://b76xs20oqudpd" path="res://scripts/game/DebugGameState.gd" id="7_5jl86"]
 [ext_resource type="Script" uid="uid://cyy0t2bkegr6q" path="res://scripts/game/DebugResourceGen.gd" id="8_o0343"]
 
-[sub_resource type="ShaderMaterial" id="ShaderMaterial_o0343"]
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_5jl86"]
 shader = ExtResource("2_5jl86")
 shader_parameter/rotation_offset = 0.0
 shader_parameter/cloud_speed = 0.04
@@ -59,6 +59,8 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_aaaa")
+random_on_start = null
+debug_seed = null
 
 [node name="Background" type="ColorRect" parent="." unique_id=505283722]
 layout_mode = 1
@@ -73,12 +75,12 @@ color = Color(0.04, 0.05, 0.1, 1)
 layout_mode = 1
 anchor_right = 0.7
 anchor_bottom = 1.0
+offset_top = 50.0
 grow_horizontal = 2
 grow_vertical = 2
-offset_top = 50.0
 
 [node name="PlanetRenderer" type="ColorRect" parent="PlanetContainer" unique_id=1423969338]
-material = SubResource("ShaderMaterial_o0343")
+material = SubResource("ShaderMaterial_5jl86")
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
