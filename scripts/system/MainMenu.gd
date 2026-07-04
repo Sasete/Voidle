@@ -6,11 +6,11 @@ const ORBITRON      := "res://Fonts/Orbitron-VariableFont_wght.ttf"
 
 const CREDITS_LINES := [
 	"Developed by Tufan T. Iskender",
-	"Thanks to Irem A. Iskender",
-	"Mira M. Iskender",
-	"Ada A. Iskender",
+	"Thanks to Irem Iskender",
+	"Mira Iskender",
+	"Ada Iskender",
+	"Adem Ozcan",
 	"InEv Games",
-	"Muhammet A. Ozcan",
 ]
 const CREDITS_HOLD     := 4.2   # seconds per line
 const GLITCH_CHARS     := "!@#$%^&*<>?/\\|[]{}~±§"
@@ -310,6 +310,7 @@ func _update_continue_btn() -> void:
 
 func _on_new_game() -> void:
 	AudioManager.play("click", 0.0)
+	GameState.delete_save()
 	SceneTransition.go("res://scenes/galaxy/GalaxyView.tscn")
 
 func _on_continue() -> void:

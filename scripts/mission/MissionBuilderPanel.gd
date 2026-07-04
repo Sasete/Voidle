@@ -354,6 +354,7 @@ func _build_state_row(state: Dictionary) -> Control:
 		icon.texture              = tex
 		icon.custom_minimum_size  = Vector2(14, 14)
 		icon.stretch_mode         = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon.texture_filter       = CanvasItem.TEXTURE_FILTER_NEAREST
 		icon.mouse_filter         = Control.MOUSE_FILTER_IGNORE
 		row.add_child(icon)
 		var amt_lbl := Label.new()

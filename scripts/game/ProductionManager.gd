@@ -238,7 +238,6 @@ func _on_tick_complete(pp: PlanetProgress, def: BuildingDef,
 			suffix = ""
 			icon_tex = MineralIcon.make(2, Color(0.75, 0.55, 1.00))
 		BuildingDef.OutputType.SCIENCE:
-			GameState.add_science(display_val)
 			suffix = " sci"
 		BuildingDef.OutputType.ENERGY:
 			display_val = 0.0 # Energy is passive, no need for popup

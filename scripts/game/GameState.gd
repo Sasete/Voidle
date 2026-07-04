@@ -396,6 +396,7 @@ func save() -> void:
 			"colonize_duration": pp.colonize_duration,
 			"is_colonized":      pp.is_colonized,
 			"districts_used":    pp.districts_used,
+			"district_levels":   pp.district_levels,
 			"buildings":         pp.buildings,
 			"stored_resources":  pp.stored_resources,
 			"has_spaceport":     pp.has_spaceport,
@@ -403,6 +404,7 @@ func save() -> void:
 		}
 	data["global_resources"]    = global_resources
 	data["unlocked_buildings"]  = unlocked_buildings
+	data["light_angle"]         = light_angle
 	data["achievements"]        = AchievementManager.get_save_data()
 	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if file:
@@ -440,6 +442,7 @@ func load_save() -> bool:
 
 	global_resources    = data.get("global_resources",   {})
 	unlocked_buildings  = data.get("unlocked_buildings", {})
+	light_angle         = data.get("light_angle",        0.8)
 
 	if data.has("achievements"):
 		AchievementManager.load_save(data["achievements"])
@@ -460,6 +463,7 @@ func load_save() -> bool:
 		pp.colonize_duration = d.get("colonize_duration", 30.0)
 		pp.is_colonized      = d.get("is_colonized",     false)
 		pp.districts_used    = d.get("districts_used",   0)
+		pp.district_levels   = d.get("district_levels",  {})
 		pp.buildings         = d.get("buildings",        [])
 		pp.has_spaceport     = d.get("has_spaceport",    false)
 		pp.moons_unlocked    = d.get("moons_unlocked",   false)

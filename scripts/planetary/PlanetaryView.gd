@@ -703,6 +703,7 @@ func _mineral_icon_cell(rd: ResourceData, show_count: bool, stored: float = 0.0)
 	icon_rect.texture             = tex
 	icon_rect.custom_minimum_size = Vector2(18, 18)
 	icon_rect.stretch_mode        = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon_rect.texture_filter      = CanvasItem.TEXTURE_FILTER_NEAREST
 	icon_rect.mouse_filter        = Control.MOUSE_FILTER_IGNORE
 	inner.add_child(icon_rect)
 
@@ -754,6 +755,7 @@ func _mineral_grid_card(rd: ResourceData, stored: float, show_count: bool, sub_l
 	icon_rect.texture   = tex
 	icon_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	icon_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 
 	if show_count:
 		var vbox := VBoxContainer.new()
@@ -2967,7 +2969,10 @@ func _on_resource_produced(planet_seed: int, poi_label: String, text: String, co
 		if poi.label == poi_label:
 			poi_layer.spawn_floating_text(poi.lon_deg, poi.lat_deg, text, color, 14, icon)
 			break
-	_build_planet_overview(current_data)
+	if _active_district_poi != null:
+		_refresh_district_energy_lbl()
+	else:
+		_build_planet_overview(current_data)
 
 func _on_production_update(_planet_seed: int, key: String, progress: float) -> void:
 	if _district_pbars.has(key):
@@ -3058,29 +3063,30 @@ func _refresh_bar_label_status(key: String) -> void:
 		var paused := ProductionManager.is_paused(key)
 		var out_text := "⏸ waiting"
 		if not paused:
-			var out_val := def.output_amount
+			var sk := get_node("/root/SkillTree")
+			var amount: int = m.get("entry", {}).get("amount", 1)
+			var out_val := def.output_amount * float(amount)
 			if def.output_type == BuildingDef.OutputType.CREDITS:
-				out_val *= get_node("/root/SkillTree").get_credits_mult()
+				out_val *= sk.get_credits_mult()
 			elif def.output_type == BuildingDef.OutputType.ENERGY:
 				if def.building_id == "solar_panel":
-					out_val *= get_node("/root/SkillTree").get_solar_mult()
+					out_val *= sk.get_solar_mult()
 				elif def.building_id == "generator":
-					out_val *= get_node("/root/SkillTree").get_generator_output_mult()
+					out_val *= sk.get_generator_output_mult()
 					var in_min: String = m.get("entry", {}).get("burning_mineral", "")
 					if in_min != "":
 						var rd: ResourceData = GameState.known_resources.get(in_min)
 						if rd: out_val *= float(rd.rarity)
 					else:
-						out_val = 0.0 # No fuel
+						out_val = 0.0
 			elif def.output_type == BuildingDef.OutputType.RAW_MINERAL or def.output_type == BuildingDef.OutputType.REFINED_MINERAL:
-				out_val *= get_node("/root/SkillTree").get_mine_output_mult()
-				
+				out_val *= sk.get_mine_output_mult()
 			match def.output_type:
 				BuildingDef.OutputType.ENERGY:          out_text = "+%.0f ⚡" % out_val
 				BuildingDef.OutputType.CREDITS:         out_text = "+%.0f cr" % out_val
 				BuildingDef.OutputType.RAW_MINERAL:     out_text = "+%.0f ore" % out_val
 				BuildingDef.OutputType.REFINED_MINERAL: out_text = "+%.0f ref" % out_val
-				
+				BuildingDef.OutputType.SCIENCE:         out_text = "+%.0f sci" % out_val
 		out_lbl.text = out_text
 		out_lbl.add_theme_color_override("font_color",
 			Color(0.45, 0.48, 0.60) if paused else fc)
@@ -4192,6 +4198,7 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 			var icon_rect := TextureRect.new()
 			icon_rect.texture = icon_tex
 			icon_rect.stretch_mode = TextureRect.STRETCH_KEEP_CENTERED
+			icon_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 			icon_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			chip_btn.add_child(icon_rect)
 			icon_rect.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
@@ -6038,6 +6045,7 @@ func _toggle_mineral_dropdown(btn: Control, raw_list: Array, target_key: String,
 		var alt_icon := TextureRect.new()
 		alt_icon.texture = MineralIcon.make(alternative.tier, alternative.display_color)
 		alt_icon.stretch_mode = TextureRect.STRETCH_KEEP_CENTERED
+		alt_icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 		alt_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		alt_btn.add_child(alt_icon)
 		alt_icon.set_anchors_and_offsets_preset(Control.PRESET_CENTER)

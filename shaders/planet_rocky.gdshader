@@ -126,7 +126,7 @@ void fragment() {
 
 		// city lights: POI-based, world-space cells (rotate with terrain)
 		float night = smoothstep(0.15, 0.0, diff);
-		if (night > 0.0 && city_lights > 0.0 && poi_count > 0) {
+		if (night > 0.0 && city_lights > 0.0) {
 			// gaussian density from each POI
 			float poi_density = 0.0;
 			float spread = 28.0;
@@ -135,27 +135,33 @@ void fragment() {
 			if (poi_count > 2) poi_density += exp(-dot(rn-poi_lights_2.xyz, rn-poi_lights_2.xyz) * spread) * poi_lights_2.w;
 			if (poi_count > 3) poi_density += exp(-dot(rn-poi_lights_3.xyz, rn-poi_lights_3.xyz) * spread) * poi_lights_3.w;
 			if (poi_count > 4) poi_density += exp(-dot(rn-poi_lights_4.xyz, rn-poi_lights_4.xyz) * spread) * poi_lights_4.w;
+			
+			// If poi_count is negative, it's a signal from IconExporter to render a full ecumenopolis
+			if (poi_count < 0) poi_density = 1.0;
+			
 			poi_density = clamp(poi_density, 0.0, 1.0);
 
 			if (poi_density > 0.003) {
 				float land = smoothstep(0.04, 0.12, h);
 				float pop  = poi_density * land * (1.0 - cm * 0.65);
 
-				// world-space cell — K=30 → ~3-4 screen pixels per dot → stable during rotation
-				float K   = 30.0;
-				vec3  wc  = floor(rn * K + float(seed) * 0.01);
-				float cr  = fract(sin(dot(wc.xy, vec2(127.1, 311.7)) + wc.z * 74.7) * 43758.5453);
-				float cr2 = fract(cr * 7.3517 + 0.5);
+				// Organic sprawling city light pattern using FBM
+				float city_noise = fbm3(rn * 25.0 + vec3(float(seed) * 0.01), 4);
+				city_noise = city_noise * 0.5 + 0.5; // Map from [-1, 1] to [0, 1]
+				
+				// Mask FBM noise with 'pop' (which represents POI density)
+				// This ensures cities ONLY appear around districts in the normal game
+				float threshold = 0.85 - pop * 0.35;
+				float dots = smoothstep(threshold, 1.0, city_noise) * pop;
+				
+				// Soft ambient haze (simulated bloom for transparency support)
+				float haze = smoothstep(threshold - 0.15, 1.0, city_noise) * pop * 0.8;
 
-				float is_bright = step(1.0 - clamp(pop * 0.22, 0.0, 0.55), cr);
-				float is_dim    = step(1.0 - clamp(pop * 0.42, 0.0, 0.70), cr2) * (1.0 - is_bright);
-				float dots      = is_bright + is_dim * 0.40;
+				// HDR color for bloom effect: 3.2 for IconExporter (poi_count < 0), 2.8 for in-game
+				float hdr_mult = (poi_count < 0) ? 3.2 : 2.8;
+				vec3  lc   = vec3(1.0, 0.75, 0.3) * hdr_mult;
 
-				// soft haze underneath the dots
-				float haze = clamp(pop * 0.55, 0.0, 0.25);
-				vec3  lc   = vec3(0.72, 0.48, 0.14);
-
-				surf = mix(surf, surf + lc * dots * 1.0 + lc * 0.28 * haze, night * city_lights * 0.80);
+				surf = mix(surf, surf + lc * dots + lc * 0.35 * haze, night * city_lights);
 			}
 		}
 

@@ -13,15 +13,13 @@ config_version=5
 config/name="Voidle"
 run/main_scene="res://scenes/MainMenu.tscn"
 config/features=PackedStringArray("4.7", "Forward Plus")
-config/icon="res://icon.svg"
-boot_splash/image="res://resources/iBright Games Logo.png"
 boot_splash/bg_color=Color(0, 0, 0, 1)
-boot_splash/fullsize=false
-boot_splash/use_filter=true
+boot_splash/stretch_mode=0
+boot_splash/image="res://resources/iBright Games Logo.png"
+config/icon="res://icon.svg"
 boot_splash/minimum_display_time=1800
 
 [autoload]
-SettingsManager="*res://scripts/system/SettingsManager.gd"
 
 SceneTransition="*res://scripts/ui/SceneTransition.gd"
 GameState="*res://scripts/game/GameState.gd"
@@ -35,6 +33,7 @@ ShipManager="*res://scripts/game/ShipManager.gd"
 ShipCommandRegistry="*res://scripts/ships/ShipCommandRegistry.gd"
 AudioManager="*res://scripts/system/AudioManager.gd"
 AchievementManager="*res://scripts/game/AchievementManager.gd"
+SettingsManager="*res://scripts/system/SettingsManager.gd"
 
 [display]
 
@@ -48,5 +47,7 @@ window/stretch/aspect="expand"
 
 [rendering]
 
+textures/canvas_textures/default_texture_filter=0
 rendering_device/driver.windows="d3d12"
 textures/vram_compression/import_etc2_astc=true
+environment/defaults/default_clear_color=Color(0, 0, 0, 1)

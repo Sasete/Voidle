@@ -52,6 +52,7 @@ func _ready() -> void:
 	_body_lbl.add_theme_font_size_override("normal_font_size", 9)
 	_body_lbl.add_theme_color_override("default_color", Color(0.72, 0.78, 0.92))
 	_body_lbl.custom_minimum_size = Vector2(0, 0)
+	_body_lbl.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	vbox.add_child(_body_lbl)
 
 	# Spacer pushes cost to the bottom

@@ -1,0 +1,13 @@
+[gd_scene load_steps=2 format=3 uid="uid://cx600qxyu14aa"]
+
+[ext_resource type="Script" path="res://scripts/tools/IconExporter.gd" id="1_xabcy"]
+
+[node name="IconExporter" type="Node"]
+script = ExtResource("1_xabcy")
+export_path = "res://icon_export.png"
+resolution = Vector2i(512, 512)
+planet_type = 0
+seed_value = 8888
+light_angle = 0.5
+rotation_offset = 0.0
+planet_size = 1.0
