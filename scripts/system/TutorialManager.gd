@@ -1193,27 +1193,41 @@ func _give_skip_minerals() -> void:
 func _flash_skip_reward(pos: Vector2) -> void:
 	var rd := ResourceData.generate(GameState.home_planet_seed, ResourceData.Tag.RAW_MINERAL, 3, 1)
 	var ore_icon := MineralIcon.make(rd.tier, rd.display_color)
-	var flash := RichTextLabel.new()
-	flash.bbcode_enabled = true
-	flash.fit_content    = true
-	flash.scroll_active  = false
-	flash.mouse_filter   = Control.MOUSE_FILTER_IGNORE
-	if _orbitron: flash.add_theme_font_override("normal_font", _orbitron)
-	flash.add_theme_font_size_override("normal_font_size", 15)
-	flash.add_theme_color_override("default_color", Color(0.90, 0.82, 0.50))
-	flash.append_text("+%.0f " % SKIP_MINERAL_AMOUNT)
-	flash.add_image(ore_icon, 16, 16)
-	flash.position = pos + Vector2(-30, -20)
-	flash.modulate.a = 0.0
-	add_child(flash)
+
+	var root := HBoxContainer.new()
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_theme_constant_override("separation", 4)
+	root.position = pos + Vector2(-30, -20)
+	root.modulate.a = 0.0
+
+	var icon_rect := TextureRect.new()
+	icon_rect.texture = ore_icon
+	icon_rect.custom_minimum_size = Vector2(14, 14)
+	icon_rect.size = Vector2(14, 14)
+	icon_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon_rect.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	icon_rect.size_flags_vertical   = Control.SIZE_SHRINK_CENTER
+	icon_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(icon_rect)
+
+	var lbl := Label.new()
+	lbl.text = "+%.0f" % SKIP_MINERAL_AMOUNT
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if _orbitron: lbl.add_theme_font_override("font", _orbitron)
+	lbl.add_theme_font_size_override("font_size", 13)
+	lbl.add_theme_color_override("font_color", rd.display_color)
+	root.add_child(lbl)
+
+	add_child(root)
 	var tw := create_tween()
 	tw.set_parallel(true)
-	tw.tween_property(flash, "modulate:a", 1.0, 0.15)
-	tw.tween_property(flash, "position:y", flash.position.y - 50, 1.0)
+	tw.tween_property(root, "modulate:a", 1.0, 0.15)
+	tw.tween_property(root, "position:y", root.position.y - 50, 1.0)
 	await get_tree().create_timer(0.15).timeout
-	create_tween().tween_property(flash, "modulate:a", 0.0, 0.5).set_delay(0.4)
+	create_tween().tween_property(root, "modulate:a", 0.0, 0.5).set_delay(0.4)
 	await get_tree().create_timer(0.9).timeout
-	if is_instance_valid(flash): flash.queue_free()
+	if is_instance_valid(root): root.queue_free()
 
 # ── Reward flash ──────────────────────────────────────────────────────────────
 func _flash_reward(text: String) -> void:

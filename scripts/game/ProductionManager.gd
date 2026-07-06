@@ -244,6 +244,9 @@ func _tick_all(delta: float) -> void:
 func _on_tick_complete(pp: PlanetProgress, def: BuildingDef,
 		_key_str: String, _energy: float, amount: int,
 		entry: Dictionary) -> void:
+	# Skip if building was scrapped before tick completed
+	if not pp.buildings.has(entry):
+		return
 	# Produce output (scaled by amount)
 	var mods := PlanetModifier.for_planet(_planet_type(pp.planet_seed))
 	var st := get_node("/root/SkillTree")
@@ -276,11 +279,11 @@ func _on_tick_complete(pp: PlanetProgress, def: BuildingDef,
 			if total_density > 0.0:
 				for i in res_list.size():
 					var share := total_out * (densities[i] / total_density)
-					if share < 0.5:
+					if share < 0.05:
 						continue
 					var rd := res_list[i] as ResourceData
 					var icon_tex := MineralIcon.make(rd.tier, rd.display_color)
-					var txt := "+%.0f" % share
+					var txt := "+%.1f" % share if share < 1.0 else "+%.0f" % share
 					resource_produced.emit(pp.planet_seed, poi_lbl, txt, rd.display_color, icon_tex)
 		return
 
