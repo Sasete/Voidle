@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="BuildingDef" load_steps=2 format=3 uid="uid://bid_circuit_overloader"]
+
+[ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="1_1"]
+
+[resource]
+script = ExtResource("1_1")
+building_id = "circuit_overloader"
+display_name = "Circuit Overloader"
+description = "Increases Solar Array output in the district."
+allowed_poi_types = Array[int]([2])
+allowed_planet_types = Array[int]([])
+base_cost = 400.0
+slot_cost = 1
+min_planet_lv = 2
+construct_duration = 0.0
+tick_duration = 30.0
+energy_per_tick = 0.0
+output_type = 0
+output_amount = 0.0
+input_type = 0
+input_amount = 0.0
+input_tier = 1
+unlocked_by_default = false

@@ -8,6 +8,9 @@ var _sep:        Control
 var _spacer:     Control
 var _orbitron:   Font
 var _visible:    bool  = false
+
+var _sub_panel:  PanelContainer
+var _sub_lbl:    RichTextLabel
 var _hide_timer: float = 0.0
 
 func _ready() -> void:
@@ -28,6 +31,7 @@ func _ready() -> void:
 	_panel.mouse_filter          = Control.MOUSE_FILTER_IGNORE
 	_panel.custom_minimum_size   = Vector2(0, 0)
 	_panel.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	_panel.size_flags_vertical   = Control.SIZE_SHRINK_BEGIN
 	_panel.visible = false
 
 	var vbox := VBoxContainer.new()
@@ -51,6 +55,7 @@ func _ready() -> void:
 	_body_lbl.scroll_active  = false
 	_body_lbl.add_theme_font_size_override("normal_font_size", 9)
 	_body_lbl.add_theme_color_override("default_color", Color(0.72, 0.78, 0.92))
+	_body_lbl.autowrap_mode = TextServer.AUTOWRAP_OFF
 	_body_lbl.custom_minimum_size = Vector2(0, 0)
 	_body_lbl.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	vbox.add_child(_body_lbl)
@@ -87,36 +92,76 @@ func _ready() -> void:
 	_cost_lbl.visible = false
 	vbox.add_child(_cost_lbl)
 
-	add_child(_panel)
+	# --- Secondary Tooltip Panel ---
+	_sub_panel = PanelContainer.new()
+	var sub_s := StyleBoxFlat.new()
+	sub_s.bg_color = Color(0.12, 0.14, 0.20, 0.95)
+	sub_s.border_width_left = 1; sub_s.border_width_right = 1
+	sub_s.border_width_top = 1; sub_s.border_width_bottom = 1
+	sub_s.border_color = Color(0.4, 0.45, 0.6, 0.6)
+	sub_s.corner_radius_top_left = 4; sub_s.corner_radius_top_right = 4
+	sub_s.corner_radius_bottom_left = 4; sub_s.corner_radius_bottom_right = 4
+	sub_s.content_margin_left = 8; sub_s.content_margin_right = 8
+	sub_s.content_margin_top = 6; sub_s.content_margin_bottom = 6
+	_sub_panel.add_theme_stylebox_override("panel", sub_s)
+	_sub_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_sub_panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	_sub_panel.visible = false
+	
+	_sub_lbl = RichTextLabel.new()
+	_sub_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_sub_lbl.bbcode_enabled = true
+	_sub_lbl.fit_content = true
+	_sub_lbl.scroll_active = false
+	_sub_lbl.autowrap_mode = TextServer.AUTOWRAP_OFF
+	_sub_lbl.add_theme_font_size_override("normal_font_size", 9)
+	_sub_lbl.add_theme_color_override("default_color", Color(0.8, 0.85, 0.9))
+	_sub_lbl.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_sub_panel.add_child(_sub_lbl)
+
+	var hbox := HBoxContainer.new()
+	hbox.add_theme_constant_override("separation", 6)
+	hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hbox.add_child(_panel)
+	hbox.add_child(_sub_panel)
+	
+	add_child(hbox)
 
 func _process(delta: float) -> void:
 	if _hide_timer > 0.0:
 		_hide_timer -= delta
 		if _hide_timer <= 0.0:
+			_panel.get_parent().visible = false
 			_panel.visible = false
+			_sub_panel.visible = false
 			_visible       = false
 		return
 	if not _visible:
 		return
 	# get_combined_minimum_size() is synchronous — no frame delay needed
-	var sz  := _panel.get_combined_minimum_size()
-	var pw  := sz.x
-	var ph  := sz.y
+	var root_node := _panel.get_parent() as Control
+	# Make sure _panel is visible so it contributes to size
+	_panel.visible = true
+	var sz: Vector2 = root_node.get_combined_minimum_size()
+	var pw: float = sz.x
+	var ph: float = sz.y
 	if pw <= 1.0 or ph <= 1.0:
 		return
 	var mouse := get_viewport().get_mouse_position()
 	var vp    := get_viewport().get_visible_rect().size
 	var pos := mouse + Vector2(10, -ph - 8.0)
-	if pos.x + pw > vp.x: pos.x = vp.x - pw - 4.0
+	if pos.x + pw > vp.x:
+		# Flip to the left of the mouse so it doesn't block clicks!
+		pos.x = mouse.x - pw - 10.0
 	if pos.x < 4.0:       pos.x = 4.0
 	if pos.y < 4.0:       pos.y = mouse.y + 14.0
-	_panel.position = pos
-	_panel.visible  = true
+	root_node.position = pos
+	root_node.visible  = true
 
 ## Show a tooltip.
 ## body: String or Array — Array elements may be String or ImageTexture (rendered inline).
 ## cost: String, Array[String], or Array[Variant] mixing strings and textures.
-func show_tip(title: String, body = "", cost = "") -> void:
+func show_tip(title: String, body = "", cost = "", sub_body = "") -> void:
 	_title_lbl.text = title
 
 	# ── Body ────────────────────────────────────────────────────────
@@ -151,7 +196,25 @@ func show_tip(title: String, body = "", cost = "") -> void:
 	if has_cost:
 		_cost_lbl.text = "\n".join(cost_lines)
 
-	_panel.visible = false
+	_panel.visible = true
+	_panel.get_parent().visible = false
+	
+	# ── Sub Body ────────────────────────────────────────────────────
+	_sub_lbl.clear()
+	if sub_body is String:
+		_sub_lbl.append_text(sub_body as String)
+		_sub_panel.visible = not (sub_body as String).is_empty()
+	elif sub_body is Array:
+		var arr := sub_body as Array
+		for part in arr:
+			if part is String:
+				_sub_lbl.append_text(part as String)
+			elif part is ImageTexture or part is Texture2D:
+				_sub_lbl.add_image(part as Texture2D, 13, 13)
+		_sub_panel.visible = not arr.is_empty()
+	else:
+		_sub_panel.visible = false
+
 	_hide_timer    = 0.0
 	_visible       = true
 

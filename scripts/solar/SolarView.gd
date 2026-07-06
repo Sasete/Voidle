@@ -180,9 +180,9 @@ func _on_planet_selected(pd: PlanetData) -> void:
 		pd.set_meta("__solar_data", _current)
 		SceneTransition.go("res://scenes/planetary/PlanetaryView.tscn", pd)
 
-func _show_access_denied_text() -> void:
+func _show_access_denied_text(msg: String = "ACCESS DENIED") -> void:
 	var lbl := Label.new()
-	lbl.text = "ACCESS DENIED"
+	lbl.text = msg
 	lbl.add_theme_color_override("font_color", Color(1.0, 0.3, 0.3))
 	lbl.add_theme_color_override("font_outline_color", Color(0, 0, 0))
 	lbl.add_theme_constant_override("outline_size", 4)
@@ -983,7 +983,10 @@ func _input(event: InputEvent) -> void:
 					else:
 						load_system(_current)
 				else:
-					_go_to_galaxy()
+					if not GameState.galaxy_unlocked:
+						_show_access_denied_text("Galaxy Nav  LOCKED")
+					else:
+						_go_to_galaxy()
 	elif event is InputEventMagnifyGesture:
 		if event.factor > 1.0:
 			var target_pd: PlanetData = _hovered_planet
@@ -1001,9 +1004,15 @@ func _input(event: InputEvent) -> void:
 			if _back_charge >= 3:
 				_back_charge = 0
 				if _mode == Mode.LOCAL:
-					load_system(_current)
+					if not GameState.solar_unlocked:
+						_show_access_denied_text()
+					else:
+						load_system(_current)
 				else:
-					_go_to_galaxy()
+					if not GameState.galaxy_unlocked:
+						_show_access_denied_text("Galaxy Nav  LOCKED")
+					else:
+						_go_to_galaxy()
 	elif event is InputEventPanGesture:
 		# 2-finger trackpad swipe → rotate (horizontal) / tilt (vertical)
 		_view_angle += event.delta.x * 0.012

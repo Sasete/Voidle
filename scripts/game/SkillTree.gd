@@ -89,22 +89,43 @@ func _init() -> void:
 	_add_node("credit_boost", "Market Integration", "Integrates residential areas with local credit exchanges.", 400.0, Vector2(-160, 480), ["unlock_commercial"], 2, "+25% Residential credit payout", 5, NodeShape.DIAMOND)
 
 	# --- BRANCH 5: TRADE/LOGISTICS (Mid-Right-Down) ---
-	_add_node("unlock_trade_hub", "Interplanetary Trade Hub", "Massive logistics center that prints credits.", 1500.0, Vector2(120, 240), ["root"], 2, "Unlocks Trade Hub", 1)
-	_add_node("global_logistics", "Global Logistics", "Optimizes supply chains for all colonized worlds.", 2000.0, Vector2(240, 240), ["unlock_trade_hub"], 3, "+5% global production speed", 10, NodeShape.DIAMOND)
+	_add_node("unlock_trade_hub", "Interplanetary Trade Hub", "Massive logistics center that prints credits.", 1500.0, Vector2(240, 240), ["root"], 2, "Unlocks Trade Hub", 1)
+	_add_node("global_logistics", "Global Logistics", "Optimizes supply chains for all colonized worlds.", 2000.0, Vector2(240, 360), ["unlock_trade_hub"], 3, "+5% global production speed", 10, NodeShape.DIAMOND)
 	_add_node("unlock_commercial_hub", "Mega Commercial Hub", "Massive commercial hubs processing refined minerals.", 2000.0, Vector2(240, 480), ["unlock_trade_hub"], 3, "Unlocks Commercial Hub", 1)
 	_add_node("planetary_architecture", "Planetary Architecture", "Increases maximum districts available on all planets.", 2500.0, Vector2(360, 480), ["unlock_commercial_hub"], 4, "+1 Max District", 3, NodeShape.DIAMOND)
-	_add_node("unlock_logistics_center", "Planetary Logistics", "Blueprints for planet-wide logistics centers.", 5000.0, Vector2(120, 720), ["unlock_commercial_hub"], 4, "Unlocks Logistics Center", 1)
-	_add_node("unlock_command_center", "Planetary Command", "Blueprints for planet-wide command centers.", 5000.0, Vector2(360, 720), ["unlock_commercial_hub"], 4, "Unlocks Command Center", 1)
+	_add_node("unlock_logistics_center", "Planetary Logistics", "Blueprints for planet-wide logistics centers.", 5000.0, Vector2(240, 600), ["unlock_commercial_hub"], 4, "Unlocks Logistics Center", 1)
+	_add_node("unlock_command_center", "Planetary Command", "Blueprints for planet-wide command centers.", 5000.0, Vector2(360, 600), ["unlock_commercial_hub"], 4, "Unlocks Command Center", 1)
 
 	# --- BRANCH 6: ENERGY (Right-Down) ---
-	_add_node("unlock_thermal_plant", "Thermal Plant", "Unlocks the standard mineral-burning Thermal Generator.", 100.0, Vector2(240, 160), ["root"], 2, "Unlocks Thermal Generator", 1)
-	_add_node("solar_efficiency", "Solar Arrays", "Improves basic solar cell design to absorb more stellar energy.", 50.0, Vector2(240, 320), ["unlock_thermal_plant"], 2, "+25% Solar Array output", 5, NodeShape.DIAMOND)
-	_add_node("generator_efficiency", "Heat Capture Loops", "Adds heat capture loops to standard Generators.", 250.0, Vector2(480, 160), ["unlock_thermal_plant"], 3, "+30% Generator Energy output", 5, NodeShape.DIAMOND)
-	_add_node("power_transmission", "Superconducting Grid", "Reduces losses inside energy lines.", 400.0, Vector2(480, 320), ["unlock_thermal_plant"], 3, "-15% Energy consumption on all buildings", 1, NodeShape.DIAMOND)
-	_add_node("supercharged_generators", "Plasma Ignition", "Drastically increases output of all generators.", 800.0, Vector2(720, 160), ["generator_efficiency"], 4, "+10% Generator Energy output", 10, NodeShape.DIAMOND)
-	_add_node("energy_efficiency", "Zero-Point Regulators", "Reduces overall energy consumption via quantum stabilization.", 800.0, Vector2(480, 480), ["power_transmission"], 4, "-5% global energy consumption", 5, NodeShape.DIAMOND)
-	_add_node("unlock_fusion_reactor", "Fusion Reactor", "Unlocks massive industrial Fusion Reactors.", 1000.0, Vector2(720, 320), ["power_transmission", "generator_efficiency"], 4, "Unlocks Fusion Reactor", 1)
-	_add_node("dyson_swarm", "Dyson Swarm Blueprint", "Begin constructing orbital solar collectors around the sun.", 5000.0, Vector2(960, 320), ["unlock_fusion_reactor"], 5, "Massive global energy boost", 1)
+	_add_node("unlock_thermal_plant", "Thermal Plant", "Unlocks the standard mineral-burning Thermal Generator.", 100.0, Vector2(480, 160), ["root"], 2, "Unlocks Thermal Generator.", 1)
+	_add_node("solar_efficiency", "Solar Arrays", "Improves basic solar cell design to absorb more stellar energy.", 50.0, Vector2(480, 280), ["unlock_thermal_plant"], 2, "+10% Solar Array output", 5, NodeShape.DIAMOND)
+	_add_node("generator_efficiency", "Heat Capture Loops", "Adds heat capture loops to standard Generators.", 250.0, Vector2(600, 160), ["unlock_thermal_plant"], 3, "+5% Generator Energy output", 5, NodeShape.DIAMOND)
+	_add_node("power_transmission", "Superconducting Grid", "Reduces losses inside energy lines.", 400.0, Vector2(600, 280), ["unlock_thermal_plant"], 3, "-5% Energy consumption on all buildings", 1, NodeShape.DIAMOND)
+	_add_node("supercharged_generators", "Plasma Ignition", "Drastically increases output of all generators.", 800.0, Vector2(720, 160), ["generator_efficiency"], 4, "+2% Generator Energy output", 10, NodeShape.DIAMOND)
+	_add_node("energy_efficiency", "Zero-Point Regulators", "Reduces overall energy consumption via quantum stabilization.", 800.0, Vector2(720, 280), ["power_transmission"], 4, "-2% global energy consumption", 5, NodeShape.DIAMOND)
+	_add_node("unlock_fusion_reactor", "Fusion Reactor", "Unlocks massive industrial Fusion Reactors.", 1000.0, Vector2(840, 220), ["power_transmission", "generator_efficiency"], 4, "Unlocks Fusion Reactor.", 1)
+	
+	_add_node("find_available_star", "Find Available Star", "Locate a stable G-type main-sequence star for megastructure construction.", 9999999.0, Vector2(1080, 220), ["dyson_swarm_dummy"], 6, "Required for Dyson Swarm.", 1)
+	_add_node("dyson_swarm", "Dyson Swarm Blueprint", "Begin constructing orbital solar collectors around the sun.\n[color=#ffbb55]Megastructure Project[/color]", 50000.0, Vector2(960, 220), ["unlock_fusion_reactor", "find_available_star"], 5, "+100% Solar Array output", 1, NodeShape.CIRCLE)
+
+	# --- NEW ENERGY PROGRESSION ---
+	_add_node("unlock_thermic_burner", "Thermic Burner", "Burns refined ingots for substantial energy.", 400.0, Vector2(480, 40), ["unlock_thermal_plant"], 3, "Unlocks Thermic Burner.", 1)
+	_add_node("thermic_mastery", "Thermic Mastery", "Optimizes ingot combustion.", 300.0, Vector2(600, 40), ["unlock_thermic_burner"], 3, "+2% Generator Output", 10, NodeShape.DIAMOND)
+	
+	_add_node("unlock_plasma_reactor", "Plasma Reactor", "Burns alloys using sustained magnetic plasma.", 1200.0, Vector2(480, -80), ["unlock_thermic_burner"], 4, "Unlocks Plasma Reactor.", 1)
+	_add_node("plasma_mastery", "Plasma Mastery", "Stabilizes plasma flow.", 800.0, Vector2(600, -80), ["unlock_plasma_reactor"], 4, "+2% Generator Output", 10, NodeShape.DIAMOND)
+	
+	_add_node("unlock_antimatter_chamber", "Antimatter Chamber", "Consumes complex components for staggering energy.", 4000.0, Vector2(480, -200), ["unlock_plasma_reactor"], 5, "Unlocks Antimatter Chamber.", 1)
+	_add_node("antimatter_mastery", "Antimatter Mastery", "Perfects containment fields.", 2500.0, Vector2(600, -200), ["unlock_antimatter_chamber"], 5, "+2% Generator Output", 10, NodeShape.DIAMOND)
+	
+	_add_node("unlock_singularity_core", "Singularity Core", "Harnesses a micro-black hole for godlike energy.", 10000.0, Vector2(480, -320), ["unlock_antimatter_chamber"], 6, "Unlocks Singularity Core.", 1)
+	_add_node("singularity_mastery", "Singularity Mastery", "Extracts hawking radiation.", 8000.0, Vector2(600, -320), ["unlock_singularity_core"], 6, "+2% Generator Output", 10, NodeShape.DIAMOND)
+
+	_add_node("unlock_circuit_overloader", "Circuit Overloader", "A support building that boosts Solar Arrays in its district.", 600.0, Vector2(480, 400), ["solar_efficiency"], 3, "Unlocks Circuit Overloader.\nBoosts district Solar output by +3%.", 1)
+	_add_node("unlock_magma_resonator", "Magma Resonator", "A support building that boosts Geothermal Plants in its district.", 1200.0, Vector2(720, 40), ["supercharged_generators"], 4, "Unlocks Magma Resonator.\nBoosts district Geothermal output by +2%.", 1)
+	_add_node("unlock_grid_optimizer", "Grid Optimizer", "A support building that boosts all clean energy in its district.", 2000.0, Vector2(840, 400), ["unlock_fusion_reactor"], 5, "Unlocks Grid Optimizer.\nBoosts all district clean energy by +1%.", 1)
+	_add_node("unlock_combustion_stabilizer", "Combustion Stabilizer", "A support building that extends burner fuel duration in its district.", 1500.0, Vector2(720, -80), ["plasma_mastery"], 4, "Unlocks Combustion Stabilizer.\nExtends district burner fuel duration by +5%.", 1)
+
 
 func _add_node(id: String, name: String, desc: String, cost: float, pos: Vector2, parents: Array[String], tier: int, eff: String, max_lv: int = 1, shape: NodeShape = NodeShape.HEXAGON) -> void:
 	nodes[id] = SkillNode.new(id, name, desc, cost, pos, parents, tier, eff, max_lv, shape)
@@ -202,7 +223,12 @@ func is_visible(id: String) -> bool:
 # ── Dynamic Modifiers read by GameState/ProductionManager ─────────────────────
 
 func get_solar_mult() -> float:
-	return 1.25 if "solar_efficiency" in unlocked_skills else 1.0
+	var base := 1.0
+	if "solar_efficiency" in unlocked_skills:
+		base += 0.25
+	if "dyson_swarm" in unlocked_skills:
+		base += 1.00
+	return base
 
 func get_mine_speed_mult() -> float:
 	var base := 1.0
@@ -216,10 +242,18 @@ func get_mine_speed_mult() -> float:
 func get_generator_output_mult() -> float:
 	var base := 1.0
 	if "generator_efficiency" in unlocked_skills:
-		base += 0.30
+		base += 0.05
 	if "supercharged_generators" in unlocked_skills:
 		var lv := get_skill_level("supercharged_generators")
-		base += 0.10 * lv
+		base += 0.02 * lv
+	if "thermic_mastery" in unlocked_skills:
+		base += 0.02 * get_skill_level("thermic_mastery")
+	if "plasma_mastery" in unlocked_skills:
+		base += 0.02 * get_skill_level("plasma_mastery")
+	if "antimatter_mastery" in unlocked_skills:
+		base += 0.02 * get_skill_level("antimatter_mastery")
+	if "singularity_mastery" in unlocked_skills:
+		base += 0.02 * get_skill_level("singularity_mastery")
 	return base
 
 func get_credits_mult() -> float:
@@ -231,7 +265,7 @@ func get_mine_output_mult() -> float:
 		base += 0.25
 	if "deep_core_drilling" in unlocked_skills:
 		var lv := get_skill_level("deep_core_drilling")
-		base += 0.10 * lv
+		base += 0.02 * lv
 	return base
 
 func get_energy_consume_mult() -> float:
@@ -240,7 +274,7 @@ func get_energy_consume_mult() -> float:
 		mult -= 0.15
 	if "energy_efficiency" in unlocked_skills:
 		var lv := get_skill_level("energy_efficiency")
-		mult -= 0.05 * lv
+		mult -= 0.02 * lv
 	return maxf(0.1, mult)
 
 func get_global_speed_mult() -> float:

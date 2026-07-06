@@ -114,32 +114,80 @@ func build_in_district(district: POIData, building_id: String,
 		return false
 	if slots_used_in_district(district.label) + def.slot_cost > district_slots(district):
 		return false
+	
+	# Try to find an identical existing building to merge into
+	var merge_idx := -1
+	for i in buildings.size():
+		var b: Dictionary = buildings[i]
+		if b.get("district_id") == district.label and b.get("building_id") == building_id and not b.get("constructing", false):
+			var b_tgt: String = b.get("target_mineral", "")
+			if target_mineral == b_tgt or target_mineral == "":
+				merge_idx = i
+				break
+	
 	var entry := { "district_id": district.label, "building_id": building_id, "amount": 1, "constructing": true }
+	if merge_idx != -1:
+		entry["merge_into"] = merge_idx
+		
 	# Mines target a specific raw mineral — caller may supply one, otherwise left blank
-	# (ProductionManager will auto-pick the first available mineral on first tick)
 	if def.output_type == BuildingDef.OutputType.RAW_MINERAL and target_mineral != "":
 		entry["target_mineral"] = target_mineral
+		
 	buildings.append(entry)
 	if building_id == "spaceport":
 		has_spaceport = true
 	return true
 
 ## Stack one more of an existing building — goes through construction before merging.
-func stack_building_unchecked(district_label: String, building_id: String) -> bool:
-	for b: Dictionary in buildings:
-		if b.get("district_id") == district_label and b.get("building_id") == building_id \
-				and not b.get("constructing", false):
-			# Add a temporary construction entry; ProductionManager merges it on completion
+func stack_building_unchecked(district_label: String, building_id: String, merge_into_entry: Dictionary = {}) -> bool:
+	for i in buildings.size():
+		var b: Dictionary = buildings[i]
+		# If we specified an exact entry, merge into that, otherwise find any matching one
+		var match_b = is_same(b, merge_into_entry) if not merge_into_entry.is_empty() else (b.get("district_id") == district_label and b.get("building_id") == building_id)
+		if match_b and not b.get("constructing", false):
 			var entry := {
 				"district_id": district_label,
 				"building_id": building_id,
 				"amount": 1,
 				"constructing": true,
-				"merge_into": buildings.find(b),
+				"merge_into": i,
 			}
 			buildings.append(entry)
 			return true
 	return false
+
+func upgrade_building(entry: Dictionary) -> bool:
+	var idx := building_real_index(entry)
+	if idx == -1: return false
+	var b := buildings[idx]
+	var def := BuildingDef.find(b.get("building_id", ""))
+	if def == null: return false
+	
+	var cur_lv: int = b.get("level", 1)
+	var amt: int = b.get("amount", 1)
+	var cost := def.get_upgrade_cost(cur_lv, amt)
+	
+	if GameState.spend_credits(cost):
+		b["level"] = cur_lv + 1
+		return true
+	return false
+
+func split_building(entry: Dictionary, split_amount: int) -> bool:
+	var idx := building_real_index(entry)
+	if idx == -1: return false
+	var b := buildings[idx]
+	var current_amt: int = b.get("amount", 1)
+	if split_amount <= 0 or split_amount >= current_amt:
+		return false
+		
+	# Reduce current stack
+	b["amount"] = current_amt - split_amount
+	
+	# Create new stack
+	var new_stack := b.duplicate(true)
+	new_stack["amount"] = split_amount
+	buildings.append(new_stack)
+	return true
 
 func add_resource(resource_id: String, amount: float) -> void:
 	GameState.add_resource(resource_id, amount)
@@ -161,3 +209,10 @@ static func make(seed_val: int) -> PlanetProgress:
 	p.planet_seed = seed_val
 	p.recalculate_limits()
 	return p
+
+func get_total_building_levels() -> int:
+	var total := 0
+	for b in buildings:
+		if not b.get("constructing", false):
+			total += b.get("level", 1) * b.get("amount", 1)
+	return total

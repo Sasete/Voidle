@@ -10,6 +10,7 @@ signal unlock_changed(key: String, value: bool)
 signal planet_progress_changed(seed_val: int)
 signal asteroid_discovered(slot: int, count: int)
 signal global_resources_changed
+signal district_placed(planet_seed: int, district_type_id: int)
 
 # ── Starting Config (edit these to change new-game defaults) ─────────────────
 ## Starting credits for a new game.
@@ -128,20 +129,10 @@ func _seed_starting_resources() -> void:
 	var home_pp := get_planet(home_planet_seed)
 	var home_pd := get_home_planet()
 
-	# Starting stored resources (all tiers for visual testing)
+	# Register home planet mineral types (no pre-filled inventory)
 	var r1t1 := ResourceData.generate(home_planet_seed, ResourceData.Tag.RAW_MINERAL, 1, 1)
-	var r1t2 := ResourceData.generate(home_planet_seed, ResourceData.Tag.RAW_MINERAL, 1, 2)
-	var r1t3 := ResourceData.generate(home_planet_seed, ResourceData.Tag.RAW_MINERAL, 1, 3)
-	var r1t4 := ResourceData.generate(home_planet_seed, ResourceData.Tag.RAW_MINERAL, 1, 4)
-	var r1t5 := ResourceData.generate(home_planet_seed, ResourceData.Tag.RAW_MINERAL, 1, 5)
 	var r2t1 := ResourceData.generate(home_planet_seed, ResourceData.Tag.RAW_MINERAL, 2, 1)
-	global_resources[r1t1.resource_id()] = 50.0
-	global_resources[r1t2.resource_id()] = 10.0
-	global_resources[r1t3.resource_id()] = 10.0
-	global_resources[r1t4.resource_id()] = 10.0
-	global_resources[r1t5.resource_id()] = 10.0
-	global_resources[r2t1.resource_id()] = 10.0
-	for rd: ResourceData in [r1t1, r1t2, r1t3, r1t4, r1t5, r2t1]:
+	for rd: ResourceData in [r1t1, r2t1]:
 		var key := rd.resource_id()
 		if not known_resources.has(key):
 			known_resources[key] = rd
@@ -156,25 +147,7 @@ func _seed_starting_resources() -> void:
 		home_pd.mineral_densities[r1t1.resource_id()] = 0.80
 		home_pd.mineral_densities[r2t1.resource_id()] = 0.10
 
-	# Add a starting Space Station as an orbital district POI
-	if home_pd != null:
-		var has_station := false
-		for poi: POIData in home_pd.custom_pois:
-			if poi.poi_type == POIData.POIType.STATION:
-				has_station = true
-				break
-		if not has_station:
-			var st := POIData.new()
-			st.label             = "Pioneer Station"
-			st.poi_type          = POIData.POIType.STATION
-			st.manual_position   = true
-			st.light_intensity   = 0.0
-			st.orbit_radius      = 1.06
-			st.orbit_angle       = 0.8
-			st.orbit_inclination = 0.55
-			st.orbit_node        = 1.2
-			st.orbit_speed       = 0.01
-			home_pd.custom_pois.append(st)
+	pass  # orbital district added later via SkillTree unlock
 
 func _build_home_solar() -> SolarData:
 	# Use the galaxy star's own seed so the system matches what the galaxy would generate
@@ -201,6 +174,17 @@ func _build_home_solar() -> SolarData:
 	moon.planet_name = home_pd.planet_name + " a"
 	home_pd.moons.append(moon)
 	home_pd.set_meta("__is_home", true)
+	
+	sd.planets[home_planet_idx] = home_pd
+
+	# Cache all generated planets in the home system so that tooltips and production
+	# work correctly immediately after loading a save file.
+	for pd in sd.planets:
+		cache_planet_data(pd)
+		for m in pd.moons:
+			cache_planet_data(m)
+
+	sd.set_meta("__is_home", true)
 
 	# Apply starting config
 	credits         = start_credits
@@ -406,6 +390,14 @@ func save() -> void:
 	data["unlocked_buildings"]  = unlocked_buildings
 	data["light_angle"]         = light_angle
 	data["achievements"]        = AchievementManager.get_save_data()
+	data["tutorial_done"]        = TutorialManager._tutorial_done
+	data["tutorial_quest_done"]  = TutorialManager._quest_done
+	data["tutorial_guided_step"] = TutorialManager._guided_step
+	data["tutorial_action_sub"]  = TutorialManager._action_sub
+	data["tutorial_quest_step"]  = TutorialManager._quest_step
+	data["tutorial_quest_sub"]   = TutorialManager._quest_sub
+	data["tutorial_solar_count"] = TutorialManager._solar_count
+	data["tutorial_inv_shown"]   = TutorialManager._inventory_shown
 	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if file:
 		file.store_var(data)
@@ -447,6 +439,15 @@ func load_save() -> bool:
 	if data.has("achievements"):
 		AchievementManager.load_save(data["achievements"])
 
+	TutorialManager._tutorial_done    = data.get("tutorial_done",        false)
+	TutorialManager._quest_done       = data.get("tutorial_quest_done",  false)
+	TutorialManager._guided_step      = data.get("tutorial_guided_step", 0)
+	TutorialManager._action_sub       = data.get("tutorial_action_sub",  0)
+	TutorialManager._quest_step       = data.get("tutorial_quest_step",  0)
+	TutorialManager._quest_sub        = data.get("tutorial_quest_sub",   0)
+	TutorialManager._solar_count      = data.get("tutorial_solar_count", 0)
+	TutorialManager._inventory_shown  = data.get("tutorial_inv_shown",   false)
+
 	if has_node("/root/ShipManager"):
 		get_node("/root/ShipManager").deserialize(data.get("ships", []))
 
@@ -476,6 +477,7 @@ func delete_save() -> void:
 		DirAccess.remove_absolute(SAVE_PATH)
 	save_deleted.emit()
 	credits              = 500.0
+	science_points       = 0.0
 	solar_unlocked       = false
 	galaxy_unlocked      = false
 	discovered_asteroids = []

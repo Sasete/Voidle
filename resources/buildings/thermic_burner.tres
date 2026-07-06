@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="BuildingDef" load_steps=2 format=3 uid="uid://bid_thermic_burner"]
+
+[ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="1_1"]
+
+[resource]
+script = ExtResource("1_1")
+building_id = "thermic_burner"
+display_name = "Thermic Burner"
+description = "Burns T2 (Ingot) refined minerals for higher energy."
+allowed_poi_types = Array[int]([2])
+allowed_planet_types = Array[int]([])
+base_cost = 300.0
+slot_cost = 1
+min_planet_lv = 2
+construct_duration = 0.0
+tick_duration = 30.0
+energy_per_tick = 0.0
+output_type = 1
+output_amount = 15.0
+input_type = 4
+input_amount = 2.0
+input_tier = 2
+unlocked_by_default = false

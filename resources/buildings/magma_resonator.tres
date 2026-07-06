@@ -1,22 +1,22 @@
-[gd_resource type="Resource" script_class="BuildingDef" load_steps=2 format=3 uid="uid://bid_geothermal_plant"]
+[gd_resource type="Resource" script_class="BuildingDef" load_steps=2 format=3 uid="uid://bid_magma_resonator"]
 
 [ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="1_1"]
 
 [resource]
 script = ExtResource("1_1")
-building_id = "geothermal_plant"
-display_name = "Geothermal Plant"
-description = "Extracts massive energy from the core. Only works on Volcanic planets."
+building_id = "magma_resonator"
+display_name = "Magma Resonator"
+description = "Increases Geothermal Plant output in the district."
 allowed_poi_types = Array[int]([2])
 allowed_planet_types = Array[int]([6])
-base_cost = 1000.0
+base_cost = 800.0
 slot_cost = 1
 min_planet_lv = 3
 construct_duration = 0.0
 tick_duration = 30.0
 energy_per_tick = 0.0
-output_type = 1
-output_amount = 10.0
+output_type = 0
+output_amount = 0.0
 input_type = 0
 input_amount = 0.0
 input_tier = 1

@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="BuildingDef" load_steps=3 format=3 uid="uid://b_power_plant_e70fefa2"]
+[gd_resource type="Resource" script_class="BuildingDef" load_steps=3 format=3 uid="uid://b_fusion_reactor_e70fefa2"]
 
 [ext_resource type="Script" path="res://scripts/game/logic/GeneratorLogic.gd" id="1_logic"]
 [ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="2_def"]
@@ -8,8 +8,8 @@ script = ExtResource("1_logic")
 
 [resource]
 script = ExtResource("2_def")
-building_id = "power_plant"
-display_name = "Power Plant"
+building_id = "fusion_reactor"
+display_name = "Fusion Reactor"
 description = "High-output plant; consumes more fuel per cycle."
 allowed_poi_types = Array[int]([2])
 base_cost = 1200.0

@@ -437,35 +437,63 @@ func _build_tree_graph() -> void:
 		
 		# Show title. If it is leveled, we will put the level info at the top right inside body
 		var tip_title: String = node.name
-		var tip_body := ""
+		var tip_body: Array = []
+		var sub_body: Array = []
 		var tip_cost := ""
 		
 		# Root is a dummy central core - format clean
 		if id == "root":
-			tip_body = node.description
+			tip_body.append(node.description)
 		else:
+			var body_str := ""
 			# Format level information to show at the right top of the tooltip body
 			if max_lv > 1:
 				if cur_lv >= max_lv:
-					tip_body += "[right][color=#55f58c]MAX LEVEL[/color][/right]\n"
+					body_str += "[right][color=#55f58c]MAX LEVEL[/color][/right]\n"
 				else:
-					tip_body += "[right][color=#e5c24b]Level %d/%d[/color][/right]\n" % [cur_lv, max_lv]
+					body_str += "[right][color=#e5c24b]Level %d/%d[/color][/right]\n" % [cur_lv, max_lv]
 				
 			# Normal nodes
 			if max_lv > 1:
 				# Leveled Upgrades
-				tip_body = node.description
+				body_str += node.description
 				if cur_lv > 0:
-					tip_body += "\n\n[color=#55f58c]Current Level: %d/%d[/color]" % [cur_lv, max_lv]
+					body_str += "\n\n[color=#55f58c]Current Level: %d/%d[/color]" % [cur_lv, max_lv]
 				if cur_lv < max_lv:
-					tip_body += "\n[color=#55aaff]Effect: %s[/color]" % node.effect_desc
+					body_str += "\n[color=#55aaff]Effect: %s[/color]" % node.effect_desc
 				else:
-					tip_body += "\n\n[color=#55f58c]✦ MAX LEVEL ✦[/color]"
+					body_str += "\n\n[color=#55f58c]✦ MAX LEVEL ✦[/color]"
 			else:
 				# Single purchase upgrades
-				tip_body = node.description + "\n\n[color=#55aaff]Effect: " + node.effect_desc + "[/color]"
+				body_str += node.description + "\n\n[color=#55aaff]Effect: "
+				
+				if (id as String).begins_with("unlock_"):
+					var bid: String = (id as String).trim_prefix("unlock_")
+					var def: BuildingDef = BuildingDef.find(bid)
+					if def:
+						body_str += node.effect_desc.replace(def.display_name, "[color=#fce205]" + def.display_name + "[/color]") + "[/color]"
+						var cycle := " / %ds" % def.tick_duration
+						var details := "[color=#99aab5]"
+						
+						sub_body.append("[color=#fce205]" + def.display_name + " Blueprint[/color]\n\n")
+						if def.output_type == BuildingDef.OutputType.ENERGY:
+							details += "Produces +%.0f ⚡%s\n" % [def.output_amount, cycle]
+						
+						if def.input_type != BuildingDef.OutputType.NONE:
+							details += "Consumes -%.0f " % def.input_amount
+							
+							sub_body.append(details + "[/color]")
+							sub_body.append(MineralIcon.make(def.input_tier, Color.WHITE))
+							sub_body.append("[color=#99aab5]%s[/color]" % cycle)
+						else:
+							sub_body.append(details + "[/color]")
+					else:
+						body_str += node.effect_desc + "[/color]"
+				else:
+					body_str += node.effect_desc + "[/color]"
+					
 				if unlocked:
-					tip_body += "\n\n[color=#55f58c]✦ UNLOCKED ✦[/color]"
+					body_str += "\n\n[color=#55f58c]✦ UNLOCKED ✦[/color]"
 			
 			# Cost handling
 			if cur_lv < max_lv:
@@ -480,12 +508,15 @@ func _build_tree_graph() -> void:
 						missing_parents.append(st.get("nodes")[p].name)
 				
 				if missing_parents.size() > 0:
-					tip_body += "\n\n[color=#ff5544]Requires: " + ", ".join(missing_parents) + "[/color]"
+					body_str += "\n\n[color=#ff5544]Requires: " + ", ".join(missing_parents) + "[/color]"
+			
+			tip_body.append(body_str)
 
 		# Pivot offset at center for clean scaling
 		card.pivot_offset = Vector2(24, 24)
 
 		var cap_cost := tip_cost
+		var cap_sub := sub_body.duplicate()
 		card.mouse_entered.connect(func() -> void:
 			AudioManager.play("hover")
 			if unlocked or purchasable:
@@ -497,7 +528,7 @@ func _build_tree_graph() -> void:
 			var tween := create_tween()
 			tween.tween_property(card, "scale", Vector2(1.15, 1.15), 0.15).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
 
-			TooltipManager.show_tip(tip_title, tip_body, cap_cost))
+			TooltipManager.show_tip(tip_title, tip_body, cap_cost, cap_sub))
 			
 		card.mouse_exited.connect(func() -> void:
 			CursorManager.set_state(CursorManager.State.NORMAL)

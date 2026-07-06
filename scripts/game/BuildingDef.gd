@@ -7,6 +7,7 @@ enum OutputType { NONE, ENERGY, CREDITS, RAW_MINERAL, REFINED_MINERAL, SCIENCE }
 @export var display_name:      String   = ""
 @export var description:       String   = ""
 @export var allowed_poi_types: Array[POIData.POIType] = []
+@export var allowed_planet_types: Array[PlanetData.Type] = []
 @export var base_cost:         float    = 100.0
 @export var slot_cost:         int      = 1
 @export var min_planet_lv:     int      = 1
@@ -19,6 +20,7 @@ enum OutputType { NONE, ENERGY, CREDITS, RAW_MINERAL, REFINED_MINERAL, SCIENCE }
 @export var output_amount:     float      = 0.0
 @export var input_type:        OutputType = OutputType.NONE
 @export var input_amount:      float      = 0.0
+@export var input_tier:        int        = 1      # Required material tier (T1-T5)
 
 func output_color() -> Color:
 	match output_type:
@@ -40,6 +42,18 @@ func output_label() -> String:
 
 @export var logic: BuildingLogic
 @export var unlocked_by_default: bool = true
+
+func get_upgrade_cost(level: int, amount: int) -> float:
+	return (base_cost * pow(1.5, float(level - 1))) * float(amount)
+
+func get_cumulative_upgrade_cost_for_one(target_level: int) -> float:
+	var total := 0.0
+	for l in range(1, target_level):
+		total += get_upgrade_cost(l, 1)
+	return total
+
+func get_build_cost(target_level: int = 1) -> float:
+	return base_cost + get_cumulative_upgrade_cost_for_one(target_level)
 
 # ── Catalogue ─────────────────────────────────────────────────────────────────
 

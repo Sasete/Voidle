@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="BuildingDef" load_steps=2 format=3 uid="uid://bid_antimatter_chamber"]
+
+[ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="1_1"]
+
+[resource]
+script = ExtResource("1_1")
+building_id = "antimatter_chamber"
+display_name = "Antimatter Chamber"
+description = "Burns T4 (Component) refined minerals for extreme energy."
+allowed_poi_types = Array[int]([2])
+allowed_planet_types = Array[int]([])
+base_cost = 2000.0
+slot_cost = 1
+min_planet_lv = 4
+construct_duration = 0.0
+tick_duration = 30.0
+energy_per_tick = 0.0
+output_type = 1
+output_amount = 120.0
+input_type = 4
+input_amount = 1.0
+input_tier = 4
+unlocked_by_default = false

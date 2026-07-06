@@ -33,11 +33,11 @@ ShipManager="*res://scripts/game/ShipManager.gd"
 ShipCommandRegistry="*res://scripts/ships/ShipCommandRegistry.gd"
 AudioManager="*res://scripts/system/AudioManager.gd"
 AchievementManager="*res://scripts/game/AchievementManager.gd"
+TutorialManager="*res://scripts/system/TutorialManager.gd"
 SettingsManager="*res://scripts/system/SettingsManager.gd"
 
 [display]
 
-window/size/mode=3
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 

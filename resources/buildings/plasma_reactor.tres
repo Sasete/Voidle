@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="BuildingDef" load_steps=2 format=3 uid="uid://bid_plasma_reactor"]
+
+[ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="1_1"]
+
+[resource]
+script = ExtResource("1_1")
+building_id = "plasma_reactor"
+display_name = "Plasma Reactor"
+description = "Burns T3 (Alloy) refined minerals for massive energy."
+allowed_poi_types = Array[int]([2])
+allowed_planet_types = Array[int]([])
+base_cost = 800.0
+slot_cost = 1
+min_planet_lv = 3
+construct_duration = 0.0
+tick_duration = 30.0
+energy_per_tick = 0.0
+output_type = 1
+output_amount = 45.0
+input_type = 4
+input_amount = 1.0
+input_tier = 3
+unlocked_by_default = false

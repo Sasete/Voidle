@@ -12,6 +12,7 @@ var _history:  Array[String] = []
 var _hist_idx: int = -1
 var _open:     bool = false
 var _booting:  bool = false
+var _skip_boot: bool = false
 
 # Output typewriter state
 var _out_lines: Array[String] = []   # collected by _log_* during _exec
@@ -157,6 +158,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if not _open or not ke.pressed:
 		return
 	match ke.keycode:
+		KEY_ENTER, KEY_KP_ENTER:
+			if _booting:
+				_skip_boot = true
+				get_viewport().set_input_as_handled()
 		KEY_ESCAPE:
 			_toggle()
 			get_viewport().set_input_as_handled()
@@ -217,6 +222,7 @@ func _toggle() -> void:
 func _play_boot_sequence() -> void:
 	if _booting: return
 	_booting = true
+	_skip_boot = false
 	_log.clear()
 	var completed: Array[String] = []
 
@@ -225,7 +231,7 @@ func _play_boot_sequence() -> void:
 		var bbcode:    String = entry[1]
 		var char_spd:  float  = entry[2]
 
-		if pre_delay > 0.0:
+		if pre_delay > 0.0 and not _skip_boot:
 			await get_tree().create_timer(pre_delay).timeout
 		if not _open: break
 
@@ -235,11 +241,14 @@ func _play_boot_sequence() -> void:
 			continue
 
 		var plain := _strip_bbcode(bbcode)
-		for i in plain.length():
-			if not _open: break
-			_redraw_log(completed, plain.substr(0, i + 1) + "▌")
-			AudioManager.play("tick", -12.0)
-			await get_tree().create_timer(char_spd).timeout
+		if _skip_boot:
+			pass # Skip character by character rendering
+		else:
+			for i in plain.length():
+				if not _open or _skip_boot: break
+				_redraw_log(completed, plain.substr(0, i + 1) + "▌")
+				AudioManager.play("tick", -12.0)
+				await get_tree().create_timer(char_spd).timeout
 
 		completed.append(bbcode)
 		_redraw_log(completed, "")

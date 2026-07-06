@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="BuildingDef" load_steps=2 format=3 uid="uid://bid_combustion_stabilizer"]
+
+[ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="1_1"]
+
+[resource]
+script = ExtResource("1_1")
+building_id = "combustion_stabilizer"
+display_name = "Combustion Stabilizer"
+description = "Increases tick duration of all district burners, reducing fuel consumption."
+allowed_poi_types = Array[int]([2])
+allowed_planet_types = Array[int]([])
+base_cost = 600.0
+slot_cost = 1
+min_planet_lv = 2
+construct_duration = 0.0
+tick_duration = 30.0
+energy_per_tick = 0.0
+output_type = 0
+output_amount = 0.0
+input_type = 0
+input_amount = 0.0
+input_tier = 1
+unlocked_by_default = false

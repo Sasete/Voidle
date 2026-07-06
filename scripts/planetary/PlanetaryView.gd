@@ -49,6 +49,14 @@ var _open_mineral_switchers: Dictionary = {}
 var _district_pbars: Dictionary = {}
 var _planet_upgrade_pbar: ProgressBar = null
 
+# ── Tutorial highlight state ──────────────────────────────────────────────────
+var _tut_highlight:      String  = ""     # current highlight target id
+var _tut_highlight_node: Control = null   # specific UI node being pulsed
+var _tut_node_tween:     Tween   = null
+var _tut_panel_node:     Control = null   # right-panel card secondary pulse
+var _tut_panel_tween:    Tween   = null
+var _poi_overview_cards: Dictionary = {}  # poi.label -> PanelContainer card
+
 func _make_system(root: PlanetData) -> Array[PlanetData]:
 	var arr: Array[PlanetData] = [root]
 	for m in root.moons:
@@ -83,6 +91,8 @@ func _ready() -> void:
 				_build_district_panel(_active_district_poi, current_data))
 	_refresh_solar_btn()
 	_register_mission_tasks()
+	TutorialManager.highlight_changed.connect(_on_tutorial_highlight)
+	TutorialManager.highlight_cleared.connect(_on_tutorial_highlight_clear)
 
 	# load from transition if navigating from SolarView or first launch
 	var planet_to_load: PlanetData = SceneTransition.pending_data as PlanetData
@@ -117,6 +127,194 @@ func _ready() -> void:
 func _save_light_angle() -> void:
 	GameState.light_angle     = _light_angle
 	GameState.light_last_unix = Time.get_unix_time_from_system() as int
+
+# ── Tutorial highlight helpers ───────────────────────────────────────────────
+
+func _on_tutorial_highlight(target_id: String) -> void:
+	_tut_highlight = target_id
+	if target_id == "construction_wait":
+		if is_instance_valid(_tut_highlight_node):
+			_tut_highlight_node.modulate = Color.WHITE
+		if _tut_node_tween != null and _tut_node_tween.is_valid():
+			_tut_node_tween.kill()
+		_tut_highlight_node = null
+		TutorialManager.set_highlight_pos(Vector2(-999.0, -999.0))
+
+func _on_tutorial_highlight_clear() -> void:
+	_tut_highlight = ""
+	if is_instance_valid(_tut_highlight_node):
+		_tut_highlight_node.modulate = Color.WHITE
+	if _tut_node_tween != null and _tut_node_tween.is_valid():
+		_tut_node_tween.kill()
+	_tut_highlight_node = null
+	_stop_tut_panel_pulse()
+	TutorialManager.set_allowed_rects([])
+	TutorialManager.set_highlight_pos(Vector2(-999.0, -999.0))
+
+func _start_tut_node_pulse(node: Control) -> void:
+	if _tut_node_tween != null and _tut_node_tween.is_valid():
+		_tut_node_tween.kill()
+	if not is_instance_valid(node):
+		return
+	node.modulate = Color.WHITE
+	_tut_node_tween = create_tween().set_loops()
+	_tut_node_tween.tween_property(node, "modulate", Color(2.2, 2.0, 1.6, 1.0), 0.50)
+	_tut_node_tween.tween_property(node, "modulate", Color(1.0, 1.0, 1.0, 1.0), 0.50)
+
+func _start_tut_panel_pulse(node: Control) -> void:
+	_stop_tut_panel_pulse()
+	if not is_instance_valid(node):
+		return
+	_tut_panel_node = node
+	node.modulate = Color.WHITE
+	_tut_panel_tween = create_tween().set_loops()
+	_tut_panel_tween.tween_property(node, "modulate", Color(2.2, 2.0, 1.6, 1.0), 0.50)
+	_tut_panel_tween.tween_property(node, "modulate", Color(1.0, 1.0, 1.0, 1.0), 0.50)
+
+func _stop_tut_panel_pulse() -> void:
+	if _tut_panel_tween != null and _tut_panel_tween.is_valid():
+		_tut_panel_tween.kill()
+	if is_instance_valid(_tut_panel_node):
+		_tut_panel_node.modulate = Color.WHITE
+	_tut_panel_node = null
+	_tut_panel_tween = null
+
+func _notify_tutorial_district_opened(poi: POIData, root: VBoxContainer) -> void:
+	var target_bid := TutorialManager.get_action_building_target()
+	if target_bid == "":
+		return
+	var buildable := BuildingDef.for_poi_type(poi.poi_type)
+	var can_here := false
+	for def in buildable:
+		if def.building_id == target_bid:
+			can_here = true
+			break
+	if not can_here:
+		return
+	for child in root.get_children():
+		if child is PanelContainer and child.has_meta("is_slot_card"):
+			_tut_highlight_node = child as Control
+			_start_tut_node_pulse(_tut_highlight_node)
+			return
+
+func _notify_tutorial_district_type_dropdown(dd: PanelContainer) -> void:
+	if TutorialManager.get_action_step_type() != "district":
+		return
+	var target_id: int = TutorialManager.get_action_district_target()
+	if target_id < 0:
+		return
+	var vbox := dd.get_child(0) as VBoxContainer
+	if vbox == null:
+		return
+	for child in vbox.get_children():
+		if child is Button and child.has_meta("district_def_id"):
+			if int(child.get_meta("district_def_id")) == target_id:
+				_tut_highlight_node = child as Control
+				_start_tut_node_pulse(_tut_highlight_node)
+				return
+
+func _update_tutorial_highlight() -> void:
+	if not TutorialManager._action_block_on:
+		return
+	var allowed: Array[Rect2] = []
+	var vp := get_viewport().get_visible_rect()
+	var planet_area := Rect2(0.0, 0.0, vp.size.x * 0.57, vp.size.y)
+	# Construction wait
+	if TutorialManager._waiting_for_bid != "":
+		TutorialManager.set_highlight_pos(Vector2(-999.0, -999.0))
+		_stop_tut_panel_pulse()
+		if _active_district_poi != null:
+			var cv = _poi_overview_cards.get(_active_district_poi.label, null)
+			if cv != null and is_instance_valid(cv):
+				allowed.append((cv as Control).get_global_rect())
+		allowed.append(planet_area)
+		TutorialManager.set_allowed_rects(allowed)
+		return
+	if _tut_highlight == "":
+		return
+	# Specific dropdown row
+	if is_instance_valid(_tut_highlight_node) and (
+			_tut_highlight_node.has_meta("building_id") or
+			_tut_highlight_node.has_meta("district_def_id")):
+		TutorialManager.set_highlight_pos(Vector2(-999.0, -999.0))
+		allowed.append(_tut_highlight_node.get_global_rect())
+		TutorialManager.set_allowed_rects(allowed)
+		return
+	# Slot card / ADD DISTRICT button
+	if is_instance_valid(_tut_highlight_node):
+		TutorialManager.set_highlight_pos(Vector2(-999.0, -999.0))
+		var parent := _tut_highlight_node.get_parent()
+		if parent != null:
+			for sib in parent.get_children():
+				if sib is Control and sib.has_meta("is_slot_card"):
+					allowed.append((sib as Control).get_global_rect())
+		if allowed.is_empty():
+			allowed.append(_tut_highlight_node.get_global_rect())
+		allowed.append(planet_area)
+		TutorialManager.set_allowed_rects(allowed)
+		return
+	# POI ring modes
+	var ring_pos := Vector2(-999.0, -999.0)
+	var panel_lbl := ""
+	match _tut_highlight:
+		"capital":
+			for poi in poi_layer._pois:
+				var lbl: String = poi.get("label", "") if poi is Dictionary else poi.label
+				if lbl == "Capital":
+					ring_pos = poi_layer.get_poi_screen_pos(lbl)
+					break
+			panel_lbl = "Capital"
+			if ring_pos.x > -900.0:
+				allowed.append(Rect2(ring_pos - Vector2(90, 90), Vector2(180, 180)))
+			var cap_card_v = _poi_overview_cards.get("Capital", null)
+			if cap_card_v != null and is_instance_valid(cap_card_v):
+				allowed.append((cap_card_v as Control).get_global_rect())
+		"generator_district":
+			if _active_district_poi != null:
+				if planet_renderer != null:
+					ring_pos = planet_renderer.global_position + Vector2(
+						planet_renderer.size.x * 0.25, planet_renderer.size.y * 0.65)
+				allowed.append(planet_area)
+			else:
+				for poi in poi_layer._pois:
+					var lbl: String = poi.get("label", "") if poi is Dictionary else poi.label
+					var orb: bool = poi.get("is_orbital", false) if poi is Dictionary else poi.is_orbital()
+					if not orb and lbl != "Capital" and lbl != "":
+						ring_pos = poi_layer.get_poi_screen_pos(lbl)
+						var cv = _poi_overview_cards.get(lbl, null)
+						if cv != null and is_instance_valid(cv):
+							allowed.append((cv as Control).get_global_rect())
+						break
+				if ring_pos.x > -900.0:
+					allowed.append(Rect2(ring_pos - Vector2(90, 90), Vector2(180, 180)))
+		"add_district":
+			if planet_renderer != null:
+				ring_pos = planet_renderer.global_position + planet_renderer.size * 0.5
+			if is_instance_valid(_tut_highlight_node):
+				allowed.append(_tut_highlight_node.get_global_rect())
+			elif ring_pos.x > -900.0:
+				allowed.append(Rect2(ring_pos - Vector2(90, 90), Vector2(180, 180)))
+		"construction_wait":
+			TutorialManager.set_highlight_pos(Vector2(-999.0, -999.0))
+			if _active_district_poi != null:
+				var cv = _poi_overview_cards.get(_active_district_poi.label, null)
+				if cv != null and is_instance_valid(cv):
+					allowed.append((cv as Control).get_global_rect())
+			allowed.append(planet_area)
+			TutorialManager.set_allowed_rects(allowed)
+			return
+	TutorialManager.set_highlight_pos(ring_pos)
+	TutorialManager.set_allowed_rects(allowed)
+	# Panel card pulse
+	var want_card_v = _poi_overview_cards.get(panel_lbl, null)
+	var want_card: Control = (want_card_v as Control) if (want_card_v != null and is_instance_valid(want_card_v)) else null
+	if want_card != _tut_panel_node:
+		if want_card == null:
+			_stop_tut_panel_pulse()
+		else:
+			_start_tut_panel_pulse(want_card)
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 func _go_back() -> void:
 	if not GameState.solar_unlocked and not GameState.moon_unlocked:
@@ -162,6 +360,16 @@ func _input(event: InputEvent) -> void:
 
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
+		# Tutorial deselect: during generator-district step with panel open,
+		# left-click on planet area closes it so ADD DISTRICT becomes visible.
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT \
+				and _tut_highlight == "generator_district" and _active_district_poi != null:
+			var click := mb.position
+			var vp_w: float = get_viewport().get_visible_rect().size.x
+			if click.x < vp_w * 0.57:
+				_build_planet_overview(current_data)
+				get_viewport().set_input_as_handled()
+				return
 		# Close slot dropdown on any click outside it
 		if mb.pressed and _active_slot_dropdown != null \
 				and is_instance_valid(_active_slot_dropdown):
@@ -1636,6 +1844,7 @@ func _add_orbit_toggle(planet_cont: Control, layer: OrbitalLayer) -> void:
 	btn.offset_left   = btn.offset_right  - SIZE
 
 func _process(delta: float) -> void:
+	_update_tutorial_highlight()
 	_update_aspect()
 
 	# Construction loop audio — active whenever any POI is constructing
@@ -2203,14 +2412,20 @@ func _build_planet_overview(data: PlanetData) -> void:
 			_top_tab_active = "DETAILS"
 			inventory_tab_btn.button_pressed = false
 			planet_page.visible  = true
-			inv_scroll.visible   = false)
+			inv_scroll.visible   = false
+		else:
+			if _top_tab_active == "DETAILS":
+				planet_tab_btn.set_pressed_no_signal(true))
 	inventory_tab_btn.toggled.connect(func(on: bool) -> void:
 		if on:
 			_top_tab_active = "INVENTORY"
 			planet_tab_btn.button_pressed = false
 			planet_page.visible  = false
 			inv_scroll.visible   = true
-			_build_inv_grid.call())
+			_build_inv_grid.call()
+		else:
+			if _top_tab_active == "INVENTORY":
+				inventory_tab_btn.set_pressed_no_signal(true))
 	# Restore correct visibility based on saved state
 	planet_page.visible = (_top_tab_active == "DETAILS")
 	inv_scroll.visible  = (_top_tab_active == "INVENTORY")
@@ -2375,19 +2590,24 @@ func _build_planet_overview(data: PlanetData) -> void:
 
 	# ── District slot indicators ─────────────────────────────────────────────
 	var p_max_orbital := 0
+	var st := get_node_or_null("/root/SkillTree")
+	var has_orbital_unlocked := false
 	for p_def: DistrictDef in DistrictDef.all():
 		if p_def.is_orbital and p_def.max_per_planet > 0:
-			p_max_orbital += p_def.max_per_planet
+			if p_def.unlock_skill == "" or (st != null and st.is_unlocked(p_def.unlock_skill)):
+				has_orbital_unlocked = true
+				p_max_orbital += p_def.max_per_planet
 
 	# Single row: [Surface group] [spacer] [Orbital group]
 	# Each group is a VBox: slots on top, label below.
 	var limits_row := HBoxContainer.new()
 	limits_row.add_theme_constant_override("separation", 0)
 	limits_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	for slot_info: Array in [
-		["Surface", surface_pois.size(), pp.max_districts],
-		["Orbital", orbital_pois.size(), max(1, p_max_orbital)]
-	]:
+	var slot_info_arr: Array = [ ["Surface", surface_pois.size(), pp.max_districts] ]
+	if has_orbital_unlocked:
+		slot_info_arr.append(["Orbital", orbital_pois.size(), max(1, p_max_orbital)])
+		
+	for slot_info: Array in slot_info_arr:
 		var group_vbox := VBoxContainer.new()
 		group_vbox.add_theme_constant_override("separation", 3)
 		group_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -2395,6 +2615,8 @@ func _build_planet_overview(data: PlanetData) -> void:
 		var slots_hbox := HBoxContainer.new()
 		slots_hbox.add_theme_constant_override("separation", 3)
 		slots_hbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		if not has_orbital_unlocked:
+			slots_hbox.alignment = BoxContainer.ALIGNMENT_CENTER
 		slots_hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var filled: int = slot_info[1]; var total: int = slot_info[2]
 		for idx in total:
@@ -2421,47 +2643,55 @@ func _build_planet_overview(data: PlanetData) -> void:
 		si_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		group_vbox.add_child(si_lbl)
 		limits_row.add_child(group_vbox)
-	planet_page.add_child(limits_row)
+	root.add_child(limits_row)
 
 	# ── Tab bar ───────────────────────────────────────────────────────────────
 	var tab_sep := HSeparator.new()
 	var tab_sep_s := StyleBoxFlat.new()
 	tab_sep_s.bg_color = Color(0.2, 0.25, 0.4, 0.35)
 	tab_sep.add_theme_stylebox_override("separator", tab_sep_s)
-	planet_page.add_child(tab_sep)
+	root.add_child(tab_sep)
 
 	var tab_row := HBoxContainer.new()
 	tab_row.add_theme_constant_override("separation", 0)
-	planet_page.add_child(tab_row)
+	root.add_child(tab_row)
 
 	var dist_btn:    Button = _make_overview_tab_btn("SURFACE", _inner_tab_active == "SURFACE")
 	var orbital_btn: Button = _make_overview_tab_btn("ORBITAL", _inner_tab_active == "ORBITAL")
 	tab_row.add_child(dist_btn)
-	tab_row.add_child(orbital_btn)
+	if has_orbital_unlocked:
+		tab_row.add_child(orbital_btn)
 
 	# ── DISTRICTS scroll + page ───────────────────────────────────────────────
 	var dist_scroll := ScrollContainer.new()
 	dist_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	dist_scroll.size_flags_vertical    = Control.SIZE_EXPAND_FILL
-	planet_page.add_child(dist_scroll)
+	root.add_child(dist_scroll)
 
 	var districts_page := VBoxContainer.new()
 	districts_page.add_theme_constant_override("separation", 8)
 	districts_page.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	dist_scroll.add_child(districts_page)
 
+	_poi_overview_cards.clear()
+	_stop_tut_panel_pulse()
 	for poi: POIData in surface_pois:
 		districts_page.add_child(_build_district_overview_card(poi, data, pp, panel_content, root))
 
 	var can_add_surface := surface_pois.size() < pp.max_districts
-	districts_page.add_child(_build_add_district_card(data, can_add_surface, false))
+	var add_dist_card := _build_add_district_card(data, can_add_surface, false)
+	districts_page.add_child(add_dist_card)
+	# Tutorial: highlight ADD DISTRICT card when district placement is the objective
+	if can_add_surface and TutorialManager.get_action_step_type() == "district":
+		_tut_highlight_node = add_dist_card.get_child(0) as Control
+		_start_tut_node_pulse(_tut_highlight_node)
 
 	# ── ORBITAL scroll + page ─────────────────────────────────────────────────
 	var orb_scroll := ScrollContainer.new()
 	orb_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	orb_scroll.size_flags_vertical    = Control.SIZE_EXPAND_FILL
 	orb_scroll.visible = false
-	planet_page.add_child(orb_scroll)
+	root.add_child(orb_scroll)
 
 	var orbital_page := VBoxContainer.new()
 	orbital_page.add_theme_constant_override("separation", 8)
@@ -2480,21 +2710,30 @@ func _build_planet_overview(data: PlanetData) -> void:
 	orbital_page.add_child(_build_add_district_card(data, can_add_orbital, true))
 
 	# ── Tab switching ─────────────────────────────────────────────────────────
+	if not has_orbital_unlocked and _inner_tab_active == "ORBITAL":
+		_inner_tab_active = "SURFACE"
+
 	dist_btn.toggled.connect(func(on: bool) -> void:
 		if on:
 			_inner_tab_active = "SURFACE"
 			orbital_btn.button_pressed = false
 			dist_scroll.visible = true
-			orb_scroll.visible  = false)
+			orb_scroll.visible  = false
+		else:
+			if _inner_tab_active == "SURFACE":
+				dist_btn.set_pressed_no_signal(true))
 	orbital_btn.toggled.connect(func(on: bool) -> void:
 		if on:
 			_inner_tab_active = "ORBITAL"
 			dist_btn.button_pressed = false
 			dist_scroll.visible = false
-			orb_scroll.visible  = true)
+			orb_scroll.visible  = true
+		else:
+			if _inner_tab_active == "ORBITAL":
+				orbital_btn.set_pressed_no_signal(true))
 	# Restore correct visibility based on saved state
 	dist_scroll.visible = (_inner_tab_active == "SURFACE")
-	orb_scroll.visible  = (_inner_tab_active == "ORBITAL")
+	orb_scroll.visible  = (_inner_tab_active == "ORBITAL") and has_orbital_unlocked
 
 	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
@@ -2503,7 +2742,7 @@ func _build_planet_overview(data: PlanetData) -> void:
 	var sep_style := StyleBoxFlat.new()
 	sep_style.bg_color = Color(0.2, 0.25, 0.4, 0.35)
 	lvl_sep.add_theme_stylebox_override("separator", sep_style)
-	planet_page.add_child(lvl_sep)
+	root.add_child(lvl_sep)
 
 	if pp.is_upgrading:
 		var up_lbl := Label.new()
@@ -2511,7 +2750,7 @@ func _build_planet_overview(data: PlanetData) -> void:
 		up_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		_apply_orbitron(up_lbl, 10)
 		up_lbl.add_theme_color_override("font_color", Color(0.4, 0.9, 0.4))
-		planet_page.add_child(up_lbl)
+		root.add_child(up_lbl)
 
 		_planet_upgrade_pbar = ProgressBar.new()
 		_planet_upgrade_pbar.custom_minimum_size.y = 12
@@ -2523,7 +2762,7 @@ func _build_planet_overview(data: PlanetData) -> void:
 		sbf.bg_color = Color(0.4, 0.9, 0.4)
 		_planet_upgrade_pbar.add_theme_stylebox_override("background", sb)
 		_planet_upgrade_pbar.add_theme_stylebox_override("fill", sbf)
-		planet_page.add_child(_planet_upgrade_pbar)
+		root.add_child(_planet_upgrade_pbar)
 	else:
 		_planet_upgrade_pbar = null
 		
@@ -2543,7 +2782,7 @@ func _build_planet_overview(data: PlanetData) -> void:
 		up_btn.add_theme_color_override("font_color", Color.WHITE)
 		up_btn.mouse_entered.connect(func(): AudioManager.play("hover"))
 		up_btn.pressed.connect(func(): AudioManager.play("click"); _show_level_up_popup(pp))
-		planet_page.add_child(up_btn)
+		root.add_child(up_btn)
 
 	panel_content.add_child(root)
 
@@ -2671,6 +2910,8 @@ func _build_resources_section(parent: VBoxContainer, data: PlanetData, pp: Plane
 func _build_district_overview_card(poi: POIData, planet: PlanetData, pp: PlanetProgress,
 		_panel_content: VBoxContainer, _root: VBoxContainer) -> PanelContainer:
 	var card := PanelContainer.new()
+	card.set_meta("poi_label", poi.label)
+	_poi_overview_cards[poi.label] = card
 	var s := _card_panel_style()
 	s.bg_color = Color(0.07, 0.09, 0.17, 0.80)
 	card.add_theme_stylebox_override("panel", s)
@@ -2846,7 +3087,8 @@ func _build_add_district_card(data: PlanetData, enabled: bool, orbital_only: boo
 				return
 			var dd := _build_district_type_dropdown(cap_data, cap_wrap, dropdown_ref, orbital_only)
 			cap_wrap.add_child(dd)
-			dropdown_ref[0] = dd)
+			dropdown_ref[0] = dd
+			_notify_tutorial_district_type_dropdown(dd))
 
 	return wrapper
 
@@ -2876,6 +3118,7 @@ func _build_district_type_row(data: PlanetData, def: DistrictDef,
 	var btn := Button.new()
 	btn.flat = true
 	btn.text = "%s  %s" % [def.icon, def.display_name]
+	btn.set_meta("district_def_id", int(def.id))
 	_apply_orbitron(btn, 9)
 	var cost: float = DistrictDef.placement_cost(def, data)
 	var can_afford: bool = GameState.credits >= cost
@@ -3095,7 +3338,8 @@ func _refresh_bar_label_status(key: String) -> void:
 		if is_instance_valid(slowed_lbl):
 			var er := ProductionManager.get_energy_ratio(m.get("planet_seed", -1))
 			slowed_lbl.text    = "⚡ Slowed %d%% — Energy Crisis" % [int((1.0 - er) * 100)]
-			slowed_lbl.visible = not paused and er < 0.999
+			var is_user_paused := ProductionManager.is_user_paused(key)
+			slowed_lbl.visible = not paused and not is_user_paused and er < 0.999
 
 func _on_building_constructed(planet_seed: int, key: String) -> void:
 	if current_data == null or current_data.seed != planet_seed:
@@ -5754,6 +5998,7 @@ func _sp_show_pickup_popup(entry: Dictionary, pp: PlanetProgress, rebuild_sp: Ca
 func _build_slot_card(poi: POIData, planet: PlanetData, pp: PlanetProgress,
 		root: VBoxContainer, slot_idx: int) -> PanelContainer:
 	var card := PanelContainer.new()
+	card.set_meta("is_slot_card", true)
 	var s := StyleBoxFlat.new()
 	s.bg_color      = Color(0.06, 0.08, 0.14, 0.70)
 	s.border_width_left  = 1; s.border_width_right  = 1
@@ -5885,6 +6130,7 @@ func _toggle_slot_dropdown(card: PanelContainer, poi: POIData, planet: PlanetDat
 				c_lbl.append_text(" · %s" % def.output_label())
 
 		vbox.add_child(n_lbl); vbox.add_child(c_lbl)
+		row_panel.set_meta("building_id", def.building_id)
 		row_panel.add_child(vbox)
 		list.add_child(row_panel)
 
@@ -6001,6 +6247,14 @@ func _toggle_slot_dropdown(card: PanelContainer, poi: POIData, planet: PlanetDat
 	outer.position            = Vector2(card_rect.position.x, card_rect.end.y)
 	outer.custom_minimum_size = Vector2(card_rect.size.x, 0)
 	_active_slot_dropdown = outer
+	# Tutorial: highlight target building row
+	var tut_bid := TutorialManager.get_action_building_target()
+	if tut_bid != "":
+		for row in list.get_children():
+			if row.has_meta("building_id") and row.get_meta("building_id") == tut_bid:
+				_tut_highlight_node = row as Control
+				_start_tut_node_pulse(_tut_highlight_node)
+				break
 
 func _toggle_mineral_dropdown(btn: Control, raw_list: Array, target_key: String, current_tgt: String, poi: POIData, planet: PlanetData, entry: Dictionary) -> void:
 	if _active_slot_dropdown != null and is_instance_valid(_active_slot_dropdown):
@@ -6253,6 +6507,7 @@ func _build_district_panel(poi: POIData, planet: PlanetData) -> void:
 		root.add_child(_build_slot_card(poi, planet, pp, root, si))
 
 	panel_content.add_child(root)
+	_notify_tutorial_district_opened(poi, root)
 
 ## Opens a district-style build panel for an orbiting station.
 func _open_station_district(ship: ShipData, _planet_cont: Control) -> void:

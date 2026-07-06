@@ -206,6 +206,7 @@ func _add_button(parent: Control, label: String, cb: Callable) -> Button:
 	btn.text                    = label
 	btn.flat                    = true
 	btn.alignment               = HORIZONTAL_ALIGNMENT_LEFT
+	btn.size_flags_horizontal   = Control.SIZE_SHRINK_BEGIN
 	btn.custom_minimum_size     = Vector2(260, 36)
 	if _font: btn.add_theme_font_override("font", _font)
 	btn.add_theme_font_size_override("font_size", 14)

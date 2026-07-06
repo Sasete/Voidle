@@ -11,6 +11,11 @@ var _energy_hud_node: Control = null
 ## Current displayed value (tweened, may lag behind GameState.credits)
 var _credits_display: float = 0.0
 var _credits_tween: Tween = null
+var _science_display: float = 0.0
+var _science_tween: Tween = null
+var _energy_display: float = 0.0
+var _energy_tween: Tween = null
+var _energy_bar_tween: Tween = null
 var _orbitron: Font
 ## The credits panel node — exposed so PlanetaryView can read its screen height for toast offset.
 var credits_panel: PanelContainer = null
@@ -271,6 +276,7 @@ func _ready() -> void:
 	top_layer.call_deferred("add_child", sci_panel)
 
 	_credits_display = GameState.credits
+	_science_display = GameState.science_points
 
 	GameState.credits_changed.connect(_on_credits_changed)
 	GameState.science_changed.connect(_on_science_changed)
@@ -482,7 +488,30 @@ func show_settings_popup() -> void:
 	fs_hbox.add_child(fs_chk)
 	
 	vbox.add_child(HSeparator.new())
-	
+
+	var tut_row := HBoxContainer.new()
+	tut_row.add_theme_constant_override("separation", 10)
+	var tut_lbl := Label.new()
+	tut_lbl.text = "Tutorial"
+	tut_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	if _orbitron: tut_lbl.add_theme_font_override("font", _orbitron)
+	tut_lbl.add_theme_font_size_override("font_size", 12)
+	tut_lbl.add_theme_color_override("font_color", Color(0.70, 0.78, 0.95))
+	tut_row.add_child(tut_lbl)
+	var tut_chk := CheckButton.new()
+	tut_chk.button_pressed = TutorialManager.tutorial_enabled
+	if _orbitron: tut_chk.add_theme_font_override("font", _orbitron)
+	tut_chk.add_theme_font_size_override("font_size", 11)
+	tut_chk.toggled.connect(func(on: bool) -> void:
+		TutorialManager.tutorial_enabled = on
+		if not on:
+			TutorialManager._on_new_game()  # clear any active tutorial UI
+		AudioManager.play("ui_click"))
+	tut_row.add_child(tut_chk)
+	vbox.add_child(tut_row)
+
+	vbox.add_child(HSeparator.new())
+
 	var close_btn := Button.new()
 	close_btn.text = "CLOSE"
 	if _orbitron: close_btn.add_theme_font_override("font", _orbitron)
@@ -535,11 +564,26 @@ func _on_credits_changed(new_val: float) -> void:
 		old_val, new_val, 0.55).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
 	_credits_tween.tween_property(_credits_lbl, "theme_override_colors/font_color",
 		Color(1.0, 0.92, 0.55), 0.3).set_ease(Tween.EASE_IN)
+	if gained and new_val - old_val > 0.5:
+		_spawn_hud_chip("+%s" % fmt_credits(new_val - old_val), Color(0.65, 1.0, 0.45), credits_panel)
 
 func _on_science_changed(new_val: float) -> void:
 	if not is_instance_valid(_science_lbl):
 		return
-	_science_lbl.text = "%s Science" % fmt_science(new_val)
+	var old_val := _science_display
+	var gained  := new_val > old_val
+	if _science_tween and _science_tween.is_valid(): _science_tween.kill()
+	_science_tween = create_tween()
+	var flash_col := Color(0.55, 1.0, 0.90) if gained else Color(1.0, 0.55, 0.25)
+	_science_tween.tween_property(_science_lbl, "theme_override_colors/font_color", flash_col, 0.12).set_ease(Tween.EASE_OUT)
+	_science_tween.parallel().tween_method(func(v: float) -> void:
+		_science_display = v
+		if is_instance_valid(_science_lbl):
+			_science_lbl.text = "%s Science" % fmt_science(v),
+		old_val, new_val, 0.55).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
+	_science_tween.tween_property(_science_lbl, "theme_override_colors/font_color", Color(0.65, 0.90, 1.0), 0.3).set_ease(Tween.EASE_IN)
+	if gained and new_val - old_val > 0.5:
+		_spawn_hud_chip("+%s sci" % fmt_science(new_val - old_val), Color(0.55, 0.95, 1.0), science_panel)
 
 func _process(delta: float) -> void:
 	_energy_hud_poll += delta
@@ -551,8 +595,6 @@ func _process(delta: float) -> void:
 		return
 	var bal: float   = pm.get_global_energy()
 	var ratio: float = pm.get_energy_ratio()
-	var sign_s := "+" if bal > 0.0 else ""
-	_energy_hud_lbl.text = sign_s + "%.0f ⚡" % bal
 	var ecol: Color
 	if ratio >= 0.95:
 		ecol = Color(0.90, 0.82, 0.25)
@@ -560,18 +602,59 @@ func _process(delta: float) -> void:
 		ecol = Color(0.80, 0.65, 0.20)
 	else:
 		ecol = Color(0.90, 0.38, 0.25)
-	_energy_hud_lbl.add_theme_color_override("font_color", ecol)
 	var pct := ratio * 100.0
-	var bl_fill2 := StyleBoxFlat.new()
-	bl_fill2.bg_color = ecol
-	bl_fill2.corner_radius_bottom_left = 3
-	var br_fill2 := StyleBoxFlat.new()
-	br_fill2.bg_color = ecol
-	br_fill2.corner_radius_bottom_right = 3
-	_energy_bar_left.value  = pct
-	_energy_bar_right.value = pct
-	_energy_bar_left.add_theme_stylebox_override("fill", bl_fill2)
-	_energy_bar_right.add_theme_stylebox_override("fill", br_fill2)
+
+	# Tween energy number
+	var old_bal := _energy_display
+	if absf(bal - old_bal) > 0.01:
+		if _energy_tween and _energy_tween.is_valid(): _energy_tween.kill()
+		_energy_tween = create_tween()
+		_energy_tween.tween_method(func(v: float) -> void:
+			_energy_display = v
+			if is_instance_valid(_energy_hud_lbl):
+				var s := "+" if v > 0.0 else ""
+				_energy_hud_lbl.text = s + "%.0f ⚡" % v,
+			old_bal, bal, 0.40).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+
+	_energy_hud_lbl.add_theme_color_override("font_color", ecol)
+	
+	if is_instance_valid(_energy_bar_left):
+		_energy_bar_left.queue_redraw()
+		_energy_bar_right.queue_redraw()
+
+	# Tween bars
+	if is_instance_valid(_energy_bar_left) and absf(pct - _energy_bar_left.value) > 0.1:
+		var bl_fill := StyleBoxFlat.new()
+		bl_fill.bg_color = ecol; bl_fill.corner_radius_bottom_left = 3
+		var br_fill := StyleBoxFlat.new()
+		br_fill.bg_color = ecol; br_fill.corner_radius_bottom_right = 3
+		_energy_bar_left.add_theme_stylebox_override("fill", bl_fill)
+		_energy_bar_right.add_theme_stylebox_override("fill", br_fill)
+		if _energy_bar_tween and _energy_bar_tween.is_valid(): _energy_bar_tween.kill()
+		_energy_bar_tween = create_tween().set_parallel(true)
+		_energy_bar_tween.tween_property(_energy_bar_left,  "value", pct, 0.40).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		_energy_bar_tween.tween_property(_energy_bar_right, "value", pct, 0.40).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+
+## Spawn a small "+X" chip that floats upward from the given HUD panel then fades.
+func _spawn_hud_chip(text: String, color: Color, panel: PanelContainer) -> void:
+	if not is_instance_valid(panel): return
+	var chip := Label.new()
+	chip.text = text
+	if _orbitron: chip.add_theme_font_override("font", _orbitron)
+	chip.add_theme_font_size_override("font_size", 11)
+	chip.add_theme_color_override("font_color", color)
+	chip.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.75))
+	chip.add_theme_constant_override("outline_size", 3)
+	# Position just to the right of the panel
+	var start := panel.global_position + Vector2(panel.size.x + 6, panel.size.y * 0.15)
+	chip.position = start
+	chip.z_index  = 400
+	add_child(chip)
+	var tw := create_tween().set_parallel(true)
+	tw.tween_property(chip, "position:y", start.y - 38, 1.0).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_property(chip, "modulate:a", 0.0, 1.0).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	await get_tree().create_timer(1.0).timeout
+	if is_instance_valid(chip): chip.queue_free()
 
 func _setup_energy_hud() -> void:
 	var anchor := Control.new()
@@ -615,6 +698,13 @@ func _setup_energy_hud() -> void:
 	var bl_fill := StyleBoxFlat.new(); bl_fill.bg_color = bar_fill_col; bl_fill.corner_radius_bottom_left = 3
 	_energy_bar_left.add_theme_stylebox_override("background", bl_bg)
 	_energy_bar_left.add_theme_stylebox_override("fill", bl_fill)
+	_energy_bar_left.draw.connect(func() -> void:
+		if ProductionManager.get_energy_ratio() <= 0.001:
+			_energy_bar_left.draw_rect(Rect2(0, 0, _energy_bar_left.size.x, _energy_bar_left.size.y), Color(0.25, 0.0, 0.0, 0.8))
+			for xi: int in range(0, int(_energy_bar_left.size.x) + int(_energy_bar_left.size.y), 6):
+				var x0: float = float(xi)
+				_energy_bar_left.draw_line(Vector2(x0, 0), Vector2(x0 - _energy_bar_left.size.y, _energy_bar_left.size.y), Color(0.0, 0.0, 0.0, 0.6), 1.0)
+	)
 	left_pc.add_child(_energy_bar_left)
 	hbox.add_child(left_pc)
 
@@ -668,6 +758,13 @@ func _setup_energy_hud() -> void:
 	var br_fill := StyleBoxFlat.new(); br_fill.bg_color = bar_fill_col; br_fill.corner_radius_bottom_right = 3
 	_energy_bar_right.add_theme_stylebox_override("background", br_bg)
 	_energy_bar_right.add_theme_stylebox_override("fill", br_fill)
+	_energy_bar_right.draw.connect(func() -> void:
+		if ProductionManager.get_energy_ratio() <= 0.001:
+			_energy_bar_right.draw_rect(Rect2(0, 0, _energy_bar_right.size.x, _energy_bar_right.size.y), Color(0.25, 0.0, 0.0, 0.8))
+			for xi: int in range(0, int(_energy_bar_right.size.x) + int(_energy_bar_right.size.y), 6):
+				var x0: float = float(xi)
+				_energy_bar_right.draw_line(Vector2(x0, 0), Vector2(x0 - _energy_bar_right.size.y, _energy_bar_right.size.y), Color(0.0, 0.0, 0.0, 0.6), 1.0)
+	)
 	right_pc.add_child(_energy_bar_right)
 	hbox.add_child(right_pc)
 
