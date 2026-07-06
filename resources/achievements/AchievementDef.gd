@@ -20,6 +20,7 @@ enum Trigger {
 	SKILL_PURCHASED,       # Specific skill unlocked (use string_value = skill id)
 	BUILDING_COUNT,        # Total buildings constructed (use int_value)
 	DISTRICT_COUNT,        # Total districts placed (use int_value)
+	TUTORIAL_COMPLETE,     # Guided tutorial fully completed
 }
 
 @export var achievement_id: String = ""

@@ -138,6 +138,7 @@ func _on_tutorial_highlight(target_id: String) -> void:
 		if _tut_node_tween != null and _tut_node_tween.is_valid():
 			_tut_node_tween.kill()
 		_tut_highlight_node = null
+		_stop_tut_panel_pulse()
 		TutorialManager.set_highlight_pos(Vector2(-999.0, -999.0))
 
 func _on_tutorial_highlight_clear() -> void:
@@ -154,6 +155,8 @@ func _on_tutorial_highlight_clear() -> void:
 func _start_tut_node_pulse(node: Control) -> void:
 	if _tut_node_tween != null and _tut_node_tween.is_valid():
 		_tut_node_tween.kill()
+	if is_instance_valid(_tut_highlight_node) and _tut_highlight_node != node:
+		_tut_highlight_node.modulate = Color.WHITE
 	if not is_instance_valid(node):
 		return
 	node.modulate = Color.WHITE
@@ -180,6 +183,8 @@ func _stop_tut_panel_pulse() -> void:
 	_tut_panel_tween = null
 
 func _notify_tutorial_district_opened(poi: POIData, root: VBoxContainer) -> void:
+	if TutorialManager._waiting_for_bid != "":
+		return
 	var target_bid := TutorialManager.get_action_building_target()
 	if target_bid == "":
 		return
@@ -198,6 +203,8 @@ func _notify_tutorial_district_opened(poi: POIData, root: VBoxContainer) -> void
 			return
 
 func _notify_tutorial_district_type_dropdown(dd: PanelContainer) -> void:
+	if TutorialManager._waiting_for_bid != "":
+		return
 	if TutorialManager.get_action_step_type() != "district":
 		return
 	var target_id: int = TutorialManager.get_action_district_target()
@@ -303,6 +310,8 @@ func _update_tutorial_highlight() -> void:
 			allowed.append(planet_area)
 			TutorialManager.set_allowed_rects(allowed)
 			return
+	# Always allow planet drag regardless of tutorial step
+	allowed.append(planet_area)
 	TutorialManager.set_highlight_pos(ring_pos)
 	TutorialManager.set_allowed_rects(allowed)
 	# Panel card pulse
@@ -367,6 +376,8 @@ func _input(event: InputEvent) -> void:
 			var click := mb.position
 			var vp_w: float = get_viewport().get_visible_rect().size.x
 			if click.x < vp_w * 0.57:
+				_active_district_poi = null
+				_tut_highlight_node = null
 				_build_planet_overview(current_data)
 				get_viewport().set_input_as_handled()
 				return
@@ -788,6 +799,7 @@ func _spawn_district(data: PlanetData, lbl: String, def: DistrictDef) -> void:
 		AudioManager.play("construct")
 		AchievementManager.notify_trigger(AchievementDef.Trigger.FIRST_DISTRICT)
 		data.custom_pois.append(poi)
+		GameState.district_placed.emit(data.seed, def.id)
 		load_planet(data)
 
 func _apply_orbitron(node: CanvasItem, size: int) -> void:
@@ -3192,6 +3204,9 @@ func _on_district_clicked(index: int, _data: Dictionary) -> void:
 			break
 	if poi == null:
 		return
+	if poi.constructing:
+		TooltipManager.show_tip("Constructing", "This District is not fully operational yet.\nBuild time: %.0fs" % poi.construct_duration)
+		return
 	_build_district_panel(poi, current_data)
 
 ## pm_key -> { "fill": Control, "prog": Array[float] }
@@ -3227,7 +3242,7 @@ func _on_production_update(_planet_seed: int, key: String, progress: float) -> v
 			print("[UI Debug] pbar is invalid for ", key)
 	else:
 		if " " in key: # naive check for district names to see if we missed it
-			print("[UI Debug] Key not in _district_pbars: ", key)
+			pass
 
 	if not _bar_meta.has(key):
 		return
@@ -6012,14 +6027,17 @@ func _build_slot_card(poi: POIData, planet: PlanetData, pp: PlanetProgress,
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	card.custom_minimum_size   = Vector2(0, 38)
 
+	var margin := MarginContainer.new()
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	margin.add_theme_constant_override("margin_left", 24)
+	card.add_child(margin)
+
 	var plus := Label.new()
-	plus.text = "＋  Empty Slot"
-	plus.set_anchors_and_offsets_preset(Control.PRESET_CENTER_LEFT)
-	plus.offset_left = 10
+	plus.text = "+ Empty Slot"
 	plus.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_apply_orbitron(plus, 10)
 	plus.add_theme_color_override("font_color", Color(0.30, 0.38, 0.65, 0.70))
-	card.add_child(plus)
+	margin.add_child(plus)
 
 	card.mouse_entered.connect(func() -> void:
 		AudioManager.play("poi_hover")
@@ -6043,6 +6061,11 @@ func _toggle_slot_dropdown(card: PanelContainer, poi: POIData, planet: PlanetDat
 		_active_slot_dropdown.queue_free()
 		_active_slot_dropdown = null
 		if prev_card == card:
+			# Tutorial: restore slot card highlight when dropdown is closed
+			var tut_bid := TutorialManager.get_action_building_target()
+			if tut_bid != "" and is_instance_valid(card):
+				_tut_highlight_node = card as Control
+				_start_tut_node_pulse(_tut_highlight_node)
 			return
 
 	var buildable := BuildingDef.for_poi_type(poi.poi_type)
@@ -6231,6 +6254,7 @@ func _toggle_slot_dropdown(card: PanelContainer, poi: POIData, planet: PlanetDat
 						AudioManager.play("construct")
 						AchievementManager.notify_trigger(AchievementDef.Trigger.FIRST_BUILDING)
 						pp.build_in_district(cap_poi, cap_def.building_id)
+						ProductionManager.building_queued.emit(cap_planet.seed, cap_def.building_id)
 						if is_instance_valid(cap_overlay):
 							cap_overlay.queue_free()
 						_active_slot_dropdown = null

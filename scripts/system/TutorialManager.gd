@@ -412,6 +412,7 @@ func _target_hint(tgt: Dictionary) -> String:
 func _end_guided_tutorial() -> void:
 	_tutorial_done = true
 	_hide_dim()
+	AchievementManager.notify_trigger(AchievementDef.Trigger.TUTORIAL_COMPLETE)
 	await get_tree().create_timer(0.4).timeout
 	if not _quest_done:
 		_build_quest_ui()
