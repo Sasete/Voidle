@@ -249,7 +249,30 @@ func get_body_resources(body_seed: int,
 
 func get_body_resources_for(pd: PlanetData) -> BodyResources:
 	var range := BodyResources.rarity_range_for(pd.planet_type)
-	return get_body_resources(pd.seed, range.x, range.y)
+	var br := get_body_resources(pd.seed, range.x, range.y)
+	if pd.mineral_densities.is_empty():
+		_populate_mineral_densities(pd, br)
+	return br
+
+func _populate_mineral_densities(pd: PlanetData, br: BodyResources) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = pd.seed ^ 0x9999
+	var raw_list := br.get_by_tag(ResourceData.Tag.RAW_MINERAL)
+	if raw_list.is_empty(): return
+	
+	var base_density := pd.deposit_density
+	var total_weight: float = 0.0
+	var weights: Array[float] = []
+	for rd in raw_list:
+		# Lower rarity = much higher weight. e.g. R1=1.0, R2=0.4, R3=0.16
+		var w := 1.0 / pow(2.5, float(rd.rarity - br.rarity_min))
+		w *= rng.randf_range(0.8, 1.2)
+		weights.append(w)
+		total_weight += w
+	
+	for i in raw_list.size():
+		var share := weights[i] / total_weight
+		pd.mineral_densities[raw_list[i].resource_id()] = share * base_density * rng.randf_range(0.9, 1.1)
 
 func _register_resources(br: BodyResources) -> void:
 	for rd: ResourceData in br.as_array():

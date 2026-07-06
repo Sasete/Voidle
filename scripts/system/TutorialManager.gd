@@ -179,6 +179,7 @@ var _construction_lbl: Label        = null    # non-blocking "under construction
 
 # ── Quest UI ───────────────────────────────────────────────────────────────────
 var _quest_panel:    PanelContainer   = null
+var _skip_btn:       Button           = null
 var _title_lbl:      Label            = null
 var _desc_lbl:       Label            = null
 var _sub_lbl:        Label            = null
@@ -209,7 +210,7 @@ func start() -> void:
 		_run_guided_step()
 
 func _on_new_game() -> void:
-	_tutorial_done = false
+	_tutorial_done = SettingsManager.tutorial_ever_done
 	_quest_done    = false
 	_guided_step   = 0
 	_action_sub    = 0
@@ -251,11 +252,10 @@ func _on_building_constructed(_seed: int, _key: String, bid: String) -> void:
 		_hide_construction_wait()
 		_advance_action()
 	# Quest panel
-	if not _quest_done and _quest_step < QUESTS.size():
+	if not _quest_done and _quest_step < QUESTS.size() and is_instance_valid(_quest_panel):
 		var q: Dictionary = QUESTS[_quest_step]
 		var ss: Dictionary = q["sub_steps"][_quest_sub]
 		if ss["type"] == "building" and ss["target"] == bid:
-			if bid == "solar_panel" and _solar_count < 2: return
 			_advance_quest_sub()
 
 func _on_district_placed(_seed: int, dtype: int) -> void:
@@ -413,10 +413,19 @@ func _end_guided_tutorial() -> void:
 	_tutorial_done = true
 	_hide_dim()
 	AchievementManager.notify_trigger(AchievementDef.Trigger.TUTORIAL_COMPLETE)
+	SettingsManager.tutorial_ever_done = true
+	SettingsManager.save_settings()
 	await get_tree().create_timer(0.4).timeout
 	if not _quest_done:
 		_build_quest_ui()
 		_show_quest_step(_quest_step)
+
+func _planet_area_center_anchor() -> float:
+	var vp_w: float = get_viewport().get_visible_rect().size.x
+	if vp_w <= 0.0: return 0.35
+	var right_panel := get_tree().root.find_child("RightPanel", true, false) as Control
+	var rp_w: float = right_panel.size.x if is_instance_valid(right_panel) else vp_w * 0.30
+	return (vp_w - rp_w) * 0.5 / vp_w
 
 # ── Dim overlay ────────────────────────────────────────────────────────────────
 func _show_dim() -> void:
@@ -453,9 +462,10 @@ func _build_narr_ui() -> void:
 	_narr_panel.add_theme_stylebox_override("panel", sb)
 	_narr_panel.custom_minimum_size = Vector2(600, 0)
 	# Top-center
-	_narr_panel.anchor_left   = 0.5; _narr_panel.anchor_right  = 0.5
-	_narr_panel.anchor_top    = 0.0; _narr_panel.anchor_bottom = 0.0
-	_narr_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	var _na := _planet_area_center_anchor()
+	_narr_panel.anchor_left   = _na;  _narr_panel.anchor_right  = _na
+	_narr_panel.anchor_top    = 0.0;  _narr_panel.anchor_bottom = 0.0
+	_narr_panel.offset_left   = -300; _narr_panel.offset_right  = 300
 	_narr_panel.offset_top    = 52
 	_narr_panel.modulate.a    = 0.0
 	add_child(_narr_panel)
@@ -594,11 +604,11 @@ func _show_action_bar(step: Dictionary) -> void:
 	var sb := _panel_style(Color(0.04, 0.05, 0.12, 0.88), Color(0.28, 0.55, 0.75, 0.55))
 	_action_bar.add_theme_stylebox_override("panel", sb)
 	_action_bar.custom_minimum_size = Vector2(420, 0)
-	_action_bar.anchor_left   = 0.5; _action_bar.anchor_right  = 0.5
-	_action_bar.anchor_top    = 1.0; _action_bar.anchor_bottom = 1.0
-	_action_bar.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	_action_bar.offset_top    = -110
-	_action_bar.offset_bottom = -12
+	var _aa := _planet_area_center_anchor()
+	_action_bar.anchor_left   = _aa;  _action_bar.anchor_right  = _aa
+	_action_bar.anchor_top    = 1.0;  _action_bar.anchor_bottom = 1.0
+	_action_bar.offset_left   = -210; _action_bar.offset_right  = 210
+	_action_bar.offset_top    = -110; _action_bar.offset_bottom = -12
 	_action_bar.mouse_filter  = Control.MOUSE_FILTER_IGNORE
 	_action_bar.modulate.a    = 0.0
 	add_child(_action_bar)
@@ -656,11 +666,11 @@ func _show_construction_wait() -> void:
 	var sb := _panel_style(Color(0.04, 0.05, 0.12, 0.88), Color(0.55, 0.45, 0.20, 0.55))
 	bar.add_theme_stylebox_override("panel", sb)
 	bar.custom_minimum_size = Vector2(480, 0)
-	bar.anchor_left   = 0.5; bar.anchor_right  = 0.5
-	bar.anchor_top    = 1.0; bar.anchor_bottom = 1.0
-	bar.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	bar.offset_top    = -110
-	bar.offset_bottom = -12
+	var _ba := _planet_area_center_anchor()
+	bar.anchor_left   = _ba;  bar.anchor_right  = _ba
+	bar.anchor_top    = 1.0;  bar.anchor_bottom = 1.0
+	bar.offset_left   = -240; bar.offset_right  = 240
+	bar.offset_top    = -110; bar.offset_bottom = -12
 	bar.mouse_filter  = Control.MOUSE_FILTER_IGNORE
 	bar.modulate.a    = 0.0
 	add_child(bar)
@@ -729,11 +739,17 @@ func _build_quest_ui() -> void:
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hdr.add_child(spacer)
 
-	var skip_btn := _mk_btn("skip", Color(0.38, 0.38, 0.50))
+	_skip_btn = _mk_btn("skip", Color(0.38, 0.38, 0.50))
+	var skip_btn := _skip_btn
 	skip_btn.mouse_filter = Control.MOUSE_FILTER_STOP
 	skip_btn.pressed.connect(func() -> void:
 		_give_skip_minerals()
+		_flash_skip_reward(get_viewport().get_mouse_position())
 		_dismiss_quest_panel())
+	skip_btn.mouse_entered.connect(func() -> void:
+		var ore_icon := MineralIcon.make(1, Color(0.55, 0.60, 0.70))
+		TooltipManager.show_tip("Scrap the tutorial Bot", ["Skip the optional objectives.", "\n+%.0f " % SKIP_MINERAL_AMOUNT, ore_icon], ""))
+	skip_btn.mouse_exited.connect(func() -> void: TooltipManager.hide_tip())
 	hdr.add_child(skip_btn)
 
 	var sep_sty := StyleBoxFlat.new()
@@ -799,15 +815,19 @@ func _show_quest_step(idx: int) -> void:
 	_tw_label(_desc_lbl, q["desc"], 0.022)
 
 func _advance_quest_sub() -> void:
+	if is_instance_valid(_skip_btn):
+		_skip_btn.queue_free()
+		_skip_btn = null
 	var q: Dictionary = QUESTS[_quest_step]
 	_quest_sub += 1
 	if _quest_sub >= q["sub_steps"].size():
 		if q.get("reward_credits", 0.0) > 0.0: GameState.credits     += q["reward_credits"]
 		if q.get("reward_science", 0.0) > 0.0: GameState.add_science(q["reward_science"])
 		_flash_reward(q["reward_text"])
-		(_tracker_items[_quest_step]["dot"] as Label).text = "✓"
-		(_tracker_items[_quest_step]["dot"] as Label).add_theme_color_override("font_color", Color(0.30, 0.85, 0.50))
-		(_tracker_items[_quest_step]["lbl"] as Label).add_theme_color_override("font_color", Color(0.40, 0.72, 0.50))
+		if _quest_step < _tracker_items.size():
+			(_tracker_items[_quest_step]["dot"] as Label).text = "✓"
+			(_tracker_items[_quest_step]["dot"] as Label).add_theme_color_override("font_color", Color(0.30, 0.85, 0.50))
+			(_tracker_items[_quest_step]["lbl"] as Label).add_theme_color_override("font_color", Color(0.40, 0.72, 0.50))
 		_quest_step += 1; _quest_sub = 0
 		if _quest_step >= QUESTS.size():
 			await get_tree().create_timer(1.5).timeout
@@ -829,6 +849,31 @@ func _give_skip_minerals() -> void:
 	var rid := rd.resource_id()
 	if not GameState.known_resources.has(rid): GameState.known_resources[rid] = rd
 	GameState.add_resource(rid, SKIP_MINERAL_AMOUNT)
+
+func _flash_skip_reward(pos: Vector2) -> void:
+	var rd := ResourceData.generate(GameState.home_planet_seed, ResourceData.Tag.RAW_MINERAL, 3, 1)
+	var ore_icon := MineralIcon.make(1, Color(0.85, 0.80, 0.60))
+	var flash := RichTextLabel.new()
+	flash.bbcode_enabled = true
+	flash.fit_content    = true
+	flash.scroll_active  = false
+	flash.mouse_filter   = Control.MOUSE_FILTER_IGNORE
+	if _orbitron: flash.add_theme_font_override("normal_font", _orbitron)
+	flash.add_theme_font_size_override("normal_font_size", 15)
+	flash.add_theme_color_override("default_color", Color(0.90, 0.82, 0.50))
+	flash.append_text("+%.0f " % SKIP_MINERAL_AMOUNT)
+	flash.add_image(ore_icon, 16, 16)
+	flash.position = pos + Vector2(-30, -20)
+	flash.modulate.a = 0.0
+	add_child(flash)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(flash, "modulate:a", 1.0, 0.15)
+	tw.tween_property(flash, "position:y", flash.position.y - 50, 1.0)
+	await get_tree().create_timer(0.15).timeout
+	create_tween().tween_property(flash, "modulate:a", 0.0, 0.5).set_delay(0.4)
+	await get_tree().create_timer(0.9).timeout
+	if is_instance_valid(flash): flash.queue_free()
 
 # ── Reward flash ──────────────────────────────────────────────────────────────
 func _flash_reward(text: String) -> void:
@@ -858,7 +903,7 @@ func _show_inventory_hint() -> void:
 	hint.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
 	hint.add_theme_constant_override("outline_size", 3)
 	hint.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	hint.position = Vector2(20, -60)
+	hint.position = Vector2(20, -140)
 	hint.modulate.a = 0.0
 	add_child(hint)
 	var tw := create_tween()

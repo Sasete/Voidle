@@ -48,6 +48,7 @@ var _open_mineral_switchers: Dictionary = {}
 ## Live district construction progress bars.
 var _district_pbars: Dictionary = {}
 var _planet_upgrade_pbar: ProgressBar = null
+var _inventory_tab_btn: Button = null
 
 # ── Tutorial highlight state ──────────────────────────────────────────────────
 var _tut_highlight:      String  = ""     # current highlight target id
@@ -230,10 +231,9 @@ func _update_tutorial_highlight() -> void:
 	if TutorialManager._waiting_for_bid != "":
 		TutorialManager.set_highlight_pos(Vector2(-999.0, -999.0))
 		_stop_tut_panel_pulse()
-		if _active_district_poi != null:
-			var cv = _poi_overview_cards.get(_active_district_poi.label, null)
-			if cv != null and is_instance_valid(cv):
-				allowed.append((cv as Control).get_global_rect())
+		for card_v in _poi_overview_cards.values():
+			if card_v != null and is_instance_valid(card_v):
+				allowed.append((card_v as Control).get_global_rect())
 		allowed.append(planet_area)
 		TutorialManager.set_allowed_rects(allowed)
 		return
@@ -310,8 +310,11 @@ func _update_tutorial_highlight() -> void:
 			allowed.append(planet_area)
 			TutorialManager.set_allowed_rects(allowed)
 			return
-	# Always allow planet drag regardless of tutorial step
+	# Always allow planet drag and all district overview cards
 	allowed.append(planet_area)
+	for card_v in _poi_overview_cards.values():
+		if card_v != null and is_instance_valid(card_v):
+			allowed.append((card_v as Control).get_global_rect())
 	TutorialManager.set_highlight_pos(ring_pos)
 	TutorialManager.set_allowed_rects(allowed)
 	# Panel card pulse
@@ -2346,6 +2349,7 @@ func _build_planet_overview(data: PlanetData) -> void:
 	root.add_child(top_tab_row)
 	var planet_tab_btn:    Button = _make_overview_tab_btn("DETAILS",   _top_tab_active == "DETAILS")
 	var inventory_tab_btn: Button = _make_overview_tab_btn("INVENTORY", _top_tab_active == "INVENTORY")
+	_inventory_tab_btn = inventory_tab_btn
 	top_tab_row.add_child(planet_tab_btn)
 	top_tab_row.add_child(inventory_tab_btn)
 
@@ -2521,6 +2525,16 @@ func _build_planet_overview(data: PlanetData) -> void:
 		dep_grid.add_theme_constant_override("h_separation", 4)
 		dep_grid.add_theme_constant_override("v_separation", 4)
 		var dep_rng := RandomNumberGenerator.new()
+		var total_dens: float = 0.0
+		for rd: ResourceData in p_br.as_array():
+			var rid := rd.resource_id()
+			var d: float = 0.0
+			if data.mineral_densities.has(rid):
+				d = float(data.mineral_densities[rid])
+			else:
+				dep_rng.seed = data.seed ^ (rd.rarity * 0x4E3D)
+				d = data.deposit_density * dep_rng.randf_range(0.75, 1.25)
+			total_dens += d
 		for rd: ResourceData in p_br.as_array():
 			var rid := rd.resource_id()
 			var p_density: float
@@ -2529,7 +2543,9 @@ func _build_planet_overview(data: PlanetData) -> void:
 			else:
 				dep_rng.seed = data.seed ^ (rd.rarity * 0x4E3D)
 				p_density = data.deposit_density * dep_rng.randf_range(0.75, 1.25)
-			dep_grid.add_child(_mineral_grid_card(rd, 0.0, false, "%d%%" % int(round(p_density * 100.0))))
+			var pct := 0
+			if total_dens > 0: pct = int(round((p_density / total_dens) * 100.0))
+			dep_grid.add_child(_mineral_grid_card(rd, 0.0, false, "%d%%" % pct))
 		planet_page.add_child(dep_grid)
 
 	if not pp.is_colonized:
@@ -4542,7 +4558,7 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 	btn_vbox.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 
 	var add_btn := Button.new()
-	add_btn.text     = "＋"
+	add_btn.text     = "+"
 	add_btn.flat     = false
 	add_btn.disabled = not can_add
 	_apply_orbitron(add_btn, 10)
@@ -4569,7 +4585,7 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 		tip_add = "Stack one more %s\n%.0f cr · %d slot" % [def.display_name, def.base_cost, def.slot_cost]
 	add_btn.mouse_entered.connect(func() -> void:
 		CursorManager.set_state(CursorManager.State.POINTER)
-		TooltipManager.show_tip("＋ " + def.display_name, tip_add))
+		TooltipManager.show_tip("+ " + def.display_name, tip_add))
 	add_btn.mouse_exited.connect(func() -> void:
 		CursorManager.set_state(CursorManager.State.NORMAL)
 		TooltipManager.hide_tip())
@@ -4581,7 +4597,7 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 			_build_district_panel(cap_poi, cap_planet))
 
 	var rem_btn := Button.new()
-	rem_btn.text = "−"
+	rem_btn.text = "-"
 	rem_btn.flat = false
 	_apply_orbitron(rem_btn, 10)
 	rem_btn.custom_minimum_size = Vector2(30, 22)
@@ -4599,7 +4615,7 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 	var tip_rem := "Remove one %s" % def.display_name if count > 1 else "Demolish %s" % def.display_name
 	rem_btn.mouse_entered.connect(func() -> void:
 		CursorManager.set_state(CursorManager.State.POINTER)
-		TooltipManager.show_tip("−", tip_rem))
+		TooltipManager.show_tip("-", tip_rem))
 	rem_btn.mouse_exited.connect(func() -> void:
 		CursorManager.set_state(CursorManager.State.NORMAL)
 		TooltipManager.hide_tip())
@@ -6262,6 +6278,22 @@ func _toggle_slot_dropdown(card: PanelContainer, poi: POIData, planet: PlanetDat
 						_refresh_overview_energy()
 						_build_district_panel(cap_poi, cap_planet))
 
+	var bg := ColorRect.new()
+	bg.color = Color(0, 0, 0, 0)
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	bg.gui_input.connect(func(ev: InputEvent) -> void:
+		if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed:
+			if is_instance_valid(_dd_layer):
+				_dd_layer.queue_free()
+				_dd_layer = null
+			_active_slot_dropdown = null
+			# Tutorial: restore slot card highlight when dropdown is closed
+			var tut_bid := TutorialManager.get_action_building_target()
+			if tut_bid != "" and is_instance_valid(card):
+				_tut_highlight_node = card as Control
+				_start_tut_node_pulse(_tut_highlight_node)
+	)
+	_dd_layer.add_child(bg)
 	_dd_layer.add_child(outer)
 	# CanvasLayer children use screen-space coordinates directly
 	await get_tree().process_frame
@@ -6374,6 +6406,17 @@ func _toggle_mineral_dropdown(btn: Control, raw_list: Array, target_key: String,
 
 		tray_h.add_child(alt_btn)
 
+	var bg := ColorRect.new()
+	bg.color = Color(0, 0, 0, 0)
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	bg.gui_input.connect(func(ev: InputEvent) -> void:
+		if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed:
+			if is_instance_valid(_dd_layer):
+				_dd_layer.queue_free()
+				_dd_layer = null
+			_active_slot_dropdown = null
+	)
+	_dd_layer.add_child(bg)
 	_dd_layer.add_child(outer)
 	await get_tree().process_frame
 	if not is_instance_valid(outer):
@@ -6460,7 +6503,7 @@ func _build_district_panel(poi: POIData, planet: PlanetData) -> void:
 	# District upgrade button
 	var upg_cost := 500 * dist_lv
 	var upg_btn  := Button.new()
-	upg_btn.text    = "⬆"
+	upg_btn.text    = "^"
 	upg_btn.flat    = true
 	upg_btn.disabled = GameState.credits < upg_cost
 	_apply_orbitron(upg_btn, 10)
@@ -6993,3 +7036,65 @@ func _draw_planet_rings(target: Node2D, from_a: float, to_a: float, is_back: boo
 			Color(col.r * 1.1, col.g * 1.05, col.b, palp))
 		target.draw_circle(Vector2(px, py), psize * 0.45,
 			Color(1.0, 0.96, 0.88, palp * 0.9))
+
+func _spawn_fly_icon(lon_deg: float, lat_deg: float, icon: Texture2D) -> void:
+	if icon == null or poi_layer == null or _inventory_tab_btn == null: return
+	
+	if not poi_layer.has_method("_get_planet_params") or not poi_layer.has_method("_get_rotation"):
+		return
+
+	var p2 = poi_layer.call("_get_planet_params")
+	if typeof(p2) != TYPE_DICTIONARY or p2.is_empty(): return
+	
+	var center: Vector2 = p2.get("center", Vector2.ZERO)
+	var r_px: float     = p2.get("r_px", 0.0)
+	var rot: float      = poi_layer.call("_get_rotation")
+	
+	var lon: float = deg_to_rad(lon_deg) - rot
+	var lat: float = deg_to_rad(lat_deg)
+	
+	# If behind the planet, maybe don't spawn or spawn faded
+	var sz: float = cos(lon) * cos(lat)
+	if sz <= 0.0: return
+	
+	var sx: float  = sin(lon) * cos(lat)
+	var sy: float  = -sin(lat)
+	
+	var start_pos: Vector2 = center + Vector2(sx * r_px, sy * r_px)
+	
+	var tr := TextureRect.new()
+	tr.texture = icon
+	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tr.custom_minimum_size = Vector2(24, 24)
+	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Use self.add_child so it renders on top of the UI
+	add_child(tr)
+	tr.global_position = start_pos - Vector2(12, 12)
+	
+	var tw := create_tween()
+	tw.set_parallel(true)
+	var end_pos: Vector2 = _inventory_tab_btn.global_position + _inventory_tab_btn.size * 0.5 - Vector2(12, 12)
+	
+	# Animate in an arc: X is linear/ease-in-out, Y goes up then down
+	tw.tween_property(tr, "global_position:x", end_pos.x, 0.8).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	
+	# For Y, we use a custom tween method to create a bezier arc
+	var ctrl_y: float = minf(start_pos.y, end_pos.y) - 150.0
+	var start_y: float = start_pos.y
+	var end_y: float = end_pos.y
+	var t_y = func(t: float):
+		var y = (1.0 - t) * (1.0 - t) * start_y + 2.0 * (1.0 - t) * t * ctrl_y + t * t * end_y
+		tr.global_position.y = y
+		
+	tw.tween_method(t_y, 0.0, 1.0, 0.8)
+	
+	tw.tween_property(tr, "scale", Vector2(0.6, 0.6), 0.8)
+	tw.tween_property(tr, "modulate:a", 0.0, 0.2).set_delay(0.6)
+	
+	tw.chain().tween_callback(tr.queue_free)
+	
+	# Pulse the inventory tab at the end of the animation
+	var tw2 := create_tween()
+	tw2.tween_interval(0.7)
+	tw2.tween_property(_inventory_tab_btn, "scale", Vector2(1.05, 1.05), 0.1)
+	tw2.tween_property(_inventory_tab_btn, "scale", Vector2(1.0, 1.0), 0.1)

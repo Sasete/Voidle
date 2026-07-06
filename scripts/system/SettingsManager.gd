@@ -4,6 +4,7 @@ const SETTINGS_PATH = "user://settings.cfg"
 
 var master_volume: float = 1.0 # 0.0 to 1.0
 var is_fullscreen: bool = true
+var tutorial_ever_done: bool = false
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -14,16 +15,18 @@ func load_settings() -> void:
 	var config := ConfigFile.new()
 	var err := config.load(SETTINGS_PATH)
 	if err == OK:
-		master_volume = config.get_value("audio", "master_volume", 1.0)
-		is_fullscreen = config.get_value("video", "fullscreen", true)
+		master_volume      = config.get_value("audio",    "master_volume",    1.0)
+		is_fullscreen      = config.get_value("video",    "fullscreen",        true)
+		tutorial_ever_done = config.get_value("tutorial", "ever_done",         false)
 	else:
 		master_volume = 1.0
 		is_fullscreen = true
 
 func save_settings() -> void:
 	var config := ConfigFile.new()
-	config.set_value("audio", "master_volume", master_volume)
-	config.set_value("video", "fullscreen", is_fullscreen)
+	config.set_value("audio",    "master_volume", master_volume)
+	config.set_value("video",    "fullscreen",    is_fullscreen)
+	config.set_value("tutorial", "ever_done",     tutorial_ever_done)
 	config.save(SETTINGS_PATH)
 
 func apply_settings() -> void:

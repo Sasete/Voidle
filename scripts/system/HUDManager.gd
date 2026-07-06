@@ -498,16 +498,23 @@ func show_settings_popup() -> void:
 	tut_lbl.add_theme_font_size_override("font_size", 12)
 	tut_lbl.add_theme_color_override("font_color", Color(0.70, 0.78, 0.95))
 	tut_row.add_child(tut_lbl)
-	var tut_chk := CheckButton.new()
-	tut_chk.button_pressed = TutorialManager.tutorial_enabled
-	if _orbitron: tut_chk.add_theme_font_override("font", _orbitron)
-	tut_chk.add_theme_font_size_override("font_size", 11)
-	tut_chk.toggled.connect(func(on: bool) -> void:
-		TutorialManager.tutorial_enabled = on
-		if not on:
-			TutorialManager._on_new_game()  # clear any active tutorial UI
+	var reset_btn := Button.new()
+	reset_btn.text = "Reset Tutorial"
+	if _orbitron: reset_btn.add_theme_font_override("font", _orbitron)
+	reset_btn.add_theme_font_size_override("font_size", 10)
+	var rst_s := StyleBoxFlat.new()
+	rst_s.bg_color = Color(0.18, 0.22, 0.38)
+	rst_s.border_color = Color(0.35, 0.45, 0.75, 0.6)
+	rst_s.set_border_width_all(1); rst_s.set_corner_radius_all(4)
+	rst_s.content_margin_left = 10; rst_s.content_margin_right = 10
+	rst_s.content_margin_top = 5;  rst_s.content_margin_bottom = 5
+	reset_btn.add_theme_stylebox_override("normal", rst_s)
+	reset_btn.pressed.connect(func() -> void:
+		SettingsManager.tutorial_ever_done = false
+		SettingsManager.save_settings()
+		TutorialManager.tutorial_enabled = true
 		AudioManager.play("ui_click"))
-	tut_row.add_child(tut_chk)
+	tut_row.add_child(reset_btn)
 	vbox.add_child(tut_row)
 
 	vbox.add_child(HSeparator.new())
