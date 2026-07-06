@@ -31,7 +31,7 @@ const GUIDED_STEPS: Array = [
 		"pages": [
 			[
 				"Year 2387. Earth is a memory.",
-				"Humanity fractured into thousands of arks — generation ships hurled into the dark.",
+				"Humanity fractured into thousands of arks. Generation ships hurled into the dark.",
 				"Yours made it. Barely.",
 			],
 			[
@@ -59,7 +59,7 @@ const GUIDED_STEPS: Array = [
 		"pages": [
 			[
 				"Your first residents move in.",
-				"Cramped quarters, recycled air — but they're alive.",
+				"Cramped quarters, recycled air. But they're alive.",
 				"Power is next. Without it, everything stops.",
 			],
 			[
@@ -100,18 +100,32 @@ const GUIDED_STEPS: Array = [
 		"instruction": "Click your Capital district  →  Build  →  University",
 		"targets":     [{"type": "building", "id": "lab"}],
 		"reward_credits": 0.0,
-		"reward_science": 10.0,
-		"reward_text":   "+10 sci",
+		"reward_science": 25.0,
+		"reward_text":   "+25 sci",
 	},
 	{
 		"type":  "narr",
 		"pages": [
 			[
 				"Minds at work. The university lights burn late into the night.",
-				"From nothing — shelter, light, science.",
-				"The void is still out there. But so are you.",
+				"Knowledge compounds. Every discovery unlocks the next.",
+				"But knowledge without resources is just theory.",
+			],
+			[
+				"Beneath the surface lie veins of raw minerals.",
+				"The foundation of every structure, every ship, every future.",
+				"Research Mining Operations in the Upgrade Tree to begin extraction.",
 			],
 		],
+	},
+	{
+		"type":        "action",
+		"instruction": "Open  ✦ Upgrade Tree  →  Research  Mining Operations",
+		"targets":     [{"type": "skill", "id": "unlock_mining"}],
+		"reward_credits": 500.0,
+		"reward_science": 0.0,
+		"reward_text":   "+500 cr",
+		"finale":        true,
 	},
 ]
 
@@ -198,6 +212,7 @@ func _ready() -> void:
 	ProductionManager.building_constructed.connect(_on_building_constructed)
 	GameState.district_placed.connect(_on_district_placed)
 	GameState.global_resources_changed.connect(_on_resources_changed)
+	get_tree().root.get_node("SkillTree").skill_unlocked.connect(_on_skill_unlocked)
 
 func start() -> void:
 	if not tutorial_enabled or _active: return
@@ -258,6 +273,14 @@ func _on_building_constructed(_seed: int, _key: String, bid: String) -> void:
 		if ss["type"] == "building" and ss["target"] == bid:
 			_advance_quest_sub()
 
+func _on_skill_unlocked(id: String) -> void:
+	if not _active or _tutorial_done or _guided_step >= GUIDED_STEPS.size(): return
+	var step: Dictionary = GUIDED_STEPS[_guided_step]
+	if step["type"] != "action": return
+	var tgt: Dictionary = step["targets"][_action_sub]
+	if tgt["type"] == "skill" and tgt["id"] == id:
+		_advance_action()
+
 func _on_district_placed(_seed: int, dtype: int) -> void:
 	if _active and not _tutorial_done and _guided_step < GUIDED_STEPS.size():
 		var step: Dictionary = GUIDED_STEPS[_guided_step]
@@ -294,6 +317,10 @@ func _run_guided_step() -> void:
 		_action_sub = 0
 		_hide_dim()
 		_show_action_bar(step)
+		# Skill steps: unblock input so SkillTree can be opened
+		var first_tgt: Dictionary = step["targets"][0]
+		if first_tgt["type"] == "skill":
+			_action_block_on = false
 
 func _advance_action() -> void:
 	if _guided_step >= GUIDED_STEPS.size(): return
@@ -305,6 +332,9 @@ func _advance_action() -> void:
 		if step.get("reward_science", 0.0) > 0.0: GameState.add_science(step["reward_science"])
 		if step.has("reward_text"): _flash_reward(step["reward_text"])
 		_hide_action_bar()
+		if step.get("finale", false):
+			_run_finale()
+			return
 		_guided_step += 1
 		_run_guided_step()
 	else:
@@ -374,6 +404,7 @@ func _flash_deny(pos: Vector2) -> void:
 
 func _highlight_id_for(tgt: Dictionary) -> String:
 	if tgt["type"] == "district": return "add_district"
+	if tgt["type"] == "skill":    return "skill_tree_btn"
 	match tgt.get("id", ""):
 		"residential", "lab": return "capital"
 		"solar_panel":        return "generator_district"
@@ -408,6 +439,79 @@ func _target_hint(tgt: Dictionary) -> String:
 		"solar_panel":  return "Build  →  Solar Array inside the district"
 		"lab":          return "Build  →  University"
 		_:              return "Build: " + tgt["id"]
+
+func _close_skill_tree() -> void:
+	var root := get_tree().root
+	for child: Node in root.get_children():
+		if not (child is CanvasLayer): continue
+		for gc: Node in child.get_children():
+			var sc = gc.get_script()
+			if sc != null and (sc as Script).resource_path.ends_with("SkillTreeView.gd"):
+				if gc.has_signal("tree_closed"):
+					gc.emit_signal("tree_closed")
+				child.queue_free()
+				return
+
+func _run_finale() -> void:
+	# Close SkillTree and return to planet view
+	_close_skill_tree()
+	await get_tree().create_timer(0.55).timeout
+
+	# Reward was already given by _advance_action before _run_finale — nothing extra needed here
+
+	# Big "Tutorial Complete" banner at top of planet area
+	var banner := PanelContainer.new()
+	var sb := _panel_style(Color(0.02, 0.04, 0.10, 0.96), Color(0.35, 0.70, 1.0, 0.85))
+	banner.add_theme_stylebox_override("panel", sb)
+	banner.custom_minimum_size = Vector2(520, 0)
+	var _ca := _planet_area_center_anchor()
+	banner.anchor_left   = _ca;  banner.anchor_right  = _ca
+	banner.anchor_top    = 0.0;  banner.anchor_bottom = 0.0
+	banner.offset_left   = -260; banner.offset_right  = 260
+	banner.offset_top    = 52
+	banner.mouse_filter  = Control.MOUSE_FILTER_IGNORE
+	banner.modulate.a    = 0.0
+	add_child(banner)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 10)
+	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	banner.add_child(vbox)
+
+	var tag := Label.new()
+	tag.text = "◈  TUTORIAL COMPLETE  ◈"
+	if _orbitron: tag.add_theme_font_override("font", _orbitron)
+	tag.add_theme_font_size_override("font_size", 9)
+	tag.add_theme_color_override("font_color", Color(0.45, 0.78, 1.0))
+	tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vbox.add_child(tag)
+
+	var title := Label.new()
+	title.text = "The void is no longer empty."
+	if _orbitron: title.add_theme_font_override("font", _orbitron)
+	title.add_theme_font_size_override("font_size", 24)
+	title.add_theme_color_override("font_color", Color(0.92, 0.94, 1.0))
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vbox.add_child(title)
+
+	var sub := Label.new()
+	sub.text = "You have shelter. Power. Knowledge. Minerals.\nFrom this foothold, the stars are reachable."
+	if _orbitron: sub.add_theme_font_override("font", _orbitron)
+	sub.add_theme_font_size_override("font_size", 10)
+	sub.add_theme_color_override("font_color", Color(0.60, 0.72, 0.90))
+	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	sub.custom_minimum_size = Vector2(460, 0)
+	vbox.add_child(sub)
+
+	create_tween().tween_property(banner, "modulate:a", 1.0, 0.7)
+	await get_tree().create_timer(4.2).timeout
+
+	var tw := create_tween()
+	tw.tween_property(banner, "modulate:a", 0.0, 0.8)
+	await tw.finished
+	if is_instance_valid(banner): banner.queue_free()
+	_end_guided_tutorial()
 
 func _end_guided_tutorial() -> void:
 	_tutorial_done = true

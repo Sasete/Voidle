@@ -15,6 +15,7 @@ allowed_poi_types = Array[int]([1])
 base_cost = 150.0
 slot_cost = 1
 min_planet_lv = 1
+unlock_skill = "unlock_mining"
 tick_duration = 30.0
 energy_per_tick = -2.0
 output_type = 3

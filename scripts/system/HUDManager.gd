@@ -3,6 +3,8 @@ extends CanvasLayer
 
 var _credits_lbl: Label
 var _science_lbl: Label
+var _skill_btn: Button = null
+var _skill_btn_tween: Tween = null
 var _energy_hud_lbl: Label = null
 var _energy_bar_left: ProgressBar = null
 var _energy_bar_right: ProgressBar = null
@@ -118,7 +120,15 @@ func _ready() -> void:
 	skill_h.border_color = Color(0.42, 0.62, 1.0, 0.85)
 	skill_btn.add_theme_stylebox_override("hover", skill_h)
 
+	_skill_btn = skill_btn
+	TutorialManager.highlight_changed.connect(_on_tut_highlight)
+	TutorialManager.highlight_cleared.connect(_on_tut_highlight_clear)
+
 	skill_btn.pressed.connect(func() -> void:
+		if TutorialManager._active and not TutorialManager._tutorial_done \
+				and TutorialManager.get_action_step_type() != "skill":
+			AudioManager.play("error")
+			return
 		AudioManager.play("click")
 		var root := get_tree().root
 		var existing_layer: CanvasLayer = null
@@ -880,6 +890,17 @@ func _on_achievement_unlocked(def) -> void:
 	tw.tween_interval(3.5)
 	tw.tween_property(panel, "modulate", Color(1, 1, 1, 0), 0.6).set_ease(Tween.EASE_IN)
 	tw.tween_callback(func() -> void: overlay.queue_free())
+
+func _on_tut_highlight(target: String) -> void:
+	if target != "skill_tree_btn" or not is_instance_valid(_skill_btn): return
+	if is_instance_valid(_skill_btn_tween): _skill_btn_tween.kill()
+	_skill_btn_tween = create_tween().set_loops()
+	_skill_btn_tween.tween_property(_skill_btn, "modulate", Color(1.6, 1.5, 0.6, 1.0), 0.5)
+	_skill_btn_tween.tween_property(_skill_btn, "modulate", Color(1.0, 1.0, 1.0, 1.0), 0.5)
+
+func _on_tut_highlight_clear() -> void:
+	if is_instance_valid(_skill_btn_tween): _skill_btn_tween.kill(); _skill_btn_tween = null
+	if is_instance_valid(_skill_btn): _skill_btn.modulate = Color.WHITE
 
 func _energy_breakdown_text() -> String:
 	var pm: Node = get_node_or_null("/root/ProductionManager")

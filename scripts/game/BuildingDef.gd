@@ -11,6 +11,8 @@ enum OutputType { NONE, ENERGY, CREDITS, RAW_MINERAL, REFINED_MINERAL, SCIENCE }
 @export var base_cost:         float    = 100.0
 @export var slot_cost:         int      = 1
 @export var min_planet_lv:     int      = 1
+## Required skill node to unlock this building. Empty = unlocked by default.
+@export var unlock_skill:      String   = ""
 
 ## Production
 @export var construct_duration: float     = 0.0    # build time; 0 = use tick_duration
@@ -76,8 +78,11 @@ static func all() -> Array[BuildingDef]:
 	return _cache
 
 static func available_buildings() -> Array[BuildingDef]:
+	var st = Engine.get_main_loop().root.get_node_or_null("SkillTree")
 	var result: Array[BuildingDef] = []
 	for b in all():
+		if b.unlock_skill != "" and (st == null or not st.is_unlocked(b.unlock_skill)):
+			continue
 		if b.unlocked_by_default or GameState.unlocked_buildings.has(b.building_id):
 			result.append(b)
 	return result

@@ -20,4 +20,4 @@ output_amount = 5.0
 input_type = 3
 input_amount = 5.0
 input_tier = 1
-unlocked_by_default = true
+unlocked_by_default = false

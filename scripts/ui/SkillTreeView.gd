@@ -266,6 +266,15 @@ func _build_tree_graph() -> void:
 			"root":
 				icon_col = Color(0.9, 0.8, 0.4) # Gold
 				icon_tier = 5 # Core
+			"unlock_solar_panel":
+				icon_col = Color(1.0, 0.9, 0.2) # Sun Yellow
+				icon_tier = 3 # Energy
+			"unlock_residential":
+				icon_col = Color(0.2, 0.95, 0.4) # Green
+				icon_tier = 1 # Data/Node
+			"unlock_lab":
+				icon_col = Color(0.2, 0.6, 1.0) # Science Blue
+				icon_tier = 2 # Flask
 			# Energy
 			"unlock_thermal_plant":
 				icon_col = Color(1.0, 0.4, 0.1) # Fire Orange
@@ -292,6 +301,9 @@ func _build_tree_graph() -> void:
 				icon_col = Color(1.0, 0.8, 0.0) # Bright Sun Gold
 				icon_tier = 9 # Sun
 			# Mining
+			"unlock_mining":
+				icon_col = Color(0.9, 0.6, 0.2) # Amber/Gold — mining operations
+				icon_tier = 2 # Drill
 			"unlock_deep_drill":
 				icon_col = Color(1.0, 0.5, 0.2) # Industrial Orange
 				icon_tier = 2 # Drill
@@ -505,7 +517,10 @@ func _build_tree_graph() -> void:
 				var missing_parents: Array[String] = []
 				for p in node.parents:
 					if st.call("get_skill_level", p) == 0:
-						missing_parents.append(st.get("nodes")[p].name)
+						if st.get("nodes").has(p):
+							missing_parents.append(st.get("nodes")[p].name)
+						else:
+							missing_parents.append("???")
 				
 				if missing_parents.size() > 0:
 					body_str += "\n\n[color=#ff5544]Requires: " + ", ".join(missing_parents) + "[/color]"
@@ -544,12 +559,35 @@ func _build_tree_graph() -> void:
 		card.gui_input.connect(func(e: InputEvent) -> void:
 			if e is InputEventMouseButton and (e as InputEventMouseButton).pressed and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
 				card.accept_event() # Stop propagation to canvas drag
+				# During tutorial skill step, only unlock_mining is allowed
+				var tm := get_node_or_null("/root/TutorialManager")
+				if tm != null and tm._active and not tm._tutorial_done \
+						and tm.get_action_step_type() == "skill" and cap_id != "unlock_mining":
+					AudioManager.play("error")
+					return
 				if st.call("can_purchase", cap_id):
 					TooltipManager.hide_tip()
 					AudioManager.play("skill_buy")
 					st.call("purchase_skill", cap_id)
 				else:
 					AudioManager.play("error"))
+
+	_apply_tutorial_skill_overlay()
+
+func _apply_tutorial_skill_overlay() -> void:
+	var tm := get_node_or_null("/root/TutorialManager")
+	if tm == null or not tm._active or tm._tutorial_done or tm.get_action_step_type() != "skill":
+		return
+	var target_id := "unlock_mining"
+	for nid in _ui_nodes:
+		var card: PanelContainer = _ui_nodes[nid]
+		if not is_instance_valid(card): continue
+		if nid == target_id:
+			var tw := create_tween().set_loops()
+			tw.tween_property(card, "modulate", Color(1.6, 1.55, 0.7, 1.0), 0.55)
+			tw.tween_property(card, "modulate", Color(1.0, 1.0, 1.0, 1.0), 0.55)
+		elif nid != "root":
+			card.modulate = Color(0.35, 0.35, 0.35, 0.6)
 
 func _draw_connections() -> void:
 	# Draw all connection lines between parent/child nodes
@@ -564,6 +602,8 @@ func _draw_connections() -> void:
 			
 		for parent_id in node.parents:
 			if not st.call("is_visible", parent_id):
+				continue
+			if not st.get("nodes").has(parent_id):
 				continue
 				
 			# Offset drawing coordinates to account for _connections_draw's -10000 position shift

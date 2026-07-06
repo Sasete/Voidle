@@ -445,15 +445,22 @@ func load_save() -> bool:
 	
 	var st := get_node("/root/SkillTree")
 	st.unlocked_skills.clear()
+	st.unlocked_skills.append("root")
+	for def_node in ["unlock_solar_panel", "unlock_residential", "unlock_lab"]:
+		if not def_node in st.unlocked_skills:
+			st.unlocked_skills.append(def_node)
+
 	if data.has("unlocked_skills"):
 		for s in data["unlocked_skills"]:
-			st.unlocked_skills.append(s)
-	else:
-		st.unlocked_skills.append("root")
+			if not s in st.unlocked_skills:
+				st.unlocked_skills.append(s)
 		
 	st.skill_levels.clear()
+	for def_node in ["unlock_solar_panel", "unlock_residential", "unlock_lab"]:
+		st.skill_levels[def_node] = 1
 	if data.has("skill_levels"):
-		st.skill_levels.merge(data["skill_levels"])
+		for k in data["skill_levels"]:
+			st.skill_levels[k] = data["skill_levels"][k]
 
 	global_resources    = data.get("global_resources",   {})
 	unlocked_buildings  = data.get("unlocked_buildings", {})
@@ -513,6 +520,10 @@ func delete_save() -> void:
 	var st := get_node("/root/SkillTree")
 	st.unlocked_skills.clear()
 	st.unlocked_skills.append("root")
+	for def_node in ["unlock_solar_panel", "unlock_residential", "unlock_lab"]:
+		st.unlocked_skills.append(def_node)
 	st.skill_levels.clear()
+	for def_node in ["unlock_solar_panel", "unlock_residential", "unlock_lab"]:
+		st.skill_levels[def_node] = 1
 	_planet_progress.clear()
 	_bootstrap_world()

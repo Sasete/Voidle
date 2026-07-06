@@ -4342,9 +4342,13 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 	_apply_orbitron(name_lbl, 10)
 	name_lbl.add_theme_color_override("font_color", Color(0.85, 0.92, 1.0))
 	name_row.add_child(name_lbl)
-	if count > 1:
+	var b_lv: int = entry.get("level", 1)
+	if count > 1 or b_lv > 1:
 		var cnt_lbl := Label.new()
-		cnt_lbl.text = "×%d" % count
+		var txt := ""
+		if count > 1: txt += "×%d" % count
+		if b_lv > 1: txt += (" " if txt != "" else "") + "Lv%d" % b_lv
+		cnt_lbl.text = txt
 		cnt_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_apply_orbitron(cnt_lbl, 8)
 		cnt_lbl.add_theme_color_override("font_color", Color(0.55, 0.65, 1.0, 0.8))
@@ -4357,7 +4361,7 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 	info_row.add_theme_constant_override("separation", 8)
 	
 	# Determine modified output label text
-	var out_val := def.output_amount
+	var out_val := def.output_amount * ProductionManager.get_building_level_mult(b_lv)
 	if def.output_type == BuildingDef.OutputType.CREDITS:
 		out_val *= get_node("/root/SkillTree").get_credits_mult()
 	elif def.output_type == BuildingDef.OutputType.ENERGY:
@@ -4520,11 +4524,13 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 		var tip_etick := def.energy_per_tick
 		if tip_etick != 0.0:
 			if tip_etick > 0.0:
+				tip_etick *= ProductionManager.get_building_level_mult(b_lv)
 				if def.building_id == "solar_panel":
 					tip_etick *= get_node("/root/SkillTree").get_solar_mult()
 			else:
+				tip_etick *= ProductionManager.get_building_consume_mult(b_lv)
 				tip_etick *= get_node("/root/SkillTree").get_energy_consume_mult()
-			tip_str += "Energy: " + ("+" if tip_etick > 0 else "") + "%.0f ⚡\n" % tip_etick
+			tip_str += "Energy: " + ("+" if tip_etick > 0 else "") + "%.0f ⚡\n" % (tip_etick * count)
 		if def.input_amount > 0.0:
 			tip_str += "Consumes: %.0f units\n" % (def.input_amount * count)
 			

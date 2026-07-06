@@ -46,8 +46,11 @@ static func all() -> Array[DistrictDef]:
 	return _cache
 
 static func for_planet(planet_type: PlanetData.Type) -> Array[DistrictDef]:
+	var st = Engine.get_main_loop().root.get_node_or_null("SkillTree")
 	var result: Array[DistrictDef] = []
 	for d: DistrictDef in all():
+		if d.unlock_skill != "" and (st == null or not st.is_unlocked(d.unlock_skill)):
+			continue
 		if d.allowed_planet_types.is_empty() or planet_type in d.allowed_planet_types:
 			result.append(d)
 	return result
