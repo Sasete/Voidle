@@ -521,8 +521,11 @@ func _refresh_pois(data: PlanetData) -> void:
 				}
 			})
 
+	var pp_poi := GameState.get_planet(data.seed)
 	for poi in pois:
-		poi_layer.add_poi(poi["lon_deg"], poi["lat_deg"], poi["label"], poi["data"])
+		var d: Dictionary = poi["data"].duplicate()
+		d["district_level"] = pp_poi.district_levels.get(poi["label"], 1) if pp_poi != null else 1
+		poi_layer.add_poi(poi["lon_deg"], poi["lat_deg"], poi["label"], d)
 
 	_upload_poi_lights(pois, data)
 	# After POIs are loaded, sync night sizes so shader glow starts correctly
@@ -1165,7 +1168,7 @@ func _district_night_size(data: PlanetData, district_label: String) -> int:
 		if b.get("constructing", false):
 			continue
 		var global_idx: int = pp.building_real_index(b)
-		var pm_key: String  = "%d:%s:%d" % [data.seed, district_label, global_idx]
+		var pm_key: String  = "%d:%s:%s" % [data.seed, district_label, b.get("uid", "-1")]
 		if ProductionManager.is_user_paused(pm_key):
 			continue
 		total += b.get("amount", 1)
@@ -1183,7 +1186,7 @@ func _planet_energy_breakdown(pp: PlanetProgress, data: PlanetData) -> Dictionar
 	for i in pp.buildings.size():
 		var b: Dictionary = pp.buildings[i]
 		if b.get("constructing", false) or ProductionManager.is_user_paused(
-				"%d:%s:%d" % [pp.planet_seed, b.get("district_id",""), i]):
+				"%d:%s:%s" % [pp.planet_seed, b.get("district_id",""), b.get("uid", "-1")]):
 			continue
 		var def := BuildingDef.find(b.get("building_id", ""))
 		if def == null:
@@ -2944,7 +2947,7 @@ func _build_district_overview_card(poi: POIData, planet: PlanetData, pp: PlanetP
 	s.bg_color = Color(0.07, 0.09, 0.17, 0.80)
 	card.add_theme_stylebox_override("panel", s)
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	card.custom_minimum_size   = Vector2(0, 40)
+	card.custom_minimum_size   = Vector2(0, 48)
 
 	var margin := MarginContainer.new()
 	margin.add_theme_constant_override("margin_left",   10)
@@ -2955,8 +2958,19 @@ func _build_district_overview_card(poi: POIData, planet: PlanetData, pp: PlanetP
 	card.add_child(margin)
 
 	var hbox := HBoxContainer.new()
+	hbox.add_theme_constant_override("separation", 10)
 	hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	margin.add_child(hbox)
+
+	# Big level number on the left
+	var dist_lv_ov: int = pp.district_levels.get(poi.label, 1)
+	var lv_lbl := Label.new()
+	lv_lbl.text = str(dist_lv_ov)
+	lv_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	lv_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_apply_orbitron(lv_lbl, 22)
+	lv_lbl.add_theme_color_override("font_color", Color(0.38, 0.58, 0.95, 0.75))
+	hbox.add_child(lv_lbl)
 
 	var info := VBoxContainer.new()
 	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -3116,7 +3130,16 @@ func _build_add_district_card(data: PlanetData, enabled: bool, orbital_only: boo
 			var dd := _build_district_type_dropdown(cap_data, cap_wrap, dropdown_ref, orbital_only)
 			cap_wrap.add_child(dd)
 			dropdown_ref[0] = dd
-			_notify_tutorial_district_type_dropdown(dd))
+			_notify_tutorial_district_type_dropdown(dd)
+			# After layout: flip upward only if it overflows the viewport bottom
+			var cap_dd := dd
+			var cap_cw := cap_wrap
+			await get_tree().process_frame
+			if is_instance_valid(cap_dd) and is_instance_valid(cap_cw):
+				var dd_bottom := cap_dd.global_position.y + cap_dd.size.y
+				var vp_h := get_viewport().get_visible_rect().size.y
+				if dd_bottom > vp_h - 8.0:
+					cap_cw.move_child(cap_dd, 0))
 
 	return wrapper
 
@@ -3339,7 +3362,8 @@ func _refresh_bar_label_status(key: String) -> void:
 		if not paused:
 			var sk := get_node("/root/SkillTree")
 			var amount: int = m.get("entry", {}).get("amount", 1)
-			var out_val := def.output_amount * float(amount)
+			var b_lv: int = m.get("entry", {}).get("level", 1)
+			var out_val := def.output_amount * ProductionManager.get_building_level_mult(b_lv) * float(amount)
 			if def.output_type == BuildingDef.OutputType.CREDITS:
 				out_val *= sk.get_credits_mult()
 			elif def.output_type == BuildingDef.OutputType.ENERGY:
@@ -3372,7 +3396,7 @@ func _refresh_bar_label_status(key: String) -> void:
 			var is_user_paused := ProductionManager.is_user_paused(key)
 			slowed_lbl.visible = not paused and not is_user_paused and er < 0.999
 
-func _on_building_constructed(planet_seed: int, key: String) -> void:
+func _on_building_constructed(planet_seed: int, key: String, _building_id: String = "") -> void:
 	if current_data == null or current_data.seed != planet_seed:
 		return
 	AudioManager.play("building_done")
@@ -3383,14 +3407,19 @@ func _on_building_constructed(planet_seed: int, key: String) -> void:
 	var building_name := ""
 	var poi_label     := ""
 	if last_col > first_col and first_col >= 0:
-		var idx       := key.substr(last_col + 1).to_int()
+		var uid       := key.substr(last_col + 1)
 		poi_label      = key.substr(first_col + 1, last_col - first_col - 1)
 		var pp := GameState.get_planet(planet_seed)
-		if pp != null and idx >= 0 and idx < pp.buildings.size():
-			var entry := pp.buildings[idx]
-			var def   := BuildingDef.find(entry.get("building_id", ""))
-			if def != null:
-				building_name = def.display_name
+		if pp != null:
+			var entry: Dictionary = {}
+			for b in pp.buildings:
+				if b.get("uid", "-1") == uid:
+					entry = b
+					break
+			if not entry.is_empty():
+				var def   := BuildingDef.find(entry.get("building_id", ""))
+				if def != null:
+					building_name = def.display_name
 
 	# Always show a toast — never auto-select / reopen the district.
 	_show_construction_toast(
@@ -4361,7 +4390,7 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 	info_row.add_theme_constant_override("separation", 8)
 	
 	# Determine modified output label text
-	var out_val := def.output_amount * ProductionManager.get_building_level_mult(b_lv)
+	var out_val := def.output_amount * ProductionManager.get_building_level_mult(b_lv) * float(count)
 	if def.output_type == BuildingDef.OutputType.CREDITS:
 		out_val *= get_node("/root/SkillTree").get_credits_mult()
 	elif def.output_type == BuildingDef.OutputType.ENERGY:
@@ -4636,6 +4665,52 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 
 	btn_vbox.add_child(add_btn)
 	btn_vbox.add_child(rem_btn)
+	
+	var st = null
+	if Engine.has_singleton("SceneTree") and Engine.get_main_loop():
+		st = Engine.get_main_loop().root.get_node_or_null("SkillTree")
+	var max_b_lv = 1
+	if st and st.has_method("get_building_max_level"):
+		max_b_lv = st.get_building_max_level(def.building_id)
+		
+	var cur_lv = entry.get("level", 1)
+	if cur_lv < max_b_lv:
+		var b_upg_cost = def.get_upgrade_cost(cur_lv, cap_entry.get("amount", 1))
+		var can_afford_b_upg = GameState.credits >= b_upg_cost
+		var b_upg_btn := Button.new()
+		b_upg_btn.text = "^"
+		b_upg_btn.flat = false
+		_apply_orbitron(b_upg_btn, 10)
+		b_upg_btn.custom_minimum_size = Vector2(30, 22)
+		var up_s := StyleBoxFlat.new()
+		up_s.bg_color = Color(0.2, 0.4, 0.8, 1.0) if can_afford_b_upg else Color(0.1, 0.15, 0.25, 1.0)
+		up_s.border_color = Color(0.4, 0.7, 1.0, 1.0) if can_afford_b_upg else Color(0.2, 0.3, 0.4, 1.0)
+		up_s.border_width_all = 1
+		up_s.corner_radius_top_left = 3; up_s.corner_radius_top_right = 3
+		up_s.corner_radius_bottom_left = 3; up_s.corner_radius_bottom_right = 3
+		up_s.content_margin_left = 3; up_s.content_margin_right = 3
+		b_upg_btn.add_theme_stylebox_override("normal", up_s)
+		b_upg_btn.add_theme_color_override("font_color", Color(0.9, 0.95, 1.0))
+		b_upg_btn.disabled = not can_afford_b_upg
+		
+		b_upg_btn.mouse_entered.connect(func():
+			CursorManager.set_state(CursorManager.State.POINTER)
+			var cost_str = "%.0f cr" % b_upg_cost
+			TooltipManager.show_tip("Upgrade Building", "Upgrade to Level %d.\nIncreases output and consumption." % (cur_lv + 1), cost_str))
+		b_upg_btn.mouse_exited.connect(func():
+			CursorManager.set_state(CursorManager.State.NORMAL)
+			TooltipManager.hide_tip())
+			
+		b_upg_btn.pressed.connect(func():
+			TooltipManager.hide_tip()
+			if pp.upgrade_building(cap_entry):
+				AudioManager.play("building_done")
+				GameState.planet_progress_changed.emit(cap_planet.seed)
+				if _active_district_poi != null and _active_district_poi.label == cap_poi.label:
+					_build_district_panel(cap_poi, cap_planet)
+		)
+		btn_vbox.add_child(b_upg_btn)
+
 	hbox.add_child(btn_vbox)
 
 	# Click card body (not the "+" button) to toggle building on/off
@@ -6446,6 +6521,7 @@ func _build_district_panel(poi: POIData, planet: PlanetData) -> void:
 	var pp   := GameState.get_planet(planet.seed)
 	var root := VBoxContainer.new()
 	root.name = "DistrictBuildPanel"
+	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	root.add_theme_constant_override("separation", 8)
 	root.add_child(HSeparator.new())
 
@@ -6506,31 +6582,6 @@ func _build_district_panel(poi: POIData, planet: PlanetData) -> void:
 		Color(0.85, 0.55, 0.35) if slots_used >= slots_total else Color(0.5, 0.6, 0.8))
 	header.add_child(slots_lbl)
 
-	# District upgrade button
-	var upg_cost := 500 * dist_lv
-	var upg_btn  := Button.new()
-	upg_btn.text    = "^"
-	upg_btn.flat    = true
-	upg_btn.disabled = GameState.credits < upg_cost
-	_apply_orbitron(upg_btn, 10)
-	upg_btn.custom_minimum_size = Vector2(22, 22)
-	upg_btn.add_theme_color_override("font_color",
-		Color(0.9, 0.82, 0.45) if GameState.credits >= upg_cost else Color(0.35, 0.38, 0.50))
-	upg_btn.mouse_entered.connect(func() -> void:
-		CursorManager.set_state(CursorManager.State.POINTER)
-		TooltipManager.show_tip("Upgrade District",
-			"Increases slot capacity by 2.", "%d cr" % upg_cost))
-	upg_btn.mouse_exited.connect(func() -> void:
-		CursorManager.set_state(CursorManager.State.NORMAL)
-		TooltipManager.hide_tip())
-	var cap_poi_upg    := poi
-	var cap_planet_upg := planet
-	upg_btn.pressed.connect(func() -> void:
-		if GameState.spend_credits(upg_cost):
-			pp.upgrade_district(cap_poi_upg.label)
-			GameState.planet_progress_changed.emit(cap_planet_upg.seed)
-			_build_district_panel(cap_poi_upg, cap_planet_upg))
-	header.add_child(upg_btn)
 	root.add_child(header)
 
 	# District energy balance row
@@ -6566,7 +6617,7 @@ func _build_district_panel(poi: POIData, planet: PlanetData) -> void:
 		if def == null:
 			continue
 		var idx: int       = pp.building_real_index(entry)
-		var pm_key: String = "%d:%s:%d" % [planet.seed, poi.label, idx]
+		var pm_key: String = "%d:%s:%s" % [planet.seed, poi.label, entry.get("uid", "-1")]
 		var amount: int    = entry.get("amount", 1)
 		if entry.get("constructing", false):
 			root.add_child(_build_construction_bar(def, pm_key))
@@ -6578,6 +6629,95 @@ func _build_district_panel(poi: POIData, planet: PlanetData) -> void:
 	var used_slots  := pp.slots_used_in_district(poi.label)
 	for si in (total_slots - used_slots):
 		root.add_child(_build_slot_card(poi, planet, pp, root, si))
+
+	# ── Upgrade District button (bottom, full-width) ──────────────────────────
+	var upg_spacer := Control.new()
+	upg_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	upg_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(upg_spacer)
+
+	var upg_sep := HSeparator.new()
+	var upg_sep_s := StyleBoxFlat.new(); upg_sep_s.bg_color = Color(0.2, 0.25, 0.4, 0.35)
+	upg_sep.add_theme_stylebox_override("separator", upg_sep_s)
+	root.add_child(upg_sep)
+
+	var upg_cost   := 500 * dist_lv
+	var is_upging  := pp.is_district_upgrading(poi.label)
+	var can_upg    := pp.can_upgrade_district(poi.label)
+
+	if is_upging:
+		# Show progress bar instead of button
+		var upg_pbar := ProgressBar.new()
+		var upg_prog := pp.district_upgrading.get(poi.label, 0.0)
+		upg_pbar.value = upg_prog * 100.0
+		upg_pbar.custom_minimum_size = Vector2(0, 40)
+		upg_pbar.show_percentage = false
+		var pb_bg := StyleBoxFlat.new(); pb_bg.bg_color = Color(0.08, 0.10, 0.18)
+		var pb_fg := StyleBoxFlat.new(); pb_fg.bg_color = Color(0.15, 0.55, 0.75)
+		upg_pbar.add_theme_stylebox_override("background", pb_bg)
+		upg_pbar.add_theme_stylebox_override("fill", pb_fg)
+		root.add_child(upg_pbar)
+
+		var upg_lbl := Label.new()
+		upg_lbl.text = "UPGRADING TO LV %d..." % (dist_lv + 1)
+		upg_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_apply_orbitron(upg_lbl, 10)
+		upg_lbl.add_theme_color_override("font_color", Color(0.45, 0.80, 1.0))
+		upg_lbl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		upg_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		upg_pbar.add_child(upg_lbl)
+
+		# Live progress update
+		var cap_upg_pbar := upg_pbar
+		var cap_upg_poi  := poi
+		var _upg_conn := func() -> void:
+			if is_instance_valid(cap_upg_pbar):
+				cap_upg_pbar.value = pp.district_upgrading.get(cap_upg_poi.label, 0.0) * 100.0
+		if not GameState.planet_progress_changed.is_connected(_upg_conn):
+			GameState.planet_progress_changed.connect(func(_s: int) -> void: _upg_conn.call())
+	else:
+		var upg_btn  := Button.new()
+		upg_btn.text = "UPGRADE DISTRICT  ·  %d cr" % upg_cost
+		_apply_orbitron(upg_btn, 11)
+		upg_btn.disabled = not can_upg or GameState.credits < upg_cost
+		var upg_sb := StyleBoxFlat.new()
+		upg_sb.bg_color = Color(0.10, 0.28, 0.38) if (can_upg and GameState.credits >= upg_cost) \
+			else Color(0.10, 0.12, 0.18)
+		upg_sb.content_margin_top = 10; upg_sb.content_margin_bottom = 10
+		upg_btn.add_theme_stylebox_override("normal", upg_sb)
+		var upg_h := StyleBoxFlat.new()
+		upg_h.bg_color = Color(0.15, 0.42, 0.58)
+		upg_h.content_margin_top = 10; upg_h.content_margin_bottom = 10
+		upg_btn.add_theme_stylebox_override("hover", upg_h)
+		upg_btn.add_theme_stylebox_override("disabled", upg_sb)
+		upg_btn.add_theme_color_override("font_color",
+			Color(0.75, 0.90, 1.0) if (can_upg and GameState.credits >= upg_cost) else Color(0.35, 0.38, 0.50))
+		upg_btn.add_theme_color_override("font_disabled_color", Color(0.35, 0.38, 0.50))
+		if not can_upg:
+			var reason := "Max level — upgrade planet first" if pp.district_levels.get(poi.label, 1) >= pp.level \
+				else "Upgrade unavailable"
+			upg_btn.mouse_entered.connect(func() -> void:
+				TooltipManager.show_tip("Upgrade District", reason))
+			upg_btn.mouse_exited.connect(func() -> void: TooltipManager.hide_tip())
+		else:
+			upg_btn.mouse_entered.connect(func() -> void:
+				CursorManager.set_state(CursorManager.State.POINTER)
+				AudioManager.play("hover")
+				TooltipManager.show_tip("Upgrade District",
+					"Increases slot capacity by 2.\nRequires Planet Level > District Level.",
+					"%d cr" % upg_cost))
+			upg_btn.mouse_exited.connect(func() -> void:
+				CursorManager.set_state(CursorManager.State.NORMAL)
+				TooltipManager.hide_tip())
+		var cap_poi_upg    := poi
+		var cap_planet_upg := planet
+		upg_btn.pressed.connect(func() -> void:
+			AudioManager.play("click")
+			if GameState.spend_credits(upg_cost):
+				pp.upgrade_district(cap_poi_upg.label)
+				GameState.planet_progress_changed.emit(cap_planet_upg.seed)
+			_build_district_panel(cap_poi_upg, cap_planet_upg))
+	root.add_child(upg_btn)
 
 	panel_content.add_child(root)
 	_notify_tutorial_district_opened(poi, root)

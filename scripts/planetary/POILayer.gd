@@ -255,6 +255,20 @@ func _draw() -> void:
 		var fc := Color(1.0, 0.95, 0.5, alpha) if hovered else Color(1.0, 1.0, 1.0, alpha)
 		draw_string(font, label_pos, label, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE, fc)
 
+		# district level sub-label
+		var dist_lv: int = poi["data"].get("district_level", 0)
+		if dist_lv > 0:
+			const LV_SIZE := 10
+			var lv_str := "Lv %d" % dist_lv
+			var lv_pos := label_pos + Vector2(0, text_size.y * 0.9)
+			if horiz_dir < 0.0:
+				var lv_w := font.get_string_size(lv_str, HORIZONTAL_ALIGNMENT_LEFT, -1, LV_SIZE).x
+				lv_pos.x = label_pos.x + text_size.x - lv_w
+			draw_string(font, lv_pos + Vector2(1, 1), lv_str,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, LV_SIZE, Color(0, 0, 0, alpha * 0.7))
+			draw_string(font, lv_pos, lv_str,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, LV_SIZE, Color(0.65, 0.85, 1.0, alpha * 0.85))
+
 func _unhandled_input(event: InputEvent) -> void:
 	if not _planet:
 		return

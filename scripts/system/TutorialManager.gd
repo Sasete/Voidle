@@ -130,7 +130,52 @@ const GUIDED_STEPS: Array = [
 ]
 
 # ── Optional quest panel (shown after guided tutorial OR if already done) ───────
+# First TUTORIAL_QUEST_COUNT entries mirror the guided tutorial steps.
+# They are shown only when the tutorial was skipped / not played.
+const TUTORIAL_QUEST_COUNT := 4
+
 const QUESTS := [
+	# ── Tutorial-equivalent quests ──────────────────────────────────────────────
+	{
+		"id":           "first_residents",
+		"title":        "First Residents",
+		"desc":         "Build a Residential House for your colonists.",
+		"sub_steps":    [{"type": "building", "target": "residential"}],
+		"reward_credits": 250.0,
+		"reward_science": 0.0,
+		"reward_text":  "+250 cr",
+	},
+	{
+		"id":           "power_grid",
+		"title":        "Power Grid",
+		"desc":         "Place a Generator Facility and build a Solar Array.",
+		"sub_steps":    [
+			{"type": "district", "target": DISTRICT_GENERATOR},
+			{"type": "building", "target": "solar_panel"},
+		],
+		"reward_credits": 300.0,
+		"reward_science": 0.0,
+		"reward_text":  "+300 cr",
+	},
+	{
+		"id":           "research_wing",
+		"title":        "Research Wing",
+		"desc":         "Build a University to advance your colony's knowledge.",
+		"sub_steps":    [{"type": "building", "target": "lab"}],
+		"reward_credits": 0.0,
+		"reward_science": 25.0,
+		"reward_text":  "+25 sci",
+	},
+	{
+		"id":           "mining_ops",
+		"title":        "Mining Operations",
+		"desc":         "Research Mining Operations in the Upgrade Tree.",
+		"sub_steps":    [{"type": "skill", "target": "unlock_mining"}],
+		"reward_credits": 500.0,
+		"reward_science": 0.0,
+		"reward_text":  "+500 cr",
+	},
+	# ── Post-tutorial quests ────────────────────────────────────────────────────
 	{
 		"id":           "build_solar_2",
 		"title":        "More Power!",
@@ -213,6 +258,7 @@ func _ready() -> void:
 	GameState.district_placed.connect(_on_district_placed)
 	GameState.global_resources_changed.connect(_on_resources_changed)
 	get_tree().root.get_node("SkillTree").skill_unlocked.connect(_on_skill_unlocked)
+	get_tree().root.child_entered_tree.connect(_on_root_child_entered)
 
 func start() -> void:
 	if not tutorial_enabled or _active: return
@@ -223,6 +269,13 @@ func start() -> void:
 			_show_quest_step(_quest_step)
 	else:
 		_run_guided_step()
+
+func _on_root_child_entered(node: Node) -> void:
+	# Hide tutorial UI whenever a new top-level scene is added (scene transition)
+	if node.scene_file_path.ends_with("MainMenu.tscn"):
+		for n in [_dim, _narr_panel, _action_bar, _quest_panel, _pulse_ring, _construction_lbl]:
+			if is_instance_valid(n): (n as CanvasItem).visible = false
+		_active = false
 
 func _on_new_game() -> void:
 	_tutorial_done = SettingsManager.tutorial_ever_done
@@ -274,12 +327,19 @@ func _on_building_constructed(_seed: int, _key: String, bid: String) -> void:
 			_advance_quest_sub()
 
 func _on_skill_unlocked(id: String) -> void:
-	if not _active or _tutorial_done or _guided_step >= GUIDED_STEPS.size(): return
-	var step: Dictionary = GUIDED_STEPS[_guided_step]
-	if step["type"] != "action": return
-	var tgt: Dictionary = step["targets"][_action_sub]
-	if tgt["type"] == "skill" and tgt["id"] == id:
-		_advance_action()
+	# Guided tutorial
+	if _active and not _tutorial_done and _guided_step < GUIDED_STEPS.size():
+		var step: Dictionary = GUIDED_STEPS[_guided_step]
+		if step["type"] == "action":
+			var tgt: Dictionary = step["targets"][_action_sub]
+			if tgt["type"] == "skill" and tgt["id"] == id:
+				_advance_action()
+	# Quest panel
+	if not _quest_done and _quest_step < QUESTS.size() and is_instance_valid(_quest_panel):
+		var q: Dictionary = QUESTS[_quest_step]
+		var ss: Dictionary = q["sub_steps"][_quest_sub]
+		if ss["type"] == "skill" and ss["target"] == id:
+			_advance_quest_sub()
 
 func _on_district_placed(_seed: int, dtype: int) -> void:
 	if _active and not _tutorial_done and _guided_step < GUIDED_STEPS.size():
@@ -519,6 +579,9 @@ func _end_guided_tutorial() -> void:
 	AchievementManager.notify_trigger(AchievementDef.Trigger.TUTORIAL_COMPLETE)
 	SettingsManager.tutorial_ever_done = true
 	SettingsManager.save_settings()
+	# Tutorial quests already completed — start from the post-tutorial quests
+	_quest_step = TUTORIAL_QUEST_COUNT
+	_quest_sub  = 0
 	await get_tree().create_timer(0.4).timeout
 	if not _quest_done:
 		_build_quest_ui()
@@ -900,13 +963,22 @@ func _build_quest_ui() -> void:
 		row.add_child(ql)
 		_tracker_items.append({"dot": dot, "lbl": ql})
 
+	# Pre-mark quests that were already completed (e.g. guided tutorial steps)
+	for i in _quest_step:
+		if i < _tracker_items.size():
+			(_tracker_items[i]["dot"] as Label).text = "✓"
+			(_tracker_items[i]["dot"] as Label).add_theme_color_override("font_color", Color(0.30, 0.85, 0.50))
+			(_tracker_items[i]["lbl"] as Label).add_theme_color_override("font_color", Color(0.40, 0.72, 0.50))
+
 func _show_quest_step(idx: int) -> void:
 	if not is_instance_valid(_quest_panel) or idx >= QUESTS.size(): return
 	var q: Dictionary = QUESTS[idx]
 	for i in _tracker_items.size():
 		var dot := _tracker_items[i]["dot"] as Label
 		var ql  := _tracker_items[i]["lbl"] as Label
-		if i < idx: pass
+		if i < idx:
+			dot.text = "✓"; dot.add_theme_color_override("font_color", Color(0.30, 0.85, 0.50))
+			ql.add_theme_color_override("font_color", Color(0.40, 0.72, 0.50))
 		elif i == idx:
 			dot.text = "▶"; dot.add_theme_color_override("font_color", Color(0.92, 0.88, 0.55))
 			ql.add_theme_color_override("font_color", Color(0.92, 0.88, 0.55))

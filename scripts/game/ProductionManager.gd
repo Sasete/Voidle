@@ -83,7 +83,18 @@ func _tick_all(delta: float) -> void:
 					pp.level += 1
 					pp.recalculate_limits()
 					GameState.planet_progress_changed.emit(planet_seed)
-			
+
+				# District upgrades
+				for dlabel in pp.district_upgrading.keys():
+					var target_lv: int = pp.district_levels.get(dlabel, 1) + 1
+					var dur: float = PlanetProgress.district_upgrade_duration(target_lv)
+					pp.district_upgrading[dlabel] += delta / max(0.1, dur)
+					if pp.district_upgrading[dlabel] >= 1.0:
+						pp.district_upgrading.erase(dlabel)
+						pp.district_levels[dlabel] = target_lv
+						GameState.planet_progress_changed.emit(planet_seed)
+						break  # dict modified — next frame handles remaining
+
 			for poi in pd.custom_pois:
 				if poi.constructing:
 					poi.construct_progress += delta / max(0.1, poi.construct_duration)
@@ -102,6 +113,7 @@ func _tick_all(delta: float) -> void:
 
 		# Collect entries to merge/remove after iteration (avoid modifying array mid-loop)
 		var pending_merges: Array[Dictionary] = []
+		var completed_buildings: Array[Dictionary] = []
 
 		# Iterate with explicit index so identical-content entries get unique keys
 		for i in pp.buildings.size():
@@ -109,7 +121,9 @@ func _tick_all(delta: float) -> void:
 			var poi_label: String  = entry.get("district_id", "")
 			var bid: String        = entry.get("building_id", "")
 			var amount: int        = entry.get("amount", 1)
-			var key: String        = _key(planet_seed, poi_label, i)
+			if not entry.has("uid"):
+				entry["uid"] = str(randi())
+			var key: String        = _key(planet_seed, poi_label, entry["uid"])
 			var def := BuildingDef.find(bid)
 			if def == null or def.tick_duration <= 0.0:
 				continue
@@ -128,7 +142,7 @@ func _tick_all(delta: float) -> void:
 					# Spaceport starts paused after construction — player launches manually
 					if def.building_id == "spaceport":
 						_user_paused[key] = true
-					building_constructed.emit(planet_seed, key, bid)
+					completed_buildings.append({ "key": key, "bid": bid })
 					building_ticked.emit(planet_seed, key)
 				else:
 					_construct[ck] = cp
@@ -222,7 +236,10 @@ func _tick_all(delta: float) -> void:
 			var merge_idx: int = entry.get("merge_into", -1)
 			if merge_idx >= 0 and merge_idx < pp.buildings.size():
 				pp.buildings[merge_idx]["amount"] = pp.buildings[merge_idx].get("amount", 1) + 1
-			pp.buildings.erase(entry)
+			pp.remove_building_stack(entry)
+
+		for c in completed_buildings:
+			building_constructed.emit(planet_seed, c.key, c.bid)
 
 func _on_tick_complete(pp: PlanetProgress, def: BuildingDef,
 		_key_str: String, _energy: float, amount: int,
@@ -330,7 +347,9 @@ func _calc_global_energy() -> void:
 			if def == null:
 				continue
 			var amt: int     = entry.get("amount", 1)
-			var ekey: String = _key(pp.planet_seed, entry.get("district_id", ""), i)
+			if not entry.has("uid"):
+				entry["uid"] = str(randi())
+			var ekey: String = _key(pp.planet_seed, entry.get("district_id", ""), entry["uid"])
 			if _paused.get(ekey, false) or _user_paused.get(ekey, false):
 				continue
 			var planet_energy_mult := 1.0
@@ -385,7 +404,9 @@ func planet_energy_net(pp: PlanetProgress) -> float:
 		if def == null:
 			continue
 		var amt: int     = entry.get("amount", 1)
-		var ekey: String = _key(pp.planet_seed, entry.get("district_id", ""), i)
+		if not entry.has("uid"):
+			entry["uid"] = str(randi())
+		var ekey: String = _key(pp.planet_seed, entry.get("district_id", ""), entry["uid"])
 		if _paused.get(ekey, false) or _user_paused.get(ekey, false):
 			continue
 		var lv: int = entry.get("level", 1)
@@ -447,8 +468,8 @@ func _entry_index(pp: PlanetProgress, entry: Dictionary) -> int:
 			return i
 	return 0
 
-func _key(planet_seed: int, poi_label: String, idx: int) -> String:
-	return "%d:%s:%d" % [planet_seed, poi_label, idx]
+func _key(planet_seed: int, poi_label: String, uid: String) -> String:
+	return "%d:%s:%s" % [planet_seed, poi_label, uid]
 
 func _resource_key(out_type: BuildingDef.OutputType, planet_seed: int,
 		entry: Dictionary = {}) -> String:

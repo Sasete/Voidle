@@ -43,20 +43,33 @@ func has_building(bid: String) -> bool:
 # ── District upgrade levels ──────────────────────────────────────────────────
 ## { district_label -> upgrade_level: int }, default 1
 @export var district_levels: Dictionary = {}
+## { district_label -> progress: float 0..1 } — districts currently upgrading
+@export var district_upgrading: Dictionary = {}
 
 # ────────────────────────────────────────────────────────────────────────────
+
+## Duration in seconds for upgrading a district to the given target level.
+static func district_upgrade_duration(target_lv: int) -> float:
+	return 5.0 * target_lv
 
 func get_upgrade_cost() -> Dictionary:
 	var cost := {}
 	var next_lv := level + 1
-	cost["credits"] = 500 * next_lv
-	cost["ANY_T1"] = 250 * next_lv
-	if next_lv > 2:
-		cost["ANY_T2"] = 50 * (next_lv - 2)
+	match next_lv:
+		2:
+			cost["credits"] = 250
+		3:
+			cost["credits"] = 1000
+			cost["ANY_T1"]  = 5
+		_:
+			cost["credits"] = 500 * next_lv
+			cost["ANY_T1"]  = 250 * next_lv
+			if next_lv > 4:
+				cost["ANY_T2"] = 50 * (next_lv - 4)
 	return cost
 
 func recalculate_limits() -> void:
-	max_districts  = 4  + (level - 1) * 2
+	max_districts  = 4  + (level - 1)
 	
 	if has_building("cryo_vault"):
 		max_districts += 2
@@ -88,16 +101,21 @@ func buildings_in_district(district_label: String) -> Array[Dictionary]:
 
 func district_slots(poi: POIData) -> int:
 	var lv: int = district_levels.get(poi.label, 1)
-	var base_slots: int = 5 if poi.poi_type == POIData.POIType.CITY else 2
+	var base_slots: int = 5 if poi.poi_type == POIData.POIType.CITY else 3
+	if level == 1 and not poi.is_orbital():
+		base_slots = 3
 	return base_slots + (lv - 1) * 2
 
 func can_upgrade_district(district_label: String) -> bool:
 	var lv: int = district_levels.get(district_label, 1)
-	return lv < level
+	return lv < level and not district_upgrading.has(district_label)
+
+func is_district_upgrading(district_label: String) -> bool:
+	return district_upgrading.has(district_label)
 
 func upgrade_district(district_label: String) -> void:
 	if can_upgrade_district(district_label):
-		district_levels[district_label] = district_levels.get(district_label, 1) + 1
+		district_upgrading[district_label] = 0.0  # progress 0..1
 
 func slots_used_in_district(district_label: String) -> int:
 	var total: int = 0
@@ -125,7 +143,7 @@ func build_in_district(district: POIData, building_id: String,
 				merge_idx = i
 				break
 	
-	var entry := { "district_id": district.label, "building_id": building_id, "amount": 1, "constructing": true }
+	var entry := { "district_id": district.label, "building_id": building_id, "amount": 1, "constructing": true, "uid": str(randi()) }
 	if merge_idx != -1:
 		entry["merge_into"] = merge_idx
 		
@@ -151,6 +169,7 @@ func stack_building_unchecked(district_label: String, building_id: String, merge
 				"amount": 1,
 				"constructing": true,
 				"merge_into": i,
+				"uid": str(randi())
 			}
 			buildings.append(entry)
 			return true
@@ -186,8 +205,21 @@ func split_building(entry: Dictionary, split_amount: int) -> bool:
 	# Create new stack
 	var new_stack := b.duplicate(true)
 	new_stack["amount"] = split_amount
+	new_stack["uid"] = str(randi())
 	buildings.append(new_stack)
 	return true
+
+func remove_building_stack(entry: Dictionary) -> void:
+	var idx = building_real_index(entry)
+	if idx >= 0:
+		buildings.remove_at(idx)
+		for b in buildings:
+			if b.has("merge_into"):
+				var midx: int = b["merge_into"]
+				if midx == idx:
+					b.erase("merge_into")
+				elif midx > idx:
+					b["merge_into"] = midx - 1
 
 func add_resource(resource_id: String, amount: float) -> void:
 	GameState.add_resource(resource_id, amount)
