@@ -525,5 +525,7 @@ func delete_save() -> void:
 	st.skill_levels.clear()
 	for def_node in ["unlock_solar_panel", "unlock_residential", "unlock_lab"]:
 		st.skill_levels[def_node] = 1
+	unlocked_buildings.clear()
+	global_resources.clear()
 	_planet_progress.clear()
 	_bootstrap_world()

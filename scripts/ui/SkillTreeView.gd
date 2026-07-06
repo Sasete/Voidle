@@ -148,6 +148,7 @@ func _ready() -> void:
 	get_node("/root/SkillTree").skill_unlocked.connect(_on_skill_unlocked)
 
 func _build_tree_graph() -> void:
+	print("DEBUG SkillTree: BuildingDef.all().size() = ", BuildingDef.all().size())
 	for c in _nodes_container.get_children():
 		c.queue_free()
 	_ui_nodes.clear()
@@ -466,44 +467,42 @@ func _build_tree_graph() -> void:
 					body_str += "[right][color=#e5c24b]Level %d/%d[/color][/right]\n" % [cur_lv, max_lv]
 				
 			# Normal nodes
+			body_str += node.description
+			
+			var effect_text: String = node.effect_desc
+			var def: BuildingDef = null
+			if (id as String).begins_with("unlock_"):
+				var bid: String = (id as String).trim_prefix("unlock_")
+				if bid == "mining": bid = "mine"
+				def = BuildingDef.find(bid)
+				if def:
+					effect_text = effect_text.replace(def.display_name, "[color=#fce205]" + def.display_name + "[/color]")
+					var cycle := " / %ds" % def.tick_duration
+					var details := "[color=#99aab5]"
+					
+					sub_body.append("[color=#fce205]" + def.display_name + " Blueprint[/color]\n\n")
+					if def.output_type == BuildingDef.OutputType.ENERGY:
+						details += "Produces +%.0f ⚡%s\n" % [def.output_amount, cycle]
+					
+					if def.input_type != BuildingDef.OutputType.NONE:
+						details += "Consumes -%.0f " % def.input_amount
+						sub_body.append(details + "[/color]")
+						sub_body.append(MineralIcon.make(def.input_tier, Color.WHITE))
+						sub_body.append("[color=#99aab5]%s[/color]" % cycle)
+					else:
+						sub_body.append(details + "[/color]")
+
 			if max_lv > 1:
 				# Leveled Upgrades
-				body_str += node.description
 				if cur_lv > 0:
 					body_str += "\n\n[color=#55f58c]Current Level: %d/%d[/color]" % [cur_lv, max_lv]
 				if cur_lv < max_lv:
-					body_str += "\n[color=#55aaff]Effect: %s[/color]" % node.effect_desc
+					body_str += "\n[color=#55aaff]Effect: %s[/color]" % effect_text
 				else:
 					body_str += "\n\n[color=#55f58c]✦ MAX LEVEL ✦[/color]"
 			else:
 				# Single purchase upgrades
-				body_str += node.description + "\n\n[color=#55aaff]Effect: "
-				
-				if (id as String).begins_with("unlock_"):
-					var bid: String = (id as String).trim_prefix("unlock_")
-					var def: BuildingDef = BuildingDef.find(bid)
-					if def:
-						body_str += node.effect_desc.replace(def.display_name, "[color=#fce205]" + def.display_name + "[/color]") + "[/color]"
-						var cycle := " / %ds" % def.tick_duration
-						var details := "[color=#99aab5]"
-						
-						sub_body.append("[color=#fce205]" + def.display_name + " Blueprint[/color]\n\n")
-						if def.output_type == BuildingDef.OutputType.ENERGY:
-							details += "Produces +%.0f ⚡%s\n" % [def.output_amount, cycle]
-						
-						if def.input_type != BuildingDef.OutputType.NONE:
-							details += "Consumes -%.0f " % def.input_amount
-							
-							sub_body.append(details + "[/color]")
-							sub_body.append(MineralIcon.make(def.input_tier, Color.WHITE))
-							sub_body.append("[color=#99aab5]%s[/color]" % cycle)
-						else:
-							sub_body.append(details + "[/color]")
-					else:
-						body_str += node.effect_desc + "[/color]"
-				else:
-					body_str += node.effect_desc + "[/color]"
-					
+				body_str += "\n\n[color=#55aaff]Effect: " + effect_text + "[/color]"
 				if unlocked:
 					body_str += "\n\n[color=#55f58c]✦ UNLOCKED ✦[/color]"
 			

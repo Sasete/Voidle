@@ -69,7 +69,7 @@ func get_upgrade_cost() -> Dictionary:
 	return cost
 
 func recalculate_limits() -> void:
-	max_districts  = 4  + (level - 1)
+	max_districts  = 2  + (level - 1)
 	
 	if has_building("cryo_vault"):
 		max_districts += 2
@@ -101,10 +101,7 @@ func buildings_in_district(district_label: String) -> Array[Dictionary]:
 
 func district_slots(poi: POIData) -> int:
 	var lv: int = district_levels.get(poi.label, 1)
-	var base_slots: int = 5 if poi.poi_type == POIData.POIType.CITY else 3
-	if level == 1 and not poi.is_orbital():
-		base_slots = 3
-	return base_slots + (lv - 1) * 2
+	return 3 + (lv - 1) * 2
 
 func can_upgrade_district(district_label: String) -> bool:
 	var lv: int = district_levels.get(district_label, 1)

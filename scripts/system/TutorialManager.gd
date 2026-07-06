@@ -125,6 +125,52 @@ const GUIDED_STEPS: Array = [
 		"reward_credits": 500.0,
 		"reward_science": 0.0,
 		"reward_text":   "+500 cr",
+	},
+	{
+		"type":  "narr",
+		"pages": [
+			[
+				"Your colony grows stronger.",
+				"But a frontier world cannot remain at the mercy of its circumstances.",
+				"It is time to expand — to level up your planet itself.",
+			],
+			[
+				"Planet upgrades unlock new district slots and raise your technology ceiling.",
+				"Open the Planet panel and press the Level Up button.",
+				"The first upgrade is fast. Future ones will demand more.",
+			],
+		],
+	},
+	{
+		"type":        "action",
+		"instruction": "Open Planet Panel  →  Press  LEVEL UP",
+		"targets":     [{"type": "planet_level_up"}],
+		"reward_credits": 300.0,
+		"reward_science": 0.0,
+		"reward_text":   "+300 cr",
+	},
+	{
+		"type":  "narr",
+		"pages": [
+			[
+				"Your planet just got bigger.",
+				"More room. More potential. More pressure.",
+				"Now let's put that to use.",
+			],
+			[
+				"Your Energy district can be upgraded to hold more buildings.",
+				"Open your Generator Facility district and press Upgrade District.",
+				"A stronger energy grid means a stronger colony.",
+			],
+		],
+	},
+	{
+		"type":        "action",
+		"instruction": "Open Generator Facility  →  Press  UPGRADE DISTRICT",
+		"targets":     [{"type": "district_upgrade"}],
+		"reward_credits": 400.0,
+		"reward_science": 10.0,
+		"reward_text":   "+400 cr  +10 sci",
 		"finale":        true,
 	},
 ]
@@ -132,7 +178,7 @@ const GUIDED_STEPS: Array = [
 # ── Optional quest panel (shown after guided tutorial OR if already done) ───────
 # First TUTORIAL_QUEST_COUNT entries mirror the guided tutorial steps.
 # They are shown only when the tutorial was skipped / not played.
-const TUTORIAL_QUEST_COUNT := 4
+const TUTORIAL_QUEST_COUNT := 6
 
 const QUESTS := [
 	# ── Tutorial-equivalent quests ──────────────────────────────────────────────
@@ -174,6 +220,24 @@ const QUESTS := [
 		"reward_credits": 500.0,
 		"reward_science": 0.0,
 		"reward_text":  "+500 cr",
+	},
+	{
+		"id":           "planet_level_up",
+		"title":        "Level Up",
+		"desc":         "Upgrade your planet to Level 2.",
+		"sub_steps":    [{"type": "planet_level_up"}],
+		"reward_credits": 300.0,
+		"reward_science": 0.0,
+		"reward_text":  "+300 cr",
+	},
+	{
+		"id":           "district_upgrade",
+		"title":        "Expand the Grid",
+		"desc":         "Upgrade your Generator Facility district.",
+		"sub_steps":    [{"type": "district_upgrade"}],
+		"reward_credits": 400.0,
+		"reward_science": 10.0,
+		"reward_text":  "+400 cr  +10 sci",
 	},
 	# ── Post-tutorial quests ────────────────────────────────────────────────────
 	{
@@ -257,6 +321,7 @@ func _ready() -> void:
 	ProductionManager.building_constructed.connect(_on_building_constructed)
 	GameState.district_placed.connect(_on_district_placed)
 	GameState.global_resources_changed.connect(_on_resources_changed)
+	GameState.planet_progress_changed.connect(_on_planet_progress_changed)
 	get_tree().root.get_node("SkillTree").skill_unlocked.connect(_on_skill_unlocked)
 	get_tree().root.child_entered_tree.connect(_on_root_child_entered)
 
@@ -333,6 +398,8 @@ func _on_skill_unlocked(id: String) -> void:
 		if step["type"] == "action":
 			var tgt: Dictionary = step["targets"][_action_sub]
 			if tgt["type"] == "skill" and tgt["id"] == id:
+				_close_skill_tree()
+				await get_tree().create_timer(0.3).timeout
 				_advance_action()
 	# Quest panel
 	if not _quest_done and _quest_step < QUESTS.size() and is_instance_valid(_quest_panel):
@@ -354,6 +421,47 @@ func _on_district_placed(_seed: int, dtype: int) -> void:
 		var ss: Dictionary = q["sub_steps"][_quest_sub]
 		if ss["type"] == "district" and ss["target"] == dtype:
 			_advance_quest_sub()
+
+func _on_planet_progress_changed(planet_seed: int) -> void:
+	var pp: PlanetProgress = GameState.get_planet(planet_seed)
+	if pp == null: return
+	# Guided tutorial — planet level up / district upgrade
+	if _active and not _tutorial_done and _guided_step < GUIDED_STEPS.size():
+		var step: Dictionary = GUIDED_STEPS[_guided_step]
+		if step["type"] == "action":
+			var tgt: Dictionary = step["targets"][_action_sub]
+			if tgt["type"] == "planet_level_up" and not pp.is_upgrading and pp.level >= 2:
+				_advance_action()
+			elif tgt["type"] == "district_upgrade" and _district_any_upgraded(pp):
+				_advance_action()
+	# Quest panel
+	if not _quest_done and _quest_step < QUESTS.size() and is_instance_valid(_quest_panel):
+		var q: Dictionary = QUESTS[_quest_step]
+		var ss: Dictionary = q["sub_steps"][_quest_sub]
+		if ss["type"] == "planet_level_up" and not pp.is_upgrading and pp.level >= 2:
+			_advance_quest_sub()
+		elif ss["type"] == "district_upgrade" and _district_any_upgraded(pp):
+			_advance_quest_sub()
+
+func _check_freeform_action_step(step: Dictionary) -> void:
+	if step["type"] != "action": return
+	var targets: Array = step["targets"]
+	if _action_sub >= targets.size(): return
+	var tgt: Dictionary = targets[_action_sub]
+	if tgt["type"] not in ["planet_level_up", "district_upgrade"]: return
+	# Check against all colonized planets
+	for pp: PlanetProgress in GameState._planet_progress.values():
+		if not pp.is_colonized: continue
+		if tgt["type"] == "planet_level_up" and not pp.is_upgrading and pp.level >= 2:
+			_advance_action(); return
+		if tgt["type"] == "district_upgrade" and _district_any_upgraded(pp):
+			_advance_action(); return
+
+func _district_any_upgraded(pp: PlanetProgress) -> bool:
+	for dlabel in pp.district_levels:
+		if pp.district_levels[dlabel] >= 2 and not pp.district_upgrading.has(dlabel):
+			return true
+	return false
 
 func _on_resources_changed() -> void:
 	if _inventory_shown: return
@@ -377,10 +485,12 @@ func _run_guided_step() -> void:
 		_action_sub = 0
 		_hide_dim()
 		_show_action_bar(step)
-		# Skill steps: unblock input so SkillTree can be opened
+		# Unblock input for steps that need free navigation
 		var first_tgt: Dictionary = step["targets"][0]
-		if first_tgt["type"] == "skill":
+		if first_tgt["type"] in ["skill", "planet_level_up", "district_upgrade"]:
 			_action_block_on = false
+		# Immediately advance if condition already met (e.g. player acted during narration)
+		_check_freeform_action_step(step)
 
 func _advance_action() -> void:
 	if _guided_step >= GUIDED_STEPS.size(): return
@@ -436,6 +546,12 @@ func set_allowed_rects(rects: Array[Rect2]) -> void:
 	_allowed_rects = rects
 
 ## Input blocker — only clicks inside _allowed_rects pass through.
+func _process(_delta: float) -> void:
+	if not _active or _tutorial_done or _guided_step >= GUIDED_STEPS.size(): return
+	var step: Dictionary = GUIDED_STEPS[_guided_step]
+	if step["type"] == "action":
+		_check_freeform_action_step(step)
+
 func _input(event: InputEvent) -> void:
 	if not _action_block_on: return
 	if not (event is InputEventMouseButton): return
@@ -463,8 +579,11 @@ func _flash_deny(pos: Vector2) -> void:
 	tw.tween_callback(lbl.queue_free).set_delay(0.5)
 
 func _highlight_id_for(tgt: Dictionary) -> String:
-	if tgt["type"] == "district": return "add_district"
-	if tgt["type"] == "skill":    return "skill_tree_btn"
+	match tgt["type"]:
+		"district":        return "add_district"
+		"skill":           return "skill_tree_btn"
+		"planet_level_up": return "planet_level_up_btn"
+		"district_upgrade": return "district_upgrade_btn"
 	match tgt.get("id", ""):
 		"residential", "lab": return "capital"
 		"solar_panel":        return "generator_district"
@@ -492,13 +611,15 @@ func set_highlight_pos(screen_pos: Vector2) -> void:
 		_pulse_ring.position = screen_pos
 
 func _target_hint(tgt: Dictionary) -> String:
-	if tgt["type"] == "district":
-		return "Place a Generator Facility district"
-	match tgt["id"]:
+	match tgt["type"]:
+		"district":         return "Place a Generator Facility district"
+		"planet_level_up":  return "Open Planet Panel  →  Press  LEVEL UP"
+		"district_upgrade": return "Open Generator Facility  →  Press  UPGRADE DISTRICT"
+	match tgt.get("id", ""):
 		"residential": return "Build  →  Residential House"
 		"solar_panel":  return "Build  →  Solar Array inside the district"
 		"lab":          return "Build  →  University"
-		_:              return "Build: " + tgt["id"]
+		_:              return "Build: " + tgt.get("id", "")
 
 func _close_skill_tree() -> void:
 	var root := get_tree().root
@@ -989,6 +1110,45 @@ func _show_quest_step(idx: int) -> void:
 	_tw_label(_title_lbl, q["title"].to_upper(), 0.022)
 	await get_tree().create_timer(0.022 * q["title"].length() + 0.1).timeout
 	_tw_label(_desc_lbl, q["desc"], 0.022)
+	# Immediately check if current sub-step is already satisfied
+	_check_quest_sub_already_done()
+
+func _check_quest_sub_already_done() -> void:
+	if _quest_done or _quest_step >= QUESTS.size() or not is_instance_valid(_quest_panel): return
+	var q: Dictionary = QUESTS[_quest_step]
+	if _quest_sub >= q["sub_steps"].size(): return
+	var ss: Dictionary = q["sub_steps"][_quest_sub]
+	var satisfied := false
+	match ss["type"]:
+		"building":
+			for pp: PlanetProgress in GameState._planet_progress.values():
+				if pp.has_building(ss["target"]):
+					satisfied = true; break
+		"district":
+			var dtype: int = int(ss["target"])
+			# dtype is DistrictDef.Type; map to POIData.POIType via DistrictDef
+			var ddef: DistrictDef = DistrictDef.find(dtype as DistrictDef.Type)
+			var poi_t: int = int(ddef.to_poi_type()) if ddef != null else -1
+			for pp: PlanetProgress in GameState._planet_progress.values():
+				if not pp.is_colonized: continue
+				var pd: PlanetData = GameState.get_planet_data(pp.planet_seed)
+				if pd == null: continue
+				for poi: POIData in pd.custom_pois:
+					if int(poi.poi_type) == poi_t:
+						satisfied = true; break
+				if satisfied: break
+		"skill":
+			satisfied = get_node("/root/SkillTree").unlocked_skills.has(ss["target"])
+		"planet_level_up":
+			for pp: PlanetProgress in GameState._planet_progress.values():
+				if pp.is_colonized and not pp.is_upgrading and pp.level >= 2:
+					satisfied = true; break
+		"district_upgrade":
+			for pp: PlanetProgress in GameState._planet_progress.values():
+				if _district_any_upgraded(pp):
+					satisfied = true; break
+	if satisfied:
+		_advance_quest_sub()
 
 func _advance_quest_sub() -> void:
 	if is_instance_valid(_skip_btn):
@@ -1011,6 +1171,9 @@ func _advance_quest_sub() -> void:
 		else:
 			await get_tree().create_timer(0.9).timeout
 			_show_quest_step(_quest_step)
+	else:
+		# More sub-steps remain — check if the next one is already done too
+		_check_quest_sub_already_done()
 
 func _dismiss_quest_panel() -> void:
 	_quest_done = true

@@ -84,16 +84,16 @@ func _tick_all(delta: float) -> void:
 					pp.recalculate_limits()
 					GameState.planet_progress_changed.emit(planet_seed)
 
-				# District upgrades
-				for dlabel in pp.district_upgrading.keys():
-					var target_lv: int = pp.district_levels.get(dlabel, 1) + 1
-					var dur: float = PlanetProgress.district_upgrade_duration(target_lv)
-					pp.district_upgrading[dlabel] += delta / max(0.1, dur)
-					if pp.district_upgrading[dlabel] >= 1.0:
-						pp.district_upgrading.erase(dlabel)
-						pp.district_levels[dlabel] = target_lv
-						GameState.planet_progress_changed.emit(planet_seed)
-						break  # dict modified — next frame handles remaining
+			# District upgrades (independent of planet upgrade state)
+			for dlabel in pp.district_upgrading.keys():
+				var target_lv: int = pp.district_levels.get(dlabel, 1) + 1
+				var dur: float = PlanetProgress.district_upgrade_duration(target_lv)
+				pp.district_upgrading[dlabel] += delta / max(0.1, dur)
+				if pp.district_upgrading[dlabel] >= 1.0:
+					pp.district_upgrading.erase(dlabel)
+					pp.district_levels[dlabel] = target_lv
+					GameState.planet_progress_changed.emit(planet_seed)
+					break  # dict modified — next frame handles remaining
 
 			for poi in pd.custom_pois:
 				if poi.constructing:

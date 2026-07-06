@@ -48,6 +48,7 @@ var _open_mineral_switchers: Dictionary = {}
 ## Live district construction progress bars.
 var _district_pbars: Dictionary = {}
 var _planet_upgrade_pbar: ProgressBar = null
+var _district_upgrade_pbars: Dictionary = {}  # poi_label -> ProgressBar
 var _inventory_tab_btn: Button = null
 
 # ── Tutorial highlight state ──────────────────────────────────────────────────
@@ -203,6 +204,16 @@ func _notify_tutorial_district_opened(poi: POIData, root: VBoxContainer) -> void
 			_start_tut_node_pulse(_tut_highlight_node)
 			return
 
+func _notify_tutorial_planet_level_up_btn(btn: Button) -> void:
+	if TutorialManager.get_action_step_type() != "planet_level_up": return
+	_tut_highlight_node = btn
+	_start_tut_node_pulse(btn)
+
+func _notify_tutorial_district_upgrade_btn(btn: Button) -> void:
+	if TutorialManager.get_action_step_type() != "district_upgrade": return
+	_tut_highlight_node = btn
+	_start_tut_node_pulse(btn)
+
 func _notify_tutorial_district_type_dropdown(dd: PanelContainer) -> void:
 	if TutorialManager._waiting_for_bid != "":
 		return
@@ -294,6 +305,14 @@ func _update_tutorial_highlight() -> void:
 						break
 				if ring_pos.x > -900.0:
 					allowed.append(Rect2(ring_pos - Vector2(90, 90), Vector2(180, 180)))
+		"planet_level_up_btn":
+			if is_instance_valid(_tut_highlight_node):
+				allowed.append(_tut_highlight_node.get_global_rect())
+			allowed.append(planet_area)
+		"district_upgrade_btn":
+			if is_instance_valid(_tut_highlight_node):
+				allowed.append(_tut_highlight_node.get_global_rect())
+			allowed.append(planet_area)
 		"add_district":
 			if planet_renderer != null:
 				ring_pos = planet_renderer.global_position + planet_renderer.size * 0.5
@@ -1937,6 +1956,16 @@ func _process(delta: float) -> void:
 		var pp := GameState.get_planet(current_data.seed)
 		if pp != null and _planet_upgrade_pbar != null and is_instance_valid(_planet_upgrade_pbar):
 			_planet_upgrade_pbar.value = pp.upgrade_progress * 100.0
+		if pp != null:
+			var _stale_dlabels: Array = []
+			for dlabel in _district_upgrade_pbars:
+				var dpbar = _district_upgrade_pbars[dlabel]
+				if not is_instance_valid(dpbar):
+					_stale_dlabels.append(dlabel)
+				else:
+					(dpbar as ProgressBar).value = pp.district_upgrading.get(dlabel, 0.0) * 100.0
+			for dl in _stale_dlabels:
+				_district_upgrade_pbars.erase(dl)
 
 		var any_finished = false
 		for poi_label in _district_pbars:
@@ -2265,6 +2294,7 @@ func _show_level_up_popup(pp: PlanetProgress) -> void:
 		AudioManager.play("level_up")
 		pp.is_upgrading = true
 		pp.upgrade_progress = 0.0
+		pp.upgrade_duration = 5.0 * pp.level  # Lv2=5s, Lv3=10s, etc.
 		if current_data != null:
 			_build_planet_overview(current_data)
 		overlay.queue_free()
@@ -2814,6 +2844,7 @@ func _build_planet_overview(data: PlanetData) -> void:
 		up_btn.mouse_entered.connect(func(): AudioManager.play("hover"))
 		up_btn.pressed.connect(func(): AudioManager.play("click"); _show_level_up_popup(pp))
 		root.add_child(up_btn)
+		_notify_tutorial_planet_level_up_btn(up_btn)
 
 	panel_content.add_child(root)
 
@@ -3129,17 +3160,16 @@ func _build_add_district_card(data: PlanetData, enabled: bool, orbital_only: boo
 				return
 			var dd := _build_district_type_dropdown(cap_data, cap_wrap, dropdown_ref, orbital_only)
 			cap_wrap.add_child(dd)
+			cap_wrap.move_child(dd, 0)  # open upward by default
 			dropdown_ref[0] = dd
 			_notify_tutorial_district_type_dropdown(dd)
-			# After layout: flip upward only if it overflows the viewport bottom
+			# After layout: if it overflows the top, flip back downward
 			var cap_dd := dd
 			var cap_cw := cap_wrap
 			await get_tree().process_frame
 			if is_instance_valid(cap_dd) and is_instance_valid(cap_cw):
-				var dd_bottom := cap_dd.global_position.y + cap_dd.size.y
-				var vp_h := get_viewport().get_visible_rect().size.y
-				if dd_bottom > vp_h - 8.0:
-					cap_cw.move_child(cap_dd, 0))
+				if cap_dd.global_position.y < 8.0:
+					cap_cw.move_child(cap_dd, cap_cw.get_child_count() - 1))
 
 	return wrapper
 
@@ -3315,9 +3345,11 @@ func _on_building_ticked_night(planet_seed: int, key: String) -> void:
 		if m.get("planet_seed", -1) == planet_seed:
 			var sl: Label = m.get("slowed_lbl", null)
 			if is_instance_valid(sl):
-				var paused := ProductionManager.is_paused(k)
+				var paused      := ProductionManager.is_paused(k)
+				var user_paused := ProductionManager.is_user_paused(k)
 				sl.text    = "⚡ Slowed %d%% — Energy Crisis" % [int((1.0 - er) * 100)]
-				sl.visible = not paused and er < 0.999
+				sl.visible = not paused and not user_paused and er < 0.999
+			_refresh_bar_label_status(k)
 
 	_refresh_district_energy_lbl()
 
@@ -6384,14 +6416,17 @@ func _toggle_slot_dropdown(card: PanelContainer, poi: POIData, planet: PlanetDat
 	outer.position            = Vector2(card_rect.position.x, card_rect.end.y)
 	outer.custom_minimum_size = Vector2(card_rect.size.x, 0)
 	_active_slot_dropdown = outer
-	# Tutorial: highlight target building row
+	# Tutorial: highlight target building row and disable all others
 	var tut_bid := TutorialManager.get_action_building_target()
 	if tut_bid != "":
 		for row in list.get_children():
-			if row.has_meta("building_id") and row.get_meta("building_id") == tut_bid:
+			if not (row is Button) or not row.has_meta("building_id"): continue
+			if row.get_meta("building_id") == tut_bid:
 				_tut_highlight_node = row as Control
 				_start_tut_node_pulse(_tut_highlight_node)
-				break
+			else:
+				(row as Button).disabled = true
+				(row as Button).modulate = Color(0.35, 0.35, 0.45, 0.5)
 
 func _toggle_mineral_dropdown(btn: Control, raw_list: Array, target_key: String, current_tgt: String, poi: POIData, planet: PlanetData, entry: Dictionary) -> void:
 	if _active_slot_dropdown != null and is_instance_valid(_active_slot_dropdown):
@@ -6646,35 +6681,24 @@ func _build_district_panel(poi: POIData, planet: PlanetData) -> void:
 	var can_upg    := pp.can_upgrade_district(poi.label)
 
 	if is_upging:
-		# Show progress bar instead of button
+		var upg_lbl := Label.new()
+		upg_lbl.text = "UPGRADING TO LV %d..." % (dist_lv + 1)
+		upg_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_apply_orbitron(upg_lbl, 10)
+		upg_lbl.add_theme_color_override("font_color", Color(0.45, 0.80, 1.0))
+		root.add_child(upg_lbl)
+
 		var upg_pbar := ProgressBar.new()
-		var upg_prog := pp.district_upgrading.get(poi.label, 0.0)
+		var upg_prog: float = pp.district_upgrading.get(poi.label, 0.0)
 		upg_pbar.value = upg_prog * 100.0
-		upg_pbar.custom_minimum_size = Vector2(0, 40)
+		upg_pbar.custom_minimum_size = Vector2(0, 12)
 		upg_pbar.show_percentage = false
 		var pb_bg := StyleBoxFlat.new(); pb_bg.bg_color = Color(0.08, 0.10, 0.18)
 		var pb_fg := StyleBoxFlat.new(); pb_fg.bg_color = Color(0.15, 0.55, 0.75)
 		upg_pbar.add_theme_stylebox_override("background", pb_bg)
 		upg_pbar.add_theme_stylebox_override("fill", pb_fg)
 		root.add_child(upg_pbar)
-
-		var upg_lbl := Label.new()
-		upg_lbl.text = "UPGRADING TO LV %d..." % (dist_lv + 1)
-		upg_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		_apply_orbitron(upg_lbl, 10)
-		upg_lbl.add_theme_color_override("font_color", Color(0.45, 0.80, 1.0))
-		upg_lbl.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		upg_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		upg_pbar.add_child(upg_lbl)
-
-		# Live progress update
-		var cap_upg_pbar := upg_pbar
-		var cap_upg_poi  := poi
-		var _upg_conn := func() -> void:
-			if is_instance_valid(cap_upg_pbar):
-				cap_upg_pbar.value = pp.district_upgrading.get(cap_upg_poi.label, 0.0) * 100.0
-		if not GameState.planet_progress_changed.is_connected(_upg_conn):
-			GameState.planet_progress_changed.connect(func(_s: int) -> void: _upg_conn.call())
+		_district_upgrade_pbars[poi.label] = upg_pbar
 	else:
 		var upg_btn  := Button.new()
 		upg_btn.text = "UPGRADE DISTRICT  ·  %d cr" % upg_cost
@@ -6717,7 +6741,8 @@ func _build_district_panel(poi: POIData, planet: PlanetData) -> void:
 				pp.upgrade_district(cap_poi_upg.label)
 				GameState.planet_progress_changed.emit(cap_planet_upg.seed)
 			_build_district_panel(cap_poi_upg, cap_planet_upg))
-	root.add_child(upg_btn)
+		root.add_child(upg_btn)
+		if can_upg: _notify_tutorial_district_upgrade_btn(upg_btn)
 
 	panel_content.add_child(root)
 	_notify_tutorial_district_opened(poi, root)

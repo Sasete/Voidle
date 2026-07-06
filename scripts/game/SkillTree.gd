@@ -103,10 +103,10 @@ func _init() -> void:
 	_add_node("unlock_command_center", "Planetary Command", "Blueprints for planet-wide command centers.", 5000.0, Vector2(360, 600), ["unlock_commercial_hub"], 4, "Unlocks Command Center", 1)
 
 	# --- BRANCH 6: ENERGY (Right-Down) ---
-	_add_node("unlock_thermal_plant", "Thermal Plant", "Unlocks the standard mineral-burning Thermal Generator.", 100.0, Vector2(480, 160), ["unlock_solar_panel"], 2, "Unlocks Thermal Generator.", 10)
-	_add_node("solar_efficiency", "Solar Arrays", "Improves basic solar cell design to absorb more stellar energy.", 50.0, Vector2(480, 280), ["unlock_thermal_plant"], 2, "+10% Solar Array output", 5, NodeShape.DIAMOND)
-	_add_node("generator_efficiency", "Heat Capture Loops", "Adds heat capture loops to standard Generators.", 250.0, Vector2(600, 160), ["unlock_thermal_plant"], 3, "+5% Generator Energy output", 5, NodeShape.DIAMOND)
-	_add_node("power_transmission", "Superconducting Grid", "Reduces losses inside energy lines.", 400.0, Vector2(600, 280), ["unlock_thermal_plant"], 3, "-5% Energy consumption on all buildings", 1, NodeShape.DIAMOND)
+	_add_node("unlock_generator", "Thermal Plant", "Unlocks the standard mineral-burning Thermal Generator.", 100.0, Vector2(480, 160), ["unlock_solar_panel"], 2, "Unlocks Thermal Generator.", 10)
+	_add_node("solar_efficiency", "Solar Arrays", "Improves basic solar cell design to absorb more stellar energy.", 50.0, Vector2(480, 280), ["unlock_generator"], 2, "+10% Solar Array output", 5, NodeShape.DIAMOND)
+	_add_node("generator_efficiency", "Heat Capture Loops", "Adds heat capture loops to standard Generators.", 250.0, Vector2(600, 160), ["unlock_generator"], 3, "+5% Generator Energy output", 5, NodeShape.DIAMOND)
+	_add_node("power_transmission", "Superconducting Grid", "Reduces losses inside energy lines.", 400.0, Vector2(600, 280), ["unlock_generator"], 3, "-5% Energy consumption on all buildings", 1, NodeShape.DIAMOND)
 	_add_node("supercharged_generators", "Plasma Ignition", "Drastically increases output of all generators.", 800.0, Vector2(720, 160), ["generator_efficiency"], 4, "+2% Generator Energy output", 10, NodeShape.DIAMOND)
 	_add_node("energy_efficiency", "Zero-Point Regulators", "Reduces overall energy consumption via quantum stabilization.", 800.0, Vector2(720, 280), ["power_transmission"], 4, "-2% global energy consumption", 5, NodeShape.DIAMOND)
 	_add_node("unlock_fusion_reactor", "Fusion Reactor", "Unlocks massive industrial Fusion Reactors.", 1000.0, Vector2(840, 220), ["power_transmission", "generator_efficiency"], 4, "Unlocks Fusion Reactor.", 10)
@@ -115,7 +115,7 @@ func _init() -> void:
 	_add_node("dyson_swarm", "Dyson Swarm Blueprint", "Begin constructing orbital solar collectors around the sun.\n[color=#ffbb55]Megastructure Project[/color]", 50000.0, Vector2(960, 220), ["unlock_fusion_reactor", "find_available_star"], 5, "+100% Solar Array output", 1, NodeShape.CIRCLE)
 
 	# --- NEW ENERGY PROGRESSION ---
-	_add_node("unlock_thermic_burner", "Thermic Burner", "Burns refined ingots for substantial energy.", 400.0, Vector2(480, 40), ["unlock_thermal_plant"], 3, "Unlocks Thermic Burner.", 10)
+	_add_node("unlock_thermic_burner", "Thermic Burner", "Burns refined ingots for substantial energy.", 400.0, Vector2(480, 40), ["unlock_generator"], 3, "Unlocks Thermic Burner.", 10)
 	_add_node("thermic_mastery", "Thermic Mastery", "Optimizes ingot combustion.", 300.0, Vector2(600, 40), ["unlock_thermic_burner"], 3, "+2% Generator Output", 10, NodeShape.DIAMOND)
 	
 	_add_node("unlock_plasma_reactor", "Plasma Reactor", "Burns alloys using sustained magnetic plasma.", 1200.0, Vector2(480, -80), ["unlock_thermic_burner"], 4, "Unlocks Plasma Reactor.", 10)
@@ -182,6 +182,12 @@ func get_next_cost(id: String) -> float:
 	var cur_lv := get_skill_level(id)
 	if cur_lv >= node.max_level:
 		return 0.0
+	# unlock_mining uses a custom curve: Lv1=20, Lv2=110, Lv3+=linear
+	if id == "unlock_mining":
+		match cur_lv:
+			0: return 20.0
+			1: return 110.0
+			_: return node.cost * (1.0 + cur_lv)
 	# Linear cost scaling: Base cost * (1 + current_level)
 	return node.cost * (1.0 + cur_lv)
 
@@ -229,7 +235,9 @@ func purchase_skill(id: String) -> bool:
 				GameState.galaxy_unlocked = true
 				GameState.unlock_changed.emit("galaxy_unlocked", true)
 			elif id.begins_with("unlock_"):
-				GameState.unlock_building(id.trim_prefix("unlock_"))
+				var bid := id.trim_prefix("unlock_")
+				if bid == "mining": bid = "mine"
+				GameState.unlock_building(bid)
 		else:
 			skill_levels[id] = cur_lv + 1
 			
