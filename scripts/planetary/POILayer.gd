@@ -85,14 +85,15 @@ func _process(_delta: float) -> void:
 	for ft in _floating_texts:
 		ft.time += _delta
 		if ft.time < ft.max_time:
-			var lon: float = ft.lon - rot
-			var lat: float = ft.lat
-			var sx  := sin(lon) * cos(lat)
-			var sy  := -sin(lat)
-			var sz  := cos(lon) * cos(lat)
-			ft.screen  = center + Vector2(sx * r_px, sy * r_px)
-			ft.visible = sz > -0.05
-			ft.alpha   = clamp(sz * 4.0, 0.0, 1.0)
+			if not ft.get("fixed", false):
+				var lon: float = ft.lon - rot
+				var lat: float = ft.lat
+				var sx  := sin(lon) * cos(lat)
+				var sy  := -sin(lat)
+				var sz  := cos(lon) * cos(lat)
+				ft.screen  = center + Vector2(sx * r_px, sy * r_px)
+				ft.visible = sz > -0.05
+				ft.alpha   = clamp(sz * 4.0, 0.0, 1.0)
 			keep_texts.append(ft)
 	_floating_texts = keep_texts
 
@@ -101,19 +102,56 @@ func _process(_delta: float) -> void:
 var _orbitron: Font
 var _floating_texts: Array[Dictionary] = []
 
+func spawn_floating_text_at_screen(screen_pos: Vector2, text: String, color: Color = Color.WHITE, font_size: int = 14, icon: Texture2D = null) -> void:
+	var same_count := 0
+	for ft in _floating_texts:
+		if ft.screen.distance_to(screen_pos) < 5.0 and ft.time < 0.5:
+			same_count += 1
+	_floating_texts.append({
+		"lon": 0.0, "lat": 0.0,
+		"text": text, "color": color,
+		"time": same_count * 0.35,
+		"max_time": 2.5 + same_count * 0.35,
+		"visible": true,
+		"screen": screen_pos,
+		"alpha": 1.0,
+		"font_size": font_size,
+		"icon": icon,
+		"y_offset": same_count * 20.0,
+		"fixed": true
+	})
+
 func spawn_floating_text(lon_deg: float, lat_deg: float, text: String, color: Color = Color.WHITE, font_size: int = 14, icon: Texture2D = null) -> void:
+	# Stagger multiple texts spawned at same location so they don't overlap
+	var same_count := 0
+	for ft in _floating_texts:
+		if absf(ft.lon - deg_to_rad(lon_deg)) < 0.001 and absf(ft.lat - deg_to_rad(lat_deg)) < 0.001 and ft.time < 0.3:
+			same_count += 1
+
+	# Calculate initial screen position immediately so _draw is correct before first _process
+	var init_screen := Vector2.ZERO
+	var p := _get_planet_params()
+	if not p.is_empty():
+		var center: Vector2 = p["center"]
+		var r_px: float     = p["r_px"]
+		var rot: float      = _get_rotation()
+		var lon_r := deg_to_rad(lon_deg) - rot
+		var lat_r := deg_to_rad(lat_deg)
+		init_screen = center + Vector2(sin(lon_r) * cos(lat_r) * r_px, -sin(lat_r) * r_px)
+
 	_floating_texts.append({
 		"lon": deg_to_rad(lon_deg),
 		"lat": deg_to_rad(lat_deg),
 		"text": text,
 		"color": color,
-		"time": 0.0,
-		"max_time": 2.5,
+		"time": same_count * 0.35,
+		"max_time": 2.5 + same_count * 0.35,
 		"visible": true,
-		"screen": Vector2.ZERO,
+		"screen": init_screen,
 		"alpha": 1.0,
 		"font_size": font_size,
-		"icon": icon
+		"icon": icon,
+		"y_offset": same_count * 20.0
 	})
 
 func _ready() -> void:
@@ -126,13 +164,14 @@ func _draw() -> void:
 
 	for ft in _floating_texts:
 		if not ft.visible: continue
-		
+		if ft.screen == Vector2.ZERO: continue
+
 		var progress: float = ft.time / ft.max_time
 		var text_alpha: float = (1.0 - progress * progress) * ft.alpha
 		if text_alpha <= 0.0: continue
 		
-		var float_up_offset := Vector2(0, -progress * 40.0)
-		var pos: Vector2 = ft.screen + float_up_offset
+		var float_up_offset := Vector2(0, -progress * 40.0 - ft.get("y_offset", 0.0))
+		var pos: Vector2 = to_local(ft.screen) + float_up_offset
 		
 		var c: Color = ft.color
 		c.a *= text_alpha
@@ -151,12 +190,12 @@ func _draw() -> void:
 		var text_x := start_x
 		if icon_tex != null:
 			var icon_pos := Vector2(start_x, pos.y - icon_size * 0.8)
-			draw_texture_rect(icon_tex, Rect2(icon_pos, Vector2(icon_size, icon_size)), false, Color(1, 1, 1, c.a))
+			draw_texture_rect(icon_tex, Rect2(icon_pos, Vector2(icon_size, icon_size)), false, Color(1, 1, 1, c.a), false)
 			text_x += icon_size + 4.0
 			
 		var text_pos := Vector2(text_x, pos.y)
 		
-		draw_string_outline(font, text_pos, ft.text, HORIZONTAL_ALIGNMENT_LEFT, -1, f_size, 1, Color(0, 0, 0, c.a * 0.8))
+		draw_string_outline(font, text_pos, ft.text, HORIZONTAL_ALIGNMENT_LEFT, -1, f_size, 4, Color(0, 0, 0, c.a * 0.9))
 		draw_string(font, text_pos, ft.text, HORIZONTAL_ALIGNMENT_LEFT, -1, f_size, c)
 
 	for i in _pois.size():

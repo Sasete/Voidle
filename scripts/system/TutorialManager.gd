@@ -1035,7 +1035,8 @@ func _build_quest_ui() -> void:
 		_flash_skip_reward(get_viewport().get_mouse_position())
 		_dismiss_quest_panel())
 	skip_btn.mouse_entered.connect(func() -> void:
-		var ore_icon := MineralIcon.make(1, Color(0.55, 0.60, 0.70))
+		var _skip_rd := ResourceData.generate(GameState.home_planet_seed, ResourceData.Tag.RAW_MINERAL, 3, 1)
+		var ore_icon := MineralIcon.make(_skip_rd.tier, _skip_rd.display_color)
 		TooltipManager.show_tip("Scrap the tutorial Bot", ["Skip the optional objectives.", "\n+%.0f " % SKIP_MINERAL_AMOUNT, ore_icon], ""))
 	skip_btn.mouse_exited.connect(func() -> void: TooltipManager.hide_tip())
 	hdr.add_child(skip_btn)
@@ -1191,7 +1192,7 @@ func _give_skip_minerals() -> void:
 
 func _flash_skip_reward(pos: Vector2) -> void:
 	var rd := ResourceData.generate(GameState.home_planet_seed, ResourceData.Tag.RAW_MINERAL, 3, 1)
-	var ore_icon := MineralIcon.make(1, Color(0.85, 0.80, 0.60))
+	var ore_icon := MineralIcon.make(rd.tier, rd.display_color)
 	var flash := RichTextLabel.new()
 	flash.bbcode_enabled = true
 	flash.fit_content    = true
@@ -1254,11 +1255,14 @@ func _show_inventory_hint() -> void:
 
 # ── Typewriter (plain Label) ──────────────────────────────────────────────────
 func _tw_label(lbl: Label, text: String, spd: float) -> void:
+	if not is_instance_valid(lbl): return
 	lbl.text = ""
 	for i in text.length():
-		lbl.text = text.substr(0, i + 1) + "▌"
 		await get_tree().create_timer(spd).timeout
-	lbl.text = text
+		if not is_instance_valid(lbl): return
+		lbl.text = text.substr(0, i + 1) + "▌"
+	if is_instance_valid(lbl):
+		lbl.text = text
 
 # ── Style helpers ─────────────────────────────────────────────────────────────
 func _panel_style(bg: Color, border: Color) -> StyleBoxFlat:

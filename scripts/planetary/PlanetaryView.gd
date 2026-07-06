@@ -95,6 +95,10 @@ func _ready() -> void:
 	_register_mission_tasks()
 	TutorialManager.highlight_changed.connect(_on_tutorial_highlight)
 	TutorialManager.highlight_cleared.connect(_on_tutorial_highlight_clear)
+	get_node("/root/SkillTree").skill_unlocked.connect(func(_id: String) -> void:
+		for k: String in _bar_meta:
+			_refresh_bar_label_status(k)
+		_refresh_district_energy_lbl())
 
 	# load from transition if navigating from SolarView or first launch
 	var planet_to_load: PlanetData = SceneTransition.pending_data as PlanetData
@@ -3289,13 +3293,12 @@ func _is_at_edge() -> bool:
 	const EDGE := 40.0
 	return mouse.x < EDGE or mouse.y < EDGE or mouse.x > vp.x - EDGE or mouse.y > vp.y - EDGE
 
-func _on_resource_produced(planet_seed: int, poi_label: String, text: String, color: Color, icon: Texture2D) -> void:
+func _on_resource_produced(planet_seed: int, _poi_label: String, text: String, color: Color, icon: Texture2D) -> void:
 	if current_data == null or current_data.seed != planet_seed:
 		return
-	for poi in current_data.custom_pois:
-		if poi.label == poi_label:
-			poi_layer.spawn_floating_text(poi.lon_deg, poi.lat_deg, text, color, 14, icon)
-			break
+	var p_center: Vector2 = planet_renderer.global_position + planet_renderer.size * 0.5
+	var r_px: float = planet_renderer.size.y * 0.38
+	poi_layer.spawn_floating_text_at_screen(p_center + Vector2(randf_range(-r_px * 0.5, r_px * 0.5), randf_range(-r_px * 0.3, r_px * 0.3)), text, color, 14, icon)
 	if _active_district_poi != null:
 		_refresh_district_energy_lbl()
 	else:
@@ -3355,6 +3358,12 @@ func _on_building_ticked_night(planet_seed: int, key: String) -> void:
 
 var _active_district_energy_lbl: Label = null
 
+func _fmt_energy(val: float) -> String:
+	var s := "+" if val >= 0.0 else ""
+	if absf(val - roundf(val)) > 0.01:
+		return s + "%.1f ⚡" % val
+	return s + "%.0f ⚡" % val
+
 func _refresh_district_energy_lbl() -> void:
 	if not is_instance_valid(_active_district_energy_lbl):
 		return
@@ -3363,8 +3372,7 @@ func _refresh_district_energy_lbl() -> void:
 	var pp := GameState.get_planet(current_data.seed)
 	var breakdown := _planet_energy_breakdown(pp, current_data)
 	var d_energy: float = breakdown.get(_active_district_poi.label, 0.0)
-	var de_sign := "+" if d_energy >= 0.0 else ""
-	_active_district_energy_lbl.text = de_sign + "%.0f ⚡" % d_energy
+	_active_district_energy_lbl.text = _fmt_energy(d_energy)
 	_active_district_energy_lbl.add_theme_color_override("font_color",
 		Color(0.85, 0.78, 0.22) if d_energy >= 0.0 else Color(0.85, 0.38, 0.25))
 
@@ -3412,7 +3420,9 @@ func _refresh_bar_label_status(key: String) -> void:
 			elif def.output_type == BuildingDef.OutputType.RAW_MINERAL or def.output_type == BuildingDef.OutputType.REFINED_MINERAL:
 				out_val *= sk.get_mine_output_mult()
 			match def.output_type:
-				BuildingDef.OutputType.ENERGY:          out_text = "+%.0f ⚡" % out_val
+				BuildingDef.OutputType.ENERGY:
+					var disp_e := out_val - floorf(out_val) > 0.01
+					out_text = ("+%.1f ⚡" if disp_e else "+%.0f ⚡") % out_val
 				BuildingDef.OutputType.CREDITS:         out_text = "+%.0f cr" % out_val
 				BuildingDef.OutputType.RAW_MINERAL:     out_text = "+%.0f ore" % out_val
 				BuildingDef.OutputType.REFINED_MINERAL: out_text = "+%.0f ref" % out_val
@@ -4442,7 +4452,9 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 	var out_text := "⏸ waiting" if paused else ""
 	if not paused:
 		match def.output_type:
-			BuildingDef.OutputType.ENERGY:          out_text = "+%.0f ⚡" % out_val
+			BuildingDef.OutputType.ENERGY:
+				var disp_e := absf(out_val - floorf(out_val)) > 0.01
+				out_text = ("+%.1f ⚡" if disp_e else "+%.0f ⚡") % out_val
 			BuildingDef.OutputType.CREDITS:         out_text = "+%.0f cr" % out_val
 			BuildingDef.OutputType.RAW_MINERAL:     out_text = "+%.0f ore" % out_val
 			BuildingDef.OutputType.REFINED_MINERAL: out_text = "+%.0f ref" % out_val
@@ -4679,10 +4691,23 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 	rem_btn.add_theme_stylebox_override("normal", rem_s)
 	rem_btn.add_theme_stylebox_override("focus",  StyleBoxEmpty.new())
 	rem_btn.add_theme_color_override("font_color", Color(0.90, 0.45, 0.45))
-	var tip_rem := "Remove one %s" % def.display_name if count > 1 else "Demolish %s" % def.display_name
+	var tip_rem_title := "Remove one %s" % def.display_name if count > 1 else "Demolish %s" % def.display_name
+	var _cap_pp := pp
+	var _cap_planet2 := planet
 	rem_btn.mouse_entered.connect(func() -> void:
 		CursorManager.set_state(CursorManager.State.POINTER)
-		TooltipManager.show_tip("-", tip_rem))
+		if def.output_type == BuildingDef.OutputType.RAW_MINERAL or def.output_type == BuildingDef.OutputType.REFINED_MINERAL:
+			var pd2: PlanetData = GameState.get_planet_data(_cap_planet2.seed)
+			var tag2 := ResourceData.Tag.RAW_MINERAL if def.output_type == BuildingDef.OutputType.RAW_MINERAL else ResourceData.Tag.REFINED_MINERAL
+			var res_list2 := GameState.get_body_resources_for(pd2).get_by_tag(tag2)
+			var body_arr: Array = []
+			for rd2 in res_list2:
+				var rdd := rd2 as ResourceData
+				body_arr.append(MineralIcon.make(rdd.tier, rdd.display_color))
+				body_arr.append(" %s\n" % rdd.unique_name)
+			TooltipManager.show_tip(tip_rem_title, body_arr)
+		else:
+			TooltipManager.show_tip(tip_rem_title, ""))
 	rem_btn.mouse_exited.connect(func() -> void:
 		CursorManager.set_state(CursorManager.State.NORMAL)
 		TooltipManager.hide_tip())

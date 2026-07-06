@@ -265,7 +265,7 @@ func is_visible(id: String) -> bool:
 func get_solar_mult() -> float:
 	var base := 1.0
 	if "solar_efficiency" in unlocked_skills:
-		base += 0.25
+		base += 0.10 * get_skill_level("solar_efficiency")
 	if "dyson_swarm" in unlocked_skills:
 		base += 1.00
 	return base

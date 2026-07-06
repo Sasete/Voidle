@@ -23,6 +23,7 @@ var _orbitron: Font
 var credits_panel: PanelContainer = null
 var science_panel: PanelContainer = null
 var _top_layer: CanvasLayer = null
+var _pause_overlay: CanvasLayer = null
 
 func set_game_hud(visible_state: bool) -> void:
 	visible = visible_state
@@ -48,6 +49,7 @@ static func fmt_science(val: float) -> String:
 
 func _ready() -> void:
 	layer = 226  # Energy above DevConsole (225), hidden when SkillTree opens
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	_orbitron = load("res://Fonts/Orbitron-VariableFont_wght.ttf")
 
 	var panel := PanelContainer.new()
@@ -295,9 +297,34 @@ func _ready() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
-		if _top_layer.visible and not get_tree().paused:
+		if get_tree().paused:
+			if _pause_overlay != null and is_instance_valid(_pause_overlay):
+				get_viewport().set_input_as_handled()
+				get_tree().paused = false
+				_pause_overlay.queue_free()
+				_pause_overlay = null
+			return
+		get_viewport().set_input_as_handled()
+		# Smart escape: close the topmost open thing first
+		if _try_close_skill_tree():
+			return
+		if _top_layer != null and is_instance_valid(_top_layer):
 			show_pause_menu()
-			get_viewport().set_input_as_handled()
+
+func _try_close_skill_tree() -> bool:
+	var root := get_tree().root
+	for child in root.get_children():
+		if not (child is CanvasLayer): continue
+		for gc in child.get_children():
+			var sc = gc.get_script()
+			if sc != null and sc.resource_path.ends_with("SkillTreeView.gd"):
+				AudioManager.play("click")
+				if gc.has_signal("tree_closed"):
+					gc.emit_signal("tree_closed")
+				child.queue_free()
+				_energy_hud_node.visible = true
+				return true
+	return false
 
 func show_pause_menu() -> void:
 	AudioManager.play("ui_click")
@@ -309,6 +336,7 @@ func show_pause_menu() -> void:
 	var overlay := CanvasLayer.new()
 	overlay.layer = 250
 	overlay.process_mode = Node.PROCESS_MODE_ALWAYS
+	_pause_overlay = overlay
 	
 	var dim := ColorRect.new()
 	dim.color = Color(0, 0, 0, 0.75)
@@ -375,6 +403,7 @@ func show_pause_menu() -> void:
 
 	vbox.add_child(_make_btn.call("RESUME", func():
 		get_tree().paused = false
+		_pause_overlay = null
 		overlay.queue_free()
 	))
 	
@@ -399,6 +428,7 @@ func show_pause_menu() -> void:
 	
 	var mm_btn: Button = _make_btn.call("MAIN MENU", func():
 		get_tree().paused = false
+		_pause_overlay = null
 		overlay.queue_free()
 		GameState.save()
 		SceneTransition.go("res://scenes/MainMenu.tscn", null)
@@ -630,7 +660,8 @@ func _process(delta: float) -> void:
 			_energy_display = v
 			if is_instance_valid(_energy_hud_lbl):
 				var s := "+" if v > 0.0 else ""
-				_energy_hud_lbl.text = s + "%.0f ⚡" % v,
+				var frac := absf(v - floorf(v)) > 0.01
+				_energy_hud_lbl.text = s + ("%.1f ⚡" if frac else "%.0f ⚡") % v,
 			old_bal, bal, 0.40).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 
 	_energy_hud_lbl.add_theme_color_override("font_color", ecol)
@@ -917,12 +948,14 @@ func _energy_breakdown_text() -> String:
 		var pd: PlanetData = GameState.get_planet_data(pp.planet_seed)
 		var name_str: String = pd.planet_name if pd != null else "Colony"
 		var sign_s := "+" if net > 0.0 else ""
-		lines.append("%s  %s%.0f" % [name_str, sign_s, net])
+		var net_fmt := ("%.1f" if absf(net - floorf(net)) > 0.01 else "%.0f") % net
+		lines.append("%s  %s%s" % [name_str, sign_s, net_fmt])
 		total += net
 	if lines.is_empty():
 		return "No active colonies"
 	lines.sort()
 	var sign_t := "+" if total > 0.0 else ""
+	var tot_fmt := ("%.1f" if absf(total - floorf(total)) > 0.01 else "%.0f") % total
 	lines.append("─────────────────")
-	lines.append("Net  %s%.0f" % [sign_t, total])
+	lines.append("Net  %s%s" % [sign_t, tot_fmt])
 	return "\n".join(lines)

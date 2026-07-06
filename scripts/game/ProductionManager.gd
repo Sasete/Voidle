@@ -250,6 +250,40 @@ func _on_tick_complete(pp: PlanetProgress, def: BuildingDef,
 	if def.logic != null:
 		def.logic.produce(pp, def, amount, mods, entry, st)
 
+	var poi_lbl: String = entry.get("district_id", "")
+
+	# For mines: emit one notification per resource with its actual color/icon
+	if def.output_type == BuildingDef.OutputType.RAW_MINERAL or def.output_type == BuildingDef.OutputType.REFINED_MINERAL:
+		if poi_lbl != "":
+			var pd: PlanetData = GameState.get_planet_data(pp.planet_seed)
+			var tag := ResourceData.Tag.RAW_MINERAL if def.output_type == BuildingDef.OutputType.RAW_MINERAL else ResourceData.Tag.REFINED_MINERAL
+			var res_list := GameState.get_body_resources_for(pd).get_by_tag(tag)
+			var mult: float = get_building_level_mult(entry.get("level", 1)) * st.get_mine_output_mult()
+			var total_density: float = 0.0
+			var densities: Array[float] = []
+			var rng := RandomNumberGenerator.new()
+			for rd in res_list:
+				var r_id := (rd as ResourceData).resource_id()
+				var d: float
+				if pd.mineral_densities.has(r_id):
+					d = float(pd.mineral_densities[r_id])
+				else:
+					rng.seed = pd.seed ^ ((rd as ResourceData).rarity * 0x4E3D)
+					d = pd.deposit_density * rng.randf_range(0.75, 1.25)
+				densities.append(d)
+				total_density += d
+			var total_out := def.output_amount * amount * mult
+			if total_density > 0.0:
+				for i in res_list.size():
+					var share := total_out * (densities[i] / total_density)
+					if share < 0.5:
+						continue
+					var rd := res_list[i] as ResourceData
+					var icon_tex := MineralIcon.make(rd.tier, rd.display_color)
+					var txt := "+%.0f" % share
+					resource_produced.emit(pp.planet_seed, poi_lbl, txt, rd.display_color, icon_tex)
+		return
+
 	var display_val := def.output_amount * amount * get_building_level_mult(entry.get("level", 1))
 	var suffix := ""
 	var icon_tex: Texture2D = null
@@ -257,18 +291,11 @@ func _on_tick_complete(pp: PlanetProgress, def: BuildingDef,
 		BuildingDef.OutputType.CREDITS:
 			display_val *= st.get_credits_mult()
 			suffix = " cr"
-		BuildingDef.OutputType.RAW_MINERAL:
-			suffix = ""
-			icon_tex = MineralIcon.make(1, Color(0.55, 0.60, 0.70))
-		BuildingDef.OutputType.REFINED_MINERAL:
-			suffix = ""
-			icon_tex = MineralIcon.make(2, Color(0.75, 0.55, 1.00))
 		BuildingDef.OutputType.SCIENCE:
 			suffix = " sci"
 		BuildingDef.OutputType.ENERGY:
-			display_val = 0.0 # Energy is passive, no need for popup
+			display_val = 0.0
 
-	var poi_lbl: String = entry.get("district_id", "")
 	if display_val > 0.0 and poi_lbl != "":
 		var txt := "+%.0f%s" % [display_val, suffix]
 		resource_produced.emit(pp.planet_seed, poi_lbl, txt, def.output_color(), icon_tex)
