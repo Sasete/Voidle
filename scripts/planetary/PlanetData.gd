@@ -38,6 +38,8 @@ static func get_shader_path(type: Type) -> String:
 @export var irregularity: float = 0.3
 ## Overall deposit richness for this body (used as base for per-mineral density).
 @export var deposit_density: float = 1.0
+## Hop distance from home star — set by SolarData.tag_planets_hop(), used for rarity scaling.
+@export var system_hop: int = 0
 
 ## Per-mineral density overrides: { resource_id -> float (0.0-2.0+) }.
 ## When set, overrides the procedural density for that specific mineral.
@@ -82,13 +84,19 @@ static func from_seed_as_type(s: int, forced_type: Type) -> PlanetData:
 	return data
 
 static func from_seed_no_minor(s: int) -> PlanetData:
-	# Like from_seed but never returns MOON or ASTEROID (for use as a main planet)
+	# Like from_seed but never returns MOON or ASTEROID (for use as a main planet).
+	# TERRAN is intentionally rare (~5%) — they are special colonizable worlds.
 	var rng := RandomNumberGenerator.new()
 	rng.seed = s
 	var data := PlanetData.new()
 	data.seed = s
-	var allowed := [Type.TERRAN, Type.ARID, Type.ICE, Type.VOLCANIC, Type.BARREN, Type.GAS_GIANT]
-	data.planet_type = allowed[rng.randi() % allowed.size()]
+	var r := rng.randi() % 100
+	if   r < 22: data.planet_type = Type.BARREN
+	elif r < 42: data.planet_type = Type.ARID
+	elif r < 60: data.planet_type = Type.ICE
+	elif r < 78: data.planet_type = Type.VOLCANIC
+	elif r < 95: data.planet_type = Type.GAS_GIANT
+	else:         data.planet_type = Type.TERRAN
 	data.planet_name  = _generate_name(rng)
 	_apply_type_defaults(data, rng)
 	return data

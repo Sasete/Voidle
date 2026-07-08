@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="AchievementDef" format=3]
+
+[ext_resource type="Script" path="res://scripts/game/AchievementDef.gd" id="1_def"]
+
+[resource]
+script = ExtResource("1_def")
+achievement_id = "mineral_tier_4"
+title = "Mantle Breaker"
+description = "Collect 5 Million minerals."
+icon = "🪨"
+trigger = 11
+int_value = 0
+float_value = 5000000
+string_value = ""
+steam_id = ""
+secret = false

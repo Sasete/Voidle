@@ -22,4 +22,4 @@ func produce(pp: PlanetProgress, def: BuildingDef, amount: int, mods: Array, ent
 	GameState.earn_credits(def.output_amount * amount * mult)
 
 func requires_mineral_selector() -> bool:
-	return true
+	return false

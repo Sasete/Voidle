@@ -15,7 +15,17 @@ enum StarType { YELLOW_DWARF, RED_DWARF, BLUE_GIANT, ORANGE_SUBGIANT, WHITE_DWAR
 @export var secondary_type: StarType = StarType.RED_DWARF
 @export var binary_dist:    float    = 0.0   # px distance from primary (set in from_seed)  # indices: belt sits after planets[i]
 
-static func from_seed(s: int) -> SolarData:
+## Hop distance from home star in the galaxy graph (0 = home system).
+@export var hop_distance: int = 0
+
+## Propagate hop_distance to all planets and their moons so resource rarity scales correctly.
+func tag_planets_hop() -> void:
+	for pd: PlanetData in planets:
+		pd.system_hop = hop_distance
+		for m: PlanetData in pd.moons:
+			m.system_hop = hop_distance
+
+static func from_seed(s: int, ensure_gas_giant: bool = false) -> SolarData:
 	var data := SolarData.new()
 	data.seed = s
 	var rng := RandomNumberGenerator.new()
@@ -39,6 +49,20 @@ static func from_seed(s: int) -> SolarData:
 			pd = PlanetData.from_seed_no_minor(pseed + 3)
 		pd.generate_moons(pseed)
 		data.planets.append(pd)
+
+	# Guarantee at least one gas giant if requested (home system)
+	if ensure_gas_giant:
+		var has_gas := false
+		for pd: PlanetData in data.planets:
+			if pd.planet_type == PlanetData.Type.GAS_GIANT:
+				has_gas = true
+				break
+		if not has_gas and data.planets.size() > 0:
+			var last_i: int = data.planets.size() - 1
+			var last_seed: int = (s * 31 + last_i * 1337 + 7) % 99999
+			var gas_pd := PlanetData.from_seed_as_type(last_seed, PlanetData.Type.GAS_GIANT)
+			gas_pd.generate_moons(last_seed)
+			data.planets[last_i] = gas_pd
 
 	# ~25% chance of binary companion (smaller type than primary)
 	if rng.randf() < 0.25:

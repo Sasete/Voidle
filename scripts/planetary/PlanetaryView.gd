@@ -27,6 +27,7 @@ const LIGHT_SPEED: float = 0.04   # radians per second
 var _active_district_poi: POIData = null
 var _top_tab_active: String = "DETAILS"    # "DETAILS" or "INVENTORY"
 var _inner_tab_active: String = "SURFACE"  # "SURFACE" or "ORBITAL"
+var _panel_scroll_pos: int = 0             # preserved across refreshes
 var _overview_energy_val: Label = null   # kept for live energy updates
 var _orbital_layer: OrbitalLayer = null
 var _mission_builder_overlay: Control = null  # non-null while Mission Builder is open
@@ -200,7 +201,7 @@ func _notify_tutorial_district_opened(poi: POIData, root: VBoxContainer) -> void
 	var target_bid := TutorialManager.get_action_building_target()
 	if target_bid == "":
 		return
-	var buildable := BuildingDef.for_poi_type(poi.poi_type)
+	var buildable := BuildingDef.for_poi_and_planet(poi.poi_type, current_data.planet_type)
 	var can_here := false
 	for def in buildable:
 		if def.building_id == target_bid:
@@ -469,6 +470,7 @@ func load_planet(data: PlanetData) -> void:
 	if current_data == null or current_data.seed != data.seed:
 		_top_tab_active   = "DETAILS"
 		_inner_tab_active = "SURFACE"
+		_panel_scroll_pos = 0   # reset scroll on planet switch
 	current_data = data
 	_active_district_poi = null   # clear stale reference on planet switch
 	_open_mineral_switchers.clear()
@@ -2378,6 +2380,12 @@ func _build_planet_overview(data: PlanetData) -> void:
 	var panel_content := $RightPanel/PanelContent
 	var old := panel_content.get_node_or_null("DistrictBuildPanel")
 	if old:
+		# Save active scroll position before destroying
+		for child in old.get_children():
+			if child is ScrollContainer:
+				if (child as ScrollContainer).visible:
+					_panel_scroll_pos = (child as ScrollContainer).scroll_vertical
+					break
 		old.name = "__freeing_district__"   # free name slot before queue_free
 		old.queue_free()
 		_bar_meta.clear()
@@ -2747,6 +2755,9 @@ func _build_planet_overview(data: PlanetData) -> void:
 	dist_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	dist_scroll.size_flags_vertical    = Control.SIZE_EXPAND_FILL
 	root.add_child(dist_scroll)
+	_style_scroll(dist_scroll)
+	var _saved_scroll := _panel_scroll_pos
+	dist_scroll.call_deferred("set", "scroll_vertical", _saved_scroll)
 
 	var districts_page := VBoxContainer.new()
 	districts_page.add_theme_constant_override("separation", 8)
@@ -2759,12 +2770,15 @@ func _build_planet_overview(data: PlanetData) -> void:
 		districts_page.add_child(_build_district_overview_card(poi, data, pp, panel_content, root))
 
 	var can_add_surface := surface_pois.size() < pp.max_districts
-	var add_dist_card := _build_add_district_card(data, can_add_surface, false)
-	districts_page.add_child(add_dist_card)
+	if can_add_surface:
+		var add_dist_card := _build_add_district_card(data, true, false)
+		districts_page.add_child(add_dist_card)
 	# Tutorial: highlight ADD DISTRICT card when district placement is the objective
 	if can_add_surface and TutorialManager.get_action_step_type() == "district":
-		_tut_highlight_node = add_dist_card.get_child(0) as Control
-		_start_tut_node_pulse(_tut_highlight_node)
+		var last := districts_page.get_child(districts_page.get_child_count() - 1)
+		if last != null and last.get_child_count() > 0:
+			_tut_highlight_node = last.get_child(0) as Control
+			_start_tut_node_pulse(_tut_highlight_node)
 
 	# ── ORBITAL scroll + page ─────────────────────────────────────────────────
 	var orb_scroll := ScrollContainer.new()
@@ -2772,6 +2786,8 @@ func _build_planet_overview(data: PlanetData) -> void:
 	orb_scroll.size_flags_vertical    = Control.SIZE_EXPAND_FILL
 	orb_scroll.visible = false
 	root.add_child(orb_scroll)
+	_style_scroll(orb_scroll)
+	orb_scroll.call_deferred("set", "scroll_vertical", _saved_scroll)
 
 	var orbital_page := VBoxContainer.new()
 	orbital_page.add_theme_constant_override("separation", 8)
@@ -3103,6 +3119,21 @@ func _build_district_overview_card(poi: POIData, planet: PlanetData, pp: PlanetP
 			_build_district_panel(cap_poi, cap_planet))
 	return card
 
+func _style_scroll(sc: ScrollContainer) -> void:
+	# Thin, non-overlapping scrollbar styled to match the dark UI
+	var vsb := sc.get_v_scroll_bar()
+	vsb.custom_minimum_size = Vector2(4, 0)
+	var norm := StyleBoxFlat.new()
+	norm.bg_color = Color(0.10, 0.12, 0.20, 0.0)
+	vsb.add_theme_stylebox_override("scroll", norm)
+	var grabber := StyleBoxFlat.new()
+	grabber.bg_color        = Color(0.35, 0.45, 0.75, 0.55)
+	grabber.corner_radius_top_left     = 2; grabber.corner_radius_top_right    = 2
+	grabber.corner_radius_bottom_left  = 2; grabber.corner_radius_bottom_right = 2
+	vsb.add_theme_stylebox_override("grabber",       grabber)
+	vsb.add_theme_stylebox_override("grabber_hover",  grabber)
+	vsb.add_theme_stylebox_override("grabber_pressed", grabber)
+
 func _select_district_on_planet(label: String) -> void:
 	if _orbital_layer != null and is_instance_valid(_orbital_layer):
 		_orbital_layer.set_selected_station("")
@@ -3115,6 +3146,9 @@ func _build_add_district_card(data: PlanetData, enabled: bool, orbital_only: boo
 	var wrapper := VBoxContainer.new()
 	wrapper.add_theme_constant_override("separation", 0)
 	wrapper.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# Orbital tab: don't show the card at all when slots are full
+	if orbital_only and not enabled:
+		return wrapper
 
 	var card := PanelContainer.new()
 	var s := StyleBoxFlat.new()
@@ -4538,7 +4572,7 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 		info_row.add_child(e_lbl)
 
 	var is_mine := def.output_type == BuildingDef.OutputType.RAW_MINERAL and def.input_type == BuildingDef.OutputType.NONE
-	var is_generator := def.input_type == BuildingDef.OutputType.RAW_MINERAL and def.output_type == BuildingDef.OutputType.ENERGY
+	var is_generator := def.input_type != BuildingDef.OutputType.NONE and def.output_type == BuildingDef.OutputType.ENERGY
 
 	# ── Dynamic Mineral Selection Tray ───────────────────────────────────────────
 	# Handled via Dependency Injection (BuildingLogic)
@@ -6282,7 +6316,7 @@ func _toggle_slot_dropdown(card: PanelContainer, poi: POIData, planet: PlanetDat
 				_start_tut_node_pulse(_tut_highlight_node)
 			return
 
-	var buildable := BuildingDef.for_poi_type(poi.poi_type)
+	var buildable := BuildingDef.for_poi_and_planet(poi.poi_type, current_data.planet_type)
 	if buildable.is_empty():
 		return
 
@@ -6642,6 +6676,11 @@ func _build_district_panel(poi: POIData, planet: PlanetData) -> void:
 	var panel_content := $RightPanel/PanelContent
 	var old := panel_content.get_node_or_null("DistrictBuildPanel")
 	if old:
+		# Save scroll position before destroying
+		for child in old.get_children():
+			if child is ScrollContainer and (child as ScrollContainer).visible:
+				_panel_scroll_pos = (child as ScrollContainer).scroll_vertical
+				break
 		old.name = "__freeing_district__"   # free name slot before queue_free
 		old.queue_free()
 		_bar_meta.clear()

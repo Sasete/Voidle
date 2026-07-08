@@ -37,6 +37,26 @@ func is_visible(idx: int) -> bool:
 			return true
 	return false
 
+## BFS hop distances from home_idx. Index i = how many jumps from home to star i.
+## Unreachable stars (shouldn't happen with MST) return -1.
+func compute_hop_distances() -> Array[int]:
+	var n: int = names.size()
+	var dist: Array[int] = []
+	dist.resize(n)
+	dist.fill(-1)
+	dist[home_idx] = 0
+	var queue: Array[int] = [home_idx]
+	while not queue.is_empty():
+		var cur: int = queue.pop_front()
+		for link: Vector2i in links:
+			var nb: int = -1
+			if   link.x == cur: nb = link.y
+			elif link.y == cur: nb = link.x
+			if nb >= 0 and dist[nb] < 0:
+				dist[nb] = dist[cur] + 1
+				queue.append(nb)
+	return dist
+
 static func from_seed(s: int) -> GalaxyData:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = s ^ 0xCA1A

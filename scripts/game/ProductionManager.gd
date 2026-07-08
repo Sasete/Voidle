@@ -423,6 +423,23 @@ func get_district_buffs(pp: PlanetProgress, district_id: String) -> Dictionary:
 			buffs.trade_speed_mult += 0.10 * amt * lv_mult
 		elif bid == "central_bank":
 			buffs.trade_output_mult += 0.30 * amt * lv_mult
+			
+	# Apply Planet-Wide Orbital Support Buffs
+	for b in pp.buildings:
+		if b.get("constructing", false): continue
+		var bid = b.get("building_id", "")
+		var amt: int = b.get("amount", 1)
+		var lv: int = b.get("level", 1)
+		var lv_mult := get_building_level_mult(lv)
+		
+		if bid == "orbital_mirrors":
+			buffs.solar_mult += 0.15 * amt * lv_mult
+		elif bid == "orbital_logistics":
+			buffs.trade_speed_mult += 0.25 * amt * lv_mult
+			buffs.trade_output_mult += 0.25 * amt * lv_mult
+		elif bid == "zero_g_nexus":
+			buffs.science_output_mult += 0.30 * amt * lv_mult
+			
 	return buffs
 
 ## Computes global energy balance and ratio across ALL colonized planets.

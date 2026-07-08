@@ -1,12 +1,16 @@
-[gd_resource type="Resource" script_class="AchievementDef" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="AchievementDef" format=3]
 
-[ext_resource type="Script" path="res://resources/achievements/AchievementDef.gd" id="1_achievement"]
+[ext_resource type="Script" path="res://scripts/game/AchievementDef.gd" id="1_def"]
 
 [resource]
-script = ExtResource("1_achievement")
+script = ExtResource("1_def")
 achievement_id = "first_survey"
-title = "Pioneer"
+title = "Deep Space Surveyor"
 description = "Survey your first star system."
 icon = "🔭"
 trigger = 7
-steam_id = "ACH_FIRST_SURVEY"
+int_value = 0
+float_value = 0.0
+string_value = ""
+steam_id = ""
+secret = false

@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="AchievementDef" format=3]
+
+[ext_resource type="Script" path="res://scripts/game/AchievementDef.gd" id="1_def"]
+
+[resource]
+script = ExtResource("1_def")
+achievement_id = "planet_level_9"
+title = "World Class Lv9"
+description = "Upgrade a planet to Level 9."
+icon = "🌍"
+trigger = 8
+int_value = 9
+float_value = 0.0
+string_value = ""
+steam_id = ""
+secret = false

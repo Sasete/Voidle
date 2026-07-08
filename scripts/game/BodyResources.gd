@@ -13,18 +13,15 @@ var resources: Dictionary = {}
 
 # ── Generation ────────────────────────────────────────────────────────────────
 
-## Rarity ranges by body type — controls what minerals can be found where.
+## Base rarity range by body type (before hop-distance scaling).
+## Actual range at a given system is widened by system_hop in GameState.get_body_resources_for.
 static func rarity_range_for(planet_type: PlanetData.Type) -> Vector2i:
 	match planet_type:
+		PlanetData.Type.TERRAN:    return Vector2i(1, 2)  # colonizable worlds stay R1-R2 at home
 		PlanetData.Type.MOON:      return Vector2i(1, 2)
-		PlanetData.Type.ASTEROID:  return Vector2i(2, 3)
-		# Standard planets always start at R1; richer varieties can appear at higher R
-		PlanetData.Type.BARREN,\
-		PlanetData.Type.VOLCANIC:  return Vector2i(1, 2)
-		PlanetData.Type.TERRAN,\
-		PlanetData.Type.ARID,\
-		PlanetData.Type.ICE:       return Vector2i(1, 2)
-		_:                         return Vector2i(1, 1)
+		PlanetData.Type.ASTEROID:  return Vector2i(2, 4)
+		PlanetData.Type.GAS_GIANT: return Vector2i(1, 2)
+		_:                         return Vector2i(1, 3)  # ARID/ICE/VOLCANIC/BARREN
 
 ## Generate the resource pool for a body.
 ## Each distinct rarity in [rarity_min, rarity_max] produces exactly one mineral —

@@ -95,9 +95,10 @@ static func find(bid: String) -> BuildingDef:
 			return b
 	return null
 
-static func for_poi_type(poi_type: POIData.POIType) -> Array[BuildingDef]:
+static func for_poi_and_planet(poi_type: POIData.POIType, planet_type: PlanetData.Type) -> Array[BuildingDef]:
 	var result: Array[BuildingDef] = []
 	for b in available_buildings():
 		if poi_type in b.allowed_poi_types:
-			result.append(b)
+			if b.allowed_planet_types.is_empty() or planet_type in b.allowed_planet_types:
+				result.append(b)
 	return result

@@ -1,9 +1,13 @@
-[gd_resource type="Resource" script_class="BuildingDef" load_steps=2 format=3 uid="uid://bid_generator"]
+[gd_resource type="Resource" script_class="BuildingDef" load_steps=3 format=3 uid="uid://bid_generator"]
 
-[ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="1_1"]
+[ext_resource type="Script" path="res://scripts/game/logic/GeneratorLogic.gd" id="1_logic"]
+[ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="2_def"]
+
+[sub_resource type="Resource" id="Resource_logic"]
+script = ExtResource("1_logic")
 
 [resource]
-script = ExtResource("1_1")
+script = ExtResource("2_def")
 building_id = "generator"
 display_name = "Thermic Generator"
 description = "Burns raw minerals for basic energy."
@@ -21,3 +25,4 @@ input_type = 3
 input_amount = 5.0
 input_tier = 1
 unlocked_by_default = false
+logic = SubResource("Resource_logic")

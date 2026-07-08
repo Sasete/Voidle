@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="AchievementDef" format=3]
+
+[ext_resource type="Script" path="res://scripts/game/AchievementDef.gd" id="1_def"]
+
+[resource]
+script = ExtResource("1_def")
+achievement_id = "credits_tier_1"
+title = "Start-up"
+description = "Earn 100,000 credits."
+icon = "💰"
+trigger = 9
+int_value = 0
+float_value = 100000
+string_value = ""
+steam_id = ""
+secret = false

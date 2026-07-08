@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="AchievementDef" format=3]
+
+[ext_resource type="Script" path="res://scripts/game/AchievementDef.gd" id="1_def"]
+
+[resource]
+script = ExtResource("1_def")
+achievement_id = "science_tier_5"
+title = "Scientific Revolution"
+description = "Generate 500 Million Science."
+icon = "🔬"
+trigger = 10
+int_value = 0
+float_value = 500000000
+string_value = ""
+steam_id = ""
+secret = false

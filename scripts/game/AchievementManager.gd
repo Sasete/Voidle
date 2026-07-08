@@ -69,6 +69,9 @@ func notify_trigger(trigger: AchievementDef.Trigger, context: Variant = null) ->
 			AchievementDef.Trigger.DISTRICT_COUNT:
 				if context is int and (context as int) >= def.int_value:
 					earned = true
+			AchievementDef.Trigger.COLONIZED_PLANETS_COUNT:
+				if context is int and (context as int) >= def.int_value:
+					earned = true
 			AchievementDef.Trigger.SKILL_PURCHASED:
 				if context is String and (context as String) == def.string_value:
 					earned = true
@@ -94,14 +97,19 @@ func _on_planet_progress_changed(_seed: int) -> void:
 	# Count total districts and buildings across all planets
 	var total_districts := 0
 	var total_buildings  := 0
+	var colonized_planets := 0
 	for seed: int in GameState._planet_progress:
 		var pp: PlanetProgress = GameState._planet_progress[seed]
-		total_districts += pp.custom_pois_count() if pp.has_method("custom_pois_count") else 0
+		var d_count: int = pp.custom_pois_count() if pp.has_method("custom_pois_count") else 0
+		total_districts += d_count
+		if d_count > 0:
+			colonized_planets += 1
 		for b: Dictionary in pp.buildings:
 			if not b.get("constructing", false):
 				total_buildings += 1
 	notify_trigger(AchievementDef.Trigger.BUILDING_COUNT, total_buildings)
 	notify_trigger(AchievementDef.Trigger.DISTRICT_COUNT, total_districts)
+	notify_trigger(AchievementDef.Trigger.COLONIZED_PLANETS_COUNT, colonized_planets)
 
 func _check_float_triggers() -> void:
 	notify_trigger(AchievementDef.Trigger.CREDITS_TOTAL)

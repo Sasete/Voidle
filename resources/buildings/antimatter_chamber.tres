@@ -1,6 +1,10 @@
-[gd_resource type="Resource" script_class="BuildingDef" load_steps=2 format=3 uid="uid://bid_antimatter_chamber"]
+[gd_resource type="Resource" script_class="BuildingDef" load_steps=3 format=3 uid="uid://bid_antimatter_chamber"]
 
 [ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="1_1"]
+[ext_resource type="Script" path="res://scripts/game/logic/GeneratorLogic.gd" id="1_logic"]
+
+[sub_resource type="Resource" id="Resource_logic"]
+script = ExtResource("1_logic")
 
 [resource]
 script = ExtResource("1_1")
@@ -21,3 +25,4 @@ input_type = 4
 input_amount = 1.0
 input_tier = 4
 unlocked_by_default = false
+logic = SubResource("Resource_logic")

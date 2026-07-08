@@ -189,8 +189,9 @@ func _build_home_solar() -> SolarData:
 		solar_seed = home_galaxy.seeds[home_star_idx]
 	else:
 		solar_seed = home_planet_seed ^ 0x1234
-	var sd         := SolarData.from_seed(solar_seed)
+	var sd         := SolarData.from_seed(solar_seed, true)  # ensure_gas_giant
 	sd.is_home     = true
+	sd.hop_distance = 0
 	if home_galaxy != null and home_star_idx >= 0:
 		sd.system_name = home_galaxy.names[home_star_idx]
 		sd.star_type   = home_galaxy.types[home_star_idx] as SolarData.StarType
@@ -243,6 +244,9 @@ func _build_home_solar() -> SolarData:
 		sd.planets.append(home_pd)
 		home_planet_idx = sd.planets.size() - 1
 
+	# Propagate hop=0 to all home system planets for resource rarity
+	sd.tag_planets_hop()
+
 	# Tag the solar data with the galaxy reference for back-navigation
 	if home_galaxy != null:
 		sd.set_meta("__galaxy_data",    home_galaxy)
@@ -281,8 +285,13 @@ func get_body_resources(body_seed: int,
 	return _body_resources[body_seed] as BodyResources
 
 func get_body_resources_for(pd: PlanetData) -> BodyResources:
-	var range := BodyResources.rarity_range_for(pd.planet_type)
-	var br := get_body_resources(pd.seed, range.x, range.y)
+	var base := BodyResources.rarity_range_for(pd.planet_type)
+	var hop: int = pd.system_hop
+	# Each hop raises both the floor and ceiling steeply
+	# hop 0: R1-base  |  hop 1: R2-R(base+2)  |  hop 3: R4-R(base+4)
+	var r_min: int = 1 + hop
+	var r_max: int = mini(8, base.y + hop + mini(hop, 1))
+	var br := get_body_resources(pd.seed, r_min, r_max)
 	if pd.mineral_densities.is_empty():
 		_populate_mineral_densities(pd, br)
 	return br

@@ -45,6 +45,8 @@ func is_orbital() -> bool:
 	return poi_type == POIType.STATION
 
 func max_building_slots() -> int:
+	if poi_type == POIType.STATION:
+		return level
 	return level * 2   # Lv1=2, Lv2=4, Lv3=6, Lv4=8, Lv5=10
 
 func type_label() -> String:

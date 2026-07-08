@@ -297,6 +297,10 @@ func _ready() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+		# Don't show pause menu when on the main menu
+		var current_scene := get_tree().current_scene
+		if current_scene == null or current_scene.scene_file_path.ends_with("MainMenu.tscn"):
+			return
 		if get_tree().paused:
 			if _pause_overlay != null and is_instance_valid(_pause_overlay):
 				get_viewport().set_input_as_handled()
@@ -432,6 +436,7 @@ func show_pause_menu() -> void:
 		get_tree().paused = false
 		_pause_overlay = null
 		overlay.queue_free()
+		set_game_hud(false)
 		GameState.save()
 		SceneTransition.go("res://scenes/MainMenu.tscn", null)
 	)

@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="AchievementDef" format=3]
+
+[ext_resource type="Script" path="res://scripts/game/AchievementDef.gd" id="1_def"]
+
+[resource]
+script = ExtResource("1_def")
+achievement_id = "skill_unlock_space_station"
+title = "Zero-G Lab"
+description = "Unlock Orbital Facilities."
+icon = "🛰️"
+trigger = 12
+int_value = 0
+float_value = 0.0
+string_value = "unlock_space_station"
+steam_id = ""
+secret = false

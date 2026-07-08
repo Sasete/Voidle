@@ -435,6 +435,10 @@ func _navigate_to(star_idx: int) -> void:
 		sd.system_name = _galaxy.names[star_idx]
 		sd.star_type   = _galaxy.types[star_idx] as SolarData.StarType
 	sd.is_home = (star_idx == GameState.home_star_idx)
+	# Compute hop distance from home and tag all planets for rarity scaling
+	var hops: Array[int] = _galaxy.compute_hop_distances()
+	sd.hop_distance = hops[star_idx] if star_idx < hops.size() else 0
+	sd.tag_planets_hop()
 	sd.set_meta("__galaxy_star_idx", star_idx)
 	sd.set_meta("__galaxy_data", _galaxy)
 	SceneTransition.go("res://scenes/solar/SolarView.tscn", sd)

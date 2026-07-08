@@ -1,0 +1,25 @@
+[gd_resource type="Resource" script_class="BuildingDef" format=3 uid="uid://cxqj2b0k4"]
+
+[ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="1_abcd1"]
+
+[resource]
+script = ExtResource("1_abcd1")
+building_id = "zero_g_nexus"
+display_name = "No Gravity Research Station"
+description = "Microgravity lab that generates Science and accelerates all Science output on the planet by +30%."
+allowed_poi_types = Array[int]([6])
+allowed_planet_types = Array[int]([])
+base_cost = 400.0
+slot_cost = 1
+min_planet_lv = 1
+max_per_district = 1
+unlock_skill = "unlock_space_station"
+construct_duration = 30.0
+tick_duration = 30.0
+energy_per_tick = -10.0
+output_type = 5
+output_amount = 20.0
+input_type = 0
+input_amount = 0.0
+input_tier = 1
+unlocked_by_default = true

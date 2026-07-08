@@ -1,0 +1,25 @@
+[gd_resource type="Resource" script_class="BuildingDef" format=3 uid="uid://cxqj2b0k5"]
+
+[ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="1_abcd1"]
+
+[resource]
+script = ExtResource("1_abcd1")
+building_id = "moon_helium3"
+display_name = "Lunar Helium-3 Extractor"
+description = "Extracts and refines rare isotopes from the lunar surface to generate massive amounts of clean energy."
+allowed_poi_types = Array[int]([1])
+allowed_planet_types = Array[int]([6])
+base_cost = 1000.0
+slot_cost = 2
+min_planet_lv = 2
+max_per_district = 2
+unlock_skill = "unlock_moon_helium3"
+construct_duration = 20.0
+tick_duration = 30.0
+energy_per_tick = 0.0
+output_type = 1
+output_amount = 500.0
+input_type = 0
+input_amount = 0.0
+input_tier = 1
+unlocked_by_default = false

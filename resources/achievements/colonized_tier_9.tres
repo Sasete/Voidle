@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="AchievementDef" format=3]
+
+[ext_resource type="Script" path="res://scripts/game/AchievementDef.gd" id="1_def"]
+
+[resource]
+script = ExtResource("1_def")
+achievement_id = "colonized_tier_9"
+title = "Master of the Cosmos"
+description = "Colonize 5,000 planets."
+icon = "🪐"
+trigger = 15
+int_value = 5000
+float_value = 0.0
+string_value = ""
+steam_id = ""
+secret = false

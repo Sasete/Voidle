@@ -22,4 +22,4 @@ output_amount = 300.0
 input_type = 2
 input_amount = 50.0
 logic = SubResource("Resource_logic")
-unlocked_by_default = true
+unlocked_by_default = false

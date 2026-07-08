@@ -1,0 +1,25 @@
+[gd_resource type="Resource" script_class="BuildingDef" format=3 uid="uid://cxqj2b0k7"]
+
+[ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="1_abcd1"]
+
+[resource]
+script = ExtResource("1_abcd1")
+building_id = "arid_housing"
+display_name = "Subterranean Arcology"
+description = "Massive underground housing complex designed to protect citizens from harsh Arid surface conditions."
+allowed_poi_types = Array[int]([0])
+allowed_planet_types = Array[int]([1])
+base_cost = 400.0
+slot_cost = 3
+min_planet_lv = 2
+max_per_district = 2
+unlock_skill = "unlock_arid_housing"
+construct_duration = 30.0
+tick_duration = 0.0
+energy_per_tick = -20.0
+output_type = 0
+output_amount = 0.0
+input_type = 0
+input_amount = 0.0
+input_tier = 1
+unlocked_by_default = false

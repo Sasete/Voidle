@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="AchievementDef" format=3]
+
+[ext_resource type="Script" path="res://scripts/game/AchievementDef.gd" id="1_def"]
+
+[resource]
+script = ExtResource("1_def")
+achievement_id = "district_tier_8"
+title = "Infinite Reach"
+description = "Place 10,000 districts."
+icon = "🗺️"
+trigger = 14
+int_value = 10000
+float_value = 0.0
+string_value = ""
+steam_id = ""
+secret = false

@@ -53,9 +53,12 @@ func _init() -> void:
 	# --- BRANCH 1: EXPLORATION (UP) ---
 	_add_node("unlock_space_station", "Orbital Facilities", "Launches basic structural components into Low Orbit.", 300.0, Vector2(0, -160), ["root"], 2, "Unlocks Space Station District", 10)
 	_add_node("unlock_orbital_shipyard", "Orbital Shipyard", "Constructs huge orbital vessels to boost local logistics.", 1000.0, Vector2(160, -160), ["unlock_space_station"], 3, "Unlocks Orbital Shipyard", 10)
+	_add_node("unlock_orbital_offworld_market", "Offworld Trade Hub", "Secures long-term interstellar trade routes.", 5000.0, Vector2(280, -160), ["unlock_orbital_shipyard"], 4, "Unlocks Offworld Trade Hub", 10)
+	_add_node("unlock_orbital_mirrors", "Orbital Mirrors", "Constructs orbital mirrors to focus sunlight.", 2000.0, Vector2(-160, -160), ["unlock_space_station"], 3, "Unlocks Orbital Mirrors", 10)
 	
 	_add_node("unlock_moon", "Moon Outpost", "Provides orbital mechanics calculations required to establish lunar outposts.", 500.0, Vector2(0, -320), ["unlock_space_station"], 3, "Unlocks Moon Outpost", 1)
-	_add_node("unlock_lunar_observatory", "Lunar Observatory", "Zero-atmosphere deep space observation for massive Science generation.", 1500.0, Vector2(-160, -320), ["unlock_moon"], 4, "Unlocks Lunar Observatory", 1)
+	_add_node("unlock_lunar_observatory", "Lunar Observatory", "Zero-atmosphere deep space observation for massive Science generation.", 1500.0, Vector2(-160, -320), ["unlock_moon"], 4, "Unlocks Lunar Observatory", 10)
+	_add_node("unlock_moon_helium3", "Helium-3 Extractor", "Extracts rare isotopes for energy.", 1500.0, Vector2(160, -320), ["unlock_moon"], 4, "Unlocks Helium-3 Extractor", 10)
 	
 	_add_node("unlock_asteroids", "Deep Space Tracking", "Allows tracking and mining of resource-rich Asteroids.", 1200.0, Vector2(0, -480), ["unlock_moon"], 4, "Unlocks Asteroid Mining", 1)
 	_add_node("unlock_asteroid_harvester", "Asteroid Harvester", "Colossal mining rig tailored for zero-G asteroid cracking.", 3000.0, Vector2(160, -480), ["unlock_asteroids"], 5, "Unlocks Asteroid Harvester", 1)
@@ -63,6 +66,7 @@ func _init() -> void:
 	
 	# === TOP-LEFT: ICE (Vertical) ===
 	_add_node("colonize_ice", "Cryo-Habitation", "Thermal insulation tech for Ice Worlds.", 2500.0, Vector2(-160, -800), ["unlock_planetary_colonization"], 5, "Unlocks Ice Planet Colonization", 1)
+	_add_node("unlock_ice_science", "Subglacial Laboratory", "Deep ice core research facility.", 3500.0, Vector2(-320, -800), ["colonize_ice"], 4, "Unlocks Subglacial Laboratory", 10)
 	_add_node("ice_extraction", "Cryo-Extraction", "Improves extraction speed on Ice planets.", 1500.0, Vector2(-240, -880), ["colonize_ice"], 4, "+20% Mine Speed on Ice Planets", 5, NodeShape.DIAMOND)
 	_add_node("ice_logistics", "Cryo-Logistics", "Improves energy efficiency on Ice planets.", 1500.0, Vector2(-80, -880), ["colonize_ice"], 4, "-10% Energy Cost on Ice Planets", 5, NodeShape.DIAMOND)
 	_add_node("unlock_cryo_vault", "Cryo-Vault Architecture", "Blueprints for massive underground cryo-vaults.", 4000.0, Vector2(-160, -960), ["ice_logistics", "ice_extraction"], 6, "Unlocks Cryo-Vault", 10)
@@ -70,7 +74,9 @@ func _init() -> void:
 	# === LEFT: DESERT (Horizontal) ===
 	_add_node("colonize_desert", "Arid Habitation", "Water reclamation for Desert Worlds.", 2500.0, Vector2(-160, -640), ["unlock_planetary_colonization"], 5, "Unlocks Desert Planet Colonization", 1)
 	_add_node("desert_solar_cost", "Arid Mirrors", "Reduces Solar Matrix construction cost.", 1500.0, Vector2(-240, -720), ["colonize_desert"], 4, "-10% Solar Matrix Cost", 5, NodeShape.DIAMOND)
+	_add_node("unlock_arid_housing", "Subterranean Arcology", "Deep underground housing.", 3000.0, Vector2(-80, -720), ["colonize_desert"], 4, "Unlocks Subterranean Arcology", 10)
 	_add_node("desert_solar_output", "Arid Photovoltaics", "Increases Solar Matrix output.", 1500.0, Vector2(-240, -560), ["colonize_desert"], 4, "+20% Solar Energy on Desert", 5, NodeShape.DIAMOND)
+	_add_node("unlock_arid_trade", "Spice Exchange", "Exotic materials trading hub.", 3500.0, Vector2(-80, -560), ["colonize_desert"], 4, "Unlocks Spice Exchange", 10)
 	_add_node("unlock_solar_matrix", "Solar Matrix", "Blueprints for colossal solar arrays.", 4000.0, Vector2(-320, -640), ["desert_solar_output", "desert_solar_cost"], 6, "Unlocks Solar Matrix", 10)
 
 	# === TOP-RIGHT: GAS (Vertical) ===
@@ -162,7 +168,7 @@ func _init() -> void:
 	_add_node("housing_maintenance", "Self-Sustaining Architecture", "Reduces energy consumption in cities.", 5000.0, Vector2(400, 760), ["unlock_luxury_complex"], 5, "-10% Energy consumption for City buildings", 5, NodeShape.DIAMOND)
 
 	# --- BRANCH 5: TRADE/LOGISTICS (Mid-Down) ---
-	_add_node("unlock_market_square", "Market Square", "Unlocks the Market Square, providing basic passive credit generation.", 150.0, Vector2(0, 240), ["root"], 2, "Unlocks Market Square", 10, NodeShape.HEXAGON)
+	_add_node("unlock_market_square", "Market Square", "Unlocks the Market Square, providing basic passive credit generation.", 30.0, Vector2(0, 240), ["root"], 2, "Unlocks Market Square", 10, NodeShape.HEXAGON)
 	
 	_add_node("trade_income_1", "Free Trade Agreement", "Stimulates local economies.", 300.0, Vector2(-120, 360), ["unlock_market_square"], 2, "+15% Global credit output from Trade", 5, NodeShape.DIAMOND)
 	
@@ -182,6 +188,7 @@ func _init() -> void:
 	_add_node("trade_maintenance", "Corporate Subsidies", "Government subsidies cover corporate energy costs.", 15000.0, Vector2(-120, 1080), ["unlock_commodities_exchange"], 6, "-10% Energy consumption for Trade", 5, NodeShape.DIAMOND)
 	
 	_add_node("unlock_orbital_trade_port", "Orbital Trade Port", "Unlocks the Orbital Trade Port, exporting Tier 4 Refined Minerals off-world.", 25000.0, Vector2(0, 1200), ["trade_maintenance"], 6, "Unlocks Orbital Trade Port", 10)
+	_add_node("unlock_orbital_logistics", "Orbital Logistics", "Planet-wide coordination of trade fleets.", 28000.0, Vector2(160, 1200), ["unlock_orbital_trade_port"], 6, "Unlocks Orbital Logistics Hub", 10)
 	
 	_add_node("planetary_architecture", "Planetary Architecture", "Increases maximum districts available on all planets.", 30000.0, Vector2(120, 1320), ["unlock_orbital_trade_port"], 6, "+1 Max District", 3, NodeShape.DIAMOND)
 	_add_node("unlock_command_center", "Planetary Command", "Blueprints for planet-wide command centers.", 40000.0, Vector2(240, 1440), ["planetary_architecture"], 6, "Unlocks Command Center", 1)
