@@ -4,10 +4,24 @@ const SAMPLE_RATE := 22050
 const MAX_PLAYERS := 8
 const CREDITS_THROTTLE := 0.25   # min seconds between cash sounds
 
-var _players: Array[AudioStreamPlayer] = []
+var _players: Array[AudioStreamPlayer] = []        # UI sounds
+var _sfx_players: Array[AudioStreamPlayer] = []    # SFX (rocket, construct, terrain)
 var _ambient_player: AudioStreamPlayer = null
 var _construct_loop_player: AudioStreamPlayer = null
 var _music_player: AudioStreamPlayer = null
+
+# UI sounds — go through UI bus
+const UI_SOUNDS: Array[String] = [
+	"hover", "click", "error", "skill_buy", "level_up", "survey",
+	"clink", "poi_hover", "district_hover", "poi_ping", "poi_select",
+	"cash", "achievement", "tick"
+]
+# SFX sounds — go through SFX bus
+const SFX_SOUNDS: Array[String] = [
+	"construct", "rocket", "building_done",
+	"terrain_earth", "terrain_water", "terrain_sand",
+	"terrain_ice", "terrain_fire", "terrain_dust", "terrain_gas"
+]
 var _cache: Dictionary = {}
 var _credits_timer: float = 0.0
 var _construct_active: bool = false
@@ -17,15 +31,25 @@ func _ready() -> void:
 	for i in MAX_PLAYERS:
 		var p := AudioStreamPlayer.new()
 		p.volume_db = -6.0
+		p.bus = "UI"
 		add_child(p)
 		_players.append(p)
 
+	for i in MAX_PLAYERS:
+		var p := AudioStreamPlayer.new()
+		p.volume_db = -6.0
+		p.bus = "SFX"
+		add_child(p)
+		_sfx_players.append(p)
+
 	_ambient_player = AudioStreamPlayer.new()
 	_ambient_player.volume_db = -28.0
+	_ambient_player.bus = "Music"
 	add_child(_ambient_player)
 
 	_construct_loop_player = AudioStreamPlayer.new()
 	_construct_loop_player.volume_db = -20.0
+	_construct_loop_player.bus = "SFX"
 	add_child(_construct_loop_player)
 
 	_cache["hover"]         = _gen_hover()
@@ -80,17 +104,18 @@ func play(sound: String, vol_db: float = 0.0) -> void:
 	var stream: AudioStreamWAV = _cache.get(sound)
 	if stream == null:
 		return
-	for p in _players:
+	var pool: Array[AudioStreamPlayer] = _sfx_players if sound in SFX_SOUNDS else _players
+	for p in pool:
 		if not p.playing:
-			p.stream  = stream
+			p.stream    = stream
 			p.volume_db = -6.0 + vol_db
 			p.play()
 			return
 	# all busy → steal oldest (first)
-	_players[0].stop()
-	_players[0].stream  = stream
-	_players[0].volume_db = -6.0 + vol_db
-	_players[0].play()
+	pool[0].stop()
+	pool[0].stream    = stream
+	pool[0].volume_db = -6.0 + vol_db
+	pool[0].play()
 
 # ── synthesis helpers ──────────────────────────────────────────────────
 
@@ -251,6 +276,7 @@ func _play_music() -> void:
 		return
 	_music_player = AudioStreamPlayer.new()
 	_music_player.volume_db = -22.0
+	_music_player.bus = "Music"
 	var stream = load(path)
 	stream.loop = true
 	_music_player.stream = stream

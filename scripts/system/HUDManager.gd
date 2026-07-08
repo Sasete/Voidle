@@ -513,9 +513,33 @@ func show_settings_popup() -> void:
 	mv_slider.value = SettingsManager.master_volume
 	mv_slider.value_changed.connect(func(v: float): SettingsManager.set_master_volume(v))
 	vbox.add_child(mv_slider)
-	
+
+	# ── Per-category volume sliders ────────────────────────────────────────────
+	var audio_categories := [
+		["Music",    SettingsManager.music_volume,  func(v: float): SettingsManager.set_music_volume(v)],
+		["UI Sounds", SettingsManager.ui_volume,    func(v: float): SettingsManager.set_ui_volume(v)],
+		["Effects",  SettingsManager.sfx_volume,    func(v: float): SettingsManager.set_sfx_volume(v)],
+	]
+	for cat in audio_categories:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 12)
+		var lbl := Label.new()
+		lbl.text = cat[0]
+		lbl.custom_minimum_size = Vector2(90, 0)
+		if _orbitron: lbl.add_theme_font_override("font", _orbitron)
+		lbl.add_theme_font_size_override("font_size", 11)
+		lbl.add_theme_color_override("font_color", Color(0.70, 0.78, 0.95))
+		row.add_child(lbl)
+		var sl := HSlider.new()
+		sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		sl.min_value = 0.0; sl.max_value = 1.0; sl.step = 0.05
+		sl.value = cat[1]
+		sl.value_changed.connect(cat[2])
+		row.add_child(sl)
+		vbox.add_child(row)
+
 	vbox.add_child(HSeparator.new())
-	
+
 	var fs_hbox := HBoxContainer.new()
 	fs_hbox.alignment = BoxContainer.ALIGNMENT_CENTER
 	fs_hbox.add_theme_constant_override("separation", 12)
