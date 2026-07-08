@@ -1,0 +1,30 @@
+[gd_resource type="Resource" script_class="BuildingDef" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/game/logic/CreditLogic.gd" id="1_logic"]
+[ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="2_def"]
+
+[sub_resource type="Resource" id="Resource_logic"]
+script = ExtResource("1_logic")
+
+[resource]
+script = ExtResource("2_def")
+building_id = "orbital_trade_port"
+display_name = "Orbital Trade Port"
+description = "Sells Tier 4 Refined Minerals to off-world corporations for unimaginable sums."
+allowed_poi_types = Array[int]([0])
+allowed_planet_types = Array[int]([])
+base_cost = 35000.0
+slot_cost = 2
+min_planet_lv = 4
+max_per_district = 0
+unlock_skill = "unlock_orbital_trade_port"
+construct_duration = 0.0
+tick_duration = 30.0
+energy_per_tick = -1000.0
+output_type = 2
+output_amount = 4000.0
+input_type = 4
+input_amount = 10.0
+input_tier = 4
+logic = SubResource("Resource_logic")
+unlocked_by_default = false

@@ -161,16 +161,32 @@ func _init() -> void:
 	_add_node("unlock_opera_house", "High Society", "Unlocks the Opera House, boosting Luxury Complex credit output in the district by +30% per level.", 3500.0, Vector2(520, 640), ["unlock_luxury_complex"], 5, "Unlocks Opera House", 10)
 	_add_node("housing_maintenance", "Self-Sustaining Architecture", "Reduces energy consumption in cities.", 5000.0, Vector2(400, 760), ["unlock_luxury_complex"], 5, "-10% Energy consumption for City buildings", 5, NodeShape.DIAMOND)
 
-	# (Temporarily moved Commercial so it doesn't overlap until we do Trading)
-	_add_node("unlock_commercial", "Commercial Hubs", "Transitions from simple trade to high-density commercial centers.", 150.0, Vector2(0, 240), ["root"], 2, "Unlocks Commercial Center", 10)
-
 	# --- BRANCH 5: TRADE/LOGISTICS (Mid-Down) ---
-	_add_node("unlock_trade_hub", "Interplanetary Trade Hub", "Massive logistics center that prints credits.", 1500.0, Vector2(0, 400), ["unlock_commercial"], 2, "Unlocks Trade Hub", 1)
-	_add_node("global_logistics", "Global Logistics", "Optimizes supply chains for all colonized worlds.", 2000.0, Vector2(0, 520), ["unlock_trade_hub"], 3, "+5% global production speed", 10, NodeShape.DIAMOND)
-	_add_node("unlock_commercial_hub", "Mega Commercial Hub", "Massive commercial hubs processing refined minerals.", 2000.0, Vector2(0, 640), ["unlock_trade_hub"], 3, "Unlocks Commercial Hub", 10)
-	_add_node("planetary_architecture", "Planetary Architecture", "Increases maximum districts available on all planets.", 2500.0, Vector2(120, 640), ["unlock_commercial_hub"], 4, "+1 Max District", 3, NodeShape.DIAMOND)
-	_add_node("unlock_logistics_center", "Planetary Logistics", "Blueprints for planet-wide logistics centers.", 5000.0, Vector2(0, 760), ["unlock_commercial_hub"], 4, "Unlocks Logistics Center", 1)
-	_add_node("unlock_command_center", "Planetary Command", "Blueprints for planet-wide command centers.", 5000.0, Vector2(120, 760), ["unlock_commercial_hub"], 4, "Unlocks Command Center", 1)
+	_add_node("unlock_market_square", "Market Square", "Unlocks the Market Square, providing basic passive credit generation.", 150.0, Vector2(0, 240), ["root"], 2, "Unlocks Market Square", 10, NodeShape.HEXAGON)
+	
+	_add_node("trade_income_1", "Free Trade Agreement", "Stimulates local economies.", 300.0, Vector2(-120, 360), ["unlock_market_square"], 2, "+15% Global credit output from Trade", 5, NodeShape.DIAMOND)
+	
+	_add_node("unlock_trading_post", "Trading Post", "Unlocks the Trading Post, which consumes Tier 1 Refined Minerals for high profit.", 500.0, Vector2(0, 480), ["trade_income_1"], 3, "Unlocks Trading Post", 10)
+	_add_node("unlock_customs_office", "Customs Authority", "Unlocks the Customs Office to boost district trade output.", 800.0, Vector2(120, 600), ["unlock_trading_post"], 3, "Unlocks Customs Office", 10)
+	
+	_add_node("trade_income_2", "Interplanetary Commerce", "Massive corporate tax cuts.", 1200.0, Vector2(-120, 600), ["unlock_trading_post"], 4, "+20% Global credit output from Trade", 5, NodeShape.DIAMOND)
+	
+	_add_node("unlock_financial_district", "Financial District", "Unlocks the Financial District, trading Tier 2 Refined Minerals for immense wealth.", 2000.0, Vector2(0, 720), ["trade_income_2"], 4, "Unlocks Financial District", 10)
+	_add_node("unlock_logistics_center", "Planetary Logistics", "Unlocks the Logistics Center to boost district trade speed.", 3500.0, Vector2(120, 840), ["unlock_financial_district"], 4, "Unlocks Logistics Center", 10)
+	
+	_add_node("trade_speed", "High-Frequency Trading", "Quantum algorithms execute trades instantaneously.", 5000.0, Vector2(-120, 840), ["unlock_financial_district"], 5, "+10% Global Trade Speed", 5, NodeShape.DIAMOND)
+	
+	_add_node("unlock_commodities_exchange", "Commodities Exchange", "Unlocks the Commodities Exchange, trading Tier 3 Refined Minerals.", 8000.0, Vector2(0, 960), ["trade_speed"], 5, "Unlocks Commodities Exchange", 10)
+	_add_node("unlock_central_bank", "Central Banking", "Unlocks the Central Bank for massive district trade output buffs.", 12000.0, Vector2(120, 1080), ["unlock_commodities_exchange"], 5, "Unlocks Central Bank", 10)
+	
+	_add_node("trade_maintenance", "Corporate Subsidies", "Government subsidies cover corporate energy costs.", 15000.0, Vector2(-120, 1080), ["unlock_commodities_exchange"], 6, "-10% Energy consumption for Trade", 5, NodeShape.DIAMOND)
+	
+	_add_node("unlock_orbital_trade_port", "Orbital Trade Port", "Unlocks the Orbital Trade Port, exporting Tier 4 Refined Minerals off-world.", 25000.0, Vector2(0, 1200), ["trade_maintenance"], 6, "Unlocks Orbital Trade Port", 10)
+	
+	_add_node("planetary_architecture", "Planetary Architecture", "Increases maximum districts available on all planets.", 30000.0, Vector2(120, 1320), ["unlock_orbital_trade_port"], 6, "+1 Max District", 3, NodeShape.DIAMOND)
+	_add_node("unlock_command_center", "Planetary Command", "Blueprints for planet-wide command centers.", 40000.0, Vector2(240, 1440), ["planetary_architecture"], 6, "Unlocks Command Center", 1)
+	
+	_add_node("unlock_interstellar_syndicate", "Interstellar Syndicate", "Unlocks the Interstellar Syndicate. Trades Tier 5 Refined Minerals for unimaginable wealth.", 50000.0, Vector2(-120, 1320), ["unlock_orbital_trade_port"], 7, "Unlocks Interstellar Syndicate", 10)
 
 	# --- BRANCH 6: ENERGY (Right-Down) ---
 	_add_node("unlock_generator", "Thermal Plant", "Unlocks the standard mineral-burning Thermal Generator.", 100.0, Vector2(480, 160), ["unlock_solar_panel"], 2, "Unlocks Thermal Generator.", 10)
@@ -420,3 +436,24 @@ func get_max_districts_add() -> int:
 	if "planetary_architecture" in unlocked_skills:
 		return get_skill_level("planetary_architecture")
 	return 0
+
+func get_trade_output_mult() -> float:
+	var mult := 1.0
+	if "trade_income_1" in unlocked_skills:
+		mult += 0.15 * get_skill_level("trade_income_1")
+	if "trade_income_2" in unlocked_skills:
+		mult += 0.20 * get_skill_level("trade_income_2")
+	return mult
+
+func get_trade_speed_mult() -> float:
+	var mult := 1.0
+	if "trade_speed" in unlocked_skills:
+		mult += 0.10 * get_skill_level("trade_speed")
+	return mult
+
+func get_trade_maintenance_mult() -> float:
+	var mult := 1.0
+	if "trade_maintenance" in unlocked_skills:
+		mult -= 0.10 * get_skill_level("trade_maintenance")
+	return maxf(0.1, mult)
+

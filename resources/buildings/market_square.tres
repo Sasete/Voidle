@@ -1,0 +1,30 @@
+[gd_resource type="Resource" script_class="BuildingDef" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/game/logic/CreditLogic.gd" id="1_logic"]
+[ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="2_def"]
+
+[sub_resource type="Resource" id="Resource_logic"]
+script = ExtResource("1_logic")
+
+[resource]
+script = ExtResource("2_def")
+building_id = "market_square"
+display_name = "Market Square"
+description = "A basic planetary market providing small, steady credit income."
+allowed_poi_types = Array[int]([0])
+allowed_planet_types = Array[int]([])
+base_cost = 200.0
+slot_cost = 1
+min_planet_lv = 1
+max_per_district = 0
+unlock_skill = "unlock_market_square"
+construct_duration = 0.0
+tick_duration = 10.0
+energy_per_tick = -5.0
+output_type = 2
+output_amount = 5.0
+input_type = 0
+input_amount = 0.0
+input_tier = 1
+logic = SubResource("Resource_logic")
+unlocked_by_default = false

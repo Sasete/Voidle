@@ -4518,7 +4518,15 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 			if def.building_id == "solar_panel":
 				etick *= get_node("/root/SkillTree").get_solar_mult()
 		else:
-			etick *= get_node("/root/SkillTree").get_energy_consume_mult()
+			var st_energy_mult: float = get_node("/root/SkillTree").get_energy_consume_mult()
+			var st = get_node("/root/SkillTree")
+			if POIData.POIType.CITY in def.allowed_poi_types and st.is_unlocked("housing_maintenance"):
+				st_energy_mult -= 0.10
+			if def.output_type == BuildingDef.OutputType.SCIENCE and st.is_unlocked("science_maintenance"):
+				st_energy_mult -= 0.10
+			if def.output_type == BuildingDef.OutputType.CREDITS and not (POIData.POIType.CITY in def.allowed_poi_types) and st.is_unlocked("trade_maintenance"):
+				st_energy_mult -= 0.10
+			etick *= st_energy_mult
 			
 		var e_lbl := Label.new()
 		var sign := "+" if etick > 0.0 else ""
@@ -4538,7 +4546,15 @@ func _build_production_bar(def: BuildingDef, pm_key: String, _planet_seed: int,
 
 	if is_consumer:
 		var br := GameState.get_body_resources_for(planet)
-		var raw_list := br.get_by_tag(ResourceData.Tag.RAW_MINERAL)
+		var req_tag := ResourceData.Tag.RAW_MINERAL
+		if def.input_type == BuildingDef.OutputType.REFINED_MINERAL:
+			req_tag = ResourceData.Tag.REFINED_MINERAL
+		
+		var raw_list: Array[ResourceData] = []
+		for rd in br.get_by_tag(req_tag):
+			if rd.tier == def.input_tier:
+				raw_list.append(rd)
+		
 		if not raw_list.is_empty():
 			var target_key := "input_mineral"
 			var tgt: String = entry.get(target_key, "")

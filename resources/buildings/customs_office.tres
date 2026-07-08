@@ -4,20 +4,22 @@
 
 [resource]
 script = ExtResource("1_def")
-building_id = "logistics_center"
-display_name = "Logistics Center"
-description = "Provides a passive +10% credit generation speed to all trade buildings in this district."
+building_id = "customs_office"
+display_name = "Customs Office"
+description = "Provides a passive +15% credit output to all trade buildings in this district."
 allowed_poi_types = Array[int]([0])
-base_cost = 4000.0
+allowed_planet_types = Array[int]([])
+base_cost = 1500.0
 slot_cost = 1
-min_planet_lv = 2
+min_planet_lv = 1
 max_per_district = 1
-unlock_skill = "unlock_logistics_center"
+unlock_skill = "unlock_customs_office"
 construct_duration = 0.0
 tick_duration = 0.0
-energy_per_tick = -50.0
+energy_per_tick = -20.0
 output_type = 0
 output_amount = 0.0
 input_type = 0
 input_amount = 0.0
+input_tier = 1
 unlocked_by_default = false

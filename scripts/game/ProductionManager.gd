@@ -217,6 +217,10 @@ func _tick_all(delta: float) -> void:
 					speed_mult *= d_buffs.gas_mining_speed_mult
 			elif def.output_type == BuildingDef.OutputType.SCIENCE:
 				speed_mult *= d_buffs.science_speed_mult
+			elif def.output_type == BuildingDef.OutputType.CREDITS:
+				if get_node("/root/SkillTree").has_method("get_trade_speed_mult"):
+					speed_mult *= get_node("/root/SkillTree").get_trade_speed_mult()
+				speed_mult *= d_buffs.trade_speed_mult
 					
 			var eff_dur: float = entry.get("effective_duration", def.tick_duration)
 			if def.input_type != BuildingDef.OutputType.NONE and def.output_type == BuildingDef.OutputType.ENERGY:
@@ -368,7 +372,9 @@ func get_district_buffs(pp: PlanetProgress, district_id: String) -> Dictionary:
 		"apartments_mult": 1.0,
 		"luxury_complex_mult": 1.0,
 		"science_speed_mult": 1.0,
-		"science_output_mult": 1.0
+		"science_output_mult": 1.0,
+		"trade_speed_mult": 1.0,
+		"trade_output_mult": 1.0
 	}
 	for b in pp.buildings_in_district(district_id):
 		if b.get("constructing", false): continue
@@ -411,6 +417,12 @@ func get_district_buffs(pp: PlanetProgress, district_id: String) -> Dictionary:
 			buffs.science_speed_mult += 0.10 * amt * lv_mult
 		elif bid == "research_nexus":
 			buffs.science_output_mult += 0.30 * amt * lv_mult
+		elif bid == "customs_office":
+			buffs.trade_output_mult += 0.15 * amt * lv_mult
+		elif bid == "logistics_center":
+			buffs.trade_speed_mult += 0.10 * amt * lv_mult
+		elif bid == "central_bank":
+			buffs.trade_output_mult += 0.30 * amt * lv_mult
 	return buffs
 
 ## Computes global energy balance and ratio across ALL colonized planets.
@@ -461,6 +473,8 @@ func _calc_global_energy() -> void:
 				if POIData.POIType.CITY in def.allowed_poi_types and st.is_unlocked("housing_maintenance"):
 					st_energy_mult -= 0.10
 				if def.output_type == BuildingDef.OutputType.SCIENCE and st.is_unlocked("science_maintenance"):
+					st_energy_mult -= 0.10
+				if def.output_type == BuildingDef.OutputType.CREDITS and not (POIData.POIType.CITY in def.allowed_poi_types) and st.is_unlocked("trade_maintenance"):
 					st_energy_mult -= 0.10
 					
 				var contrib := def.energy_per_tick * amt * building_consume * st_energy_mult * planet_energy_mult
