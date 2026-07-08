@@ -70,6 +70,8 @@ var _body_resources:        Dictionary = {}
 var known_resources:        Dictionary = {}
 var resource_deposit_counts: Dictionary = {}
 var unlocked_buildings:     Dictionary = {}
+## Temp storage: POI dicts loaded from save, applied after _bootstrap_world
+var _pending_poi_restore:   Dictionary = {}  # seed_val(int) -> Array[Dictionary]
 
 # ── Home location (set once at world generation, then saved) ─────────────────
 var home_planet_seed: int  = -1   # seed of the Terran home planet
@@ -123,7 +125,38 @@ func _bootstrap_world() -> void:
 		_home_solar = _build_home_solar()
 
 	_seed_starting_resources()
+	_apply_pending_pois()
 	world_ready.emit()
+
+func _apply_pending_pois() -> void:
+	for seed_val: int in _pending_poi_restore:
+		var poi_list: Array = _pending_poi_restore[seed_val]
+		var pd_target: PlanetData = get_planet_data(seed_val)
+		if pd_target == null:
+			pd_target = PlanetData.from_seed(seed_val)
+			cache_planet_data(pd_target)
+		pd_target.custom_pois.clear()
+		for pd_entry: Dictionary in poi_list:
+			var poi := POIData.new()
+			poi.label              = pd_entry.get("label",              "District")
+			poi.poi_type           = pd_entry.get("poi_type",           0) as POIData.POIType
+			poi.type_tag           = pd_entry.get("type_tag",           "")
+			poi.light_intensity    = pd_entry.get("light_intensity",    1.0)
+			poi.level              = pd_entry.get("level",              1)
+			poi.placement          = pd_entry.get("placement",          0) as LocationFinder.Placement
+			poi.manual_position    = pd_entry.get("manual_position",    false)
+			poi.lon_deg            = pd_entry.get("lon_deg",            0.0)
+			poi.lat_deg            = pd_entry.get("lat_deg",            0.0)
+			poi.constructing       = pd_entry.get("constructing",       false)
+			poi.construct_progress = pd_entry.get("construct_progress", 0.0)
+			poi.construct_duration = pd_entry.get("construct_duration", 15.0)
+			poi.orbit_angle        = pd_entry.get("orbit_angle",        0.0)
+			poi.orbit_speed        = pd_entry.get("orbit_speed",        0.25)
+			poi.orbit_inclination  = pd_entry.get("orbit_inclination",  0.0)
+			poi.orbit_node         = pd_entry.get("orbit_node",         0.0)
+			poi.orbit_radius       = pd_entry.get("orbit_radius",       1.35)
+			pd_target.custom_pois.append(poi)
+	_pending_poi_restore.clear()
 
 func _seed_starting_resources() -> void:
 	var home_pp := get_planet(home_planet_seed)
@@ -393,6 +426,29 @@ func save() -> void:
 	}
 	for seed_val in _planet_progress:
 		var pp: PlanetProgress = _planet_progress[seed_val]
+		var pd_save: PlanetData = get_planet_data(seed_val)
+		var pois_save: Array = []
+		if pd_save != null:
+			for poi: POIData in pd_save.custom_pois:
+				pois_save.append({
+					"label":              poi.label,
+					"poi_type":           int(poi.poi_type),
+					"type_tag":           poi.type_tag,
+					"light_intensity":    poi.light_intensity,
+					"level":              poi.level,
+					"placement":          int(poi.placement),
+					"manual_position":    poi.manual_position,
+					"lon_deg":            poi.lon_deg,
+					"lat_deg":            poi.lat_deg,
+					"constructing":       poi.constructing,
+					"construct_progress": poi.construct_progress,
+					"construct_duration": poi.construct_duration,
+					"orbit_angle":        poi.orbit_angle,
+					"orbit_speed":        poi.orbit_speed,
+					"orbit_inclination":  poi.orbit_inclination,
+					"orbit_node":         poi.orbit_node,
+					"orbit_radius":       poi.orbit_radius,
+				})
 		data["planet_progress"][str(seed_val)] = {
 			"level":             pp.level,
 			"is_upgrading":      pp.is_upgrading,
@@ -404,10 +460,12 @@ func save() -> void:
 			"is_colonized":      pp.is_colonized,
 			"districts_used":    pp.districts_used,
 			"district_levels":   pp.district_levels,
+			"district_upgrading": pp.district_upgrading,
 			"buildings":         pp.buildings,
 			"stored_resources":  pp.stored_resources,
 			"has_spaceport":     pp.has_spaceport,
 			"moons_unlocked":    pp.moons_unlocked,
+			"custom_pois":       pois_save,
 		}
 	data["global_resources"]    = global_resources
 	data["unlocked_buildings"]  = unlocked_buildings
@@ -495,11 +553,15 @@ func load_save() -> bool:
 		pp.is_colonized      = d.get("is_colonized",     false)
 		pp.districts_used    = d.get("districts_used",   0)
 		pp.district_levels   = d.get("district_levels",  {})
-		pp.buildings         = d.get("buildings",        [])
-		pp.has_spaceport     = d.get("has_spaceport",    false)
-		pp.moons_unlocked    = d.get("moons_unlocked",   false)
+		pp.buildings          = d.get("buildings",          [])
+		pp.district_upgrading = d.get("district_upgrading", {})
+		pp.has_spaceport      = d.get("has_spaceport",      false)
+		pp.moons_unlocked     = d.get("moons_unlocked",     false)
 		pp.recalculate_limits()
 		_planet_progress[seed_val] = pp
+		# Store POI data for later — applied in _apply_pending_pois() after _bootstrap_world
+		if d.has("custom_pois"):
+			_pending_poi_restore[seed_val] = d["custom_pois"]
 	return true
 
 func delete_save() -> void:
@@ -509,6 +571,7 @@ func delete_save() -> void:
 	credits              = 500.0
 	science_points       = 0.0
 	solar_unlocked       = false
+	moon_unlocked        = false
 	galaxy_unlocked      = false
 	discovered_asteroids = []
 	asteroid_scan_counts = {}

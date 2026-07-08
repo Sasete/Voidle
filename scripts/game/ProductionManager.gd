@@ -361,7 +361,10 @@ func get_district_buffs(pp: PlanetProgress, district_id: String) -> Dictionary:
 		"refinery_speed_mult": 1.0,
 		"mining_energy_cost_mult": 1.0,
 		"magma_dredge_output_mult": 1.0,
-		"gas_mining_speed_mult": 1.0
+		"gas_mining_speed_mult": 1.0,
+		"residential_mult": 1.0,
+		"apartments_mult": 1.0,
+		"luxury_complex_mult": 1.0
 	}
 	for b in pp.buildings_in_district(district_id):
 		if b.get("constructing", false): continue
@@ -392,6 +395,12 @@ func get_district_buffs(pp: PlanetProgress, district_id: String) -> Dictionary:
 			buffs.gas_mining_speed_mult += 0.50 * amt * lv_mult
 		elif bid == "zero_g_sorter":
 			buffs.mine_speed_mult += 0.20 * amt * lv_mult
+		elif bid == "culture_center":
+			buffs.residential_mult += 0.20 * amt * lv_mult
+		elif bid == "recreation_center":
+			buffs.apartments_mult += 0.25 * amt * lv_mult
+		elif bid == "opera_house":
+			buffs.luxury_complex_mult += 0.30 * amt * lv_mult
 	return buffs
 
 ## Computes global energy balance and ratio across ALL colonized planets.
@@ -437,7 +446,12 @@ func _calc_global_energy() -> void:
 				var building_consume: float = consume_mult
 				if def.output_type == BuildingDef.OutputType.RAW_MINERAL or def.output_type == BuildingDef.OutputType.REFINED_MINERAL:
 					building_consume *= max(0.1, dbuffs.mining_energy_cost_mult as float) * st.get_mining_energy_mult()
-				var contrib := def.energy_per_tick * amt * building_consume * (st.get_energy_consume_mult() as float) * planet_energy_mult
+				
+				var st_energy_mult: float = st.get_energy_consume_mult()
+				if POIData.POIType.CITY in def.allowed_poi_types and st.is_unlocked("housing_maintenance"):
+					st_energy_mult -= 0.10
+					
+				var contrib := def.energy_per_tick * amt * building_consume * st_energy_mult * planet_energy_mult
 				total_demand += abs(contrib)
 				net += contrib
 				

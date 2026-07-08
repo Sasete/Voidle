@@ -6292,7 +6292,17 @@ func _toggle_slot_dropdown(card: PanelContainer, poi: POIData, planet: PlanetDat
 			continue
 		var can_afford: bool = GameState.credits >= def.base_cost
 		var has_slots:  bool = slots_free >= def.slot_cost
-		var enabled: bool    = can_afford and has_slots
+		
+		var at_limit: bool = false
+		if def.max_per_district > 0:
+			var count_in_dist := 0
+			for e in pp.buildings:
+				if e.get("district_id", "") == poi.label and e.get("building_id", "") == def.building_id:
+					count_in_dist += 1
+			if count_in_dist >= def.max_per_district:
+				at_limit = true
+				
+		var enabled: bool    = can_afford and has_slots and not at_limit
 
 		var row_panel := PanelContainer.new()
 		var norm_s := StyleBoxFlat.new()
@@ -6316,7 +6326,8 @@ func _toggle_slot_dropdown(card: PanelContainer, poi: POIData, planet: PlanetDat
 			Color(0.80, 0.88, 1.0) if enabled else Color(0.38, 0.40, 0.55))
 
 		var reason := ""
-		if not has_slots: reason = "No free slots"
+		if at_limit: reason = "Limit reached"
+		elif not has_slots: reason = "No free slots"
 		elif not can_afford: reason = "Need %.0f cr" % def.base_cost
 
 		# Compact sub-line: RichTextLabel so we can embed inline mineral icon

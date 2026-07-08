@@ -11,6 +11,8 @@ enum OutputType { NONE, ENERGY, CREDITS, RAW_MINERAL, REFINED_MINERAL, SCIENCE }
 @export var base_cost:         float    = 100.0
 @export var slot_cost:         int      = 1
 @export var min_planet_lv:     int      = 1
+## If > 0, restricts how many of this building can be built in a single district.
+@export var max_per_district:  int      = 0
 ## Required skill node to unlock this building. Empty = unlocked by default.
 @export var unlock_skill:      String   = ""
 

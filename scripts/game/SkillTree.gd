@@ -143,20 +143,28 @@ func _init() -> void:
 
 	# Specialized: Asteroid
 	_add_node("unlock_micro_g_drill", "Micro-G Drill", "Fires tethers deep into the core.\n[color=#ff5555]Requires: Deep Drill[/color]", 1200.0, Vector2(-160, -480), ["unlock_asteroids"], 3, "Unlocks Micro-G Drill (Asteroid)", 10)
-	_add_node("unlock_zero_g_sorter", "Zero-G Sorter", "Improves extraction speed on Asteroids.", 1500.0, Vector2(-320, -480), ["unlock_micro_g_drill"], 4, "Unlocks Zero-G Sorter", 10)
+	_add_node("unlock_zero_g_sorter", "Zero-G Sorter", "Improves extraction speed on Asteroids.", 1500.0, Vector2(-320, -480), ["unlock_micro_g_drill"], 4, "Unlocks Zero-G Sorter", 10)	# --- BRANCH 4: HOUSING / URBANIZATION (Staircase Zigzag) ---
+	_add_node("unlock_culture_center", "Cultural Investments", "Unlocks the Culture Center support building.", 150.0, Vector2(280, 160), ["unlock_residential"], 2, "Unlocks Culture Center", 10)
+	_add_node("housing_income_1", "Subsidized Housing", "Global initiative to subsidize residential developments.", 300.0, Vector2(160, 280), ["unlock_residential"], 2, "+15% Global credit payout from all housing.", 5, NodeShape.DIAMOND)
+	
+	_add_node("unlock_apartments", "Apartments", "Unlocks denser housing for higher income.", 500.0, Vector2(280, 400), ["housing_income_1"], 3, "Unlocks Apartments", 10)
+	_add_node("unlock_recreation_center", "Public Entertainment", "Unlocks the Recreation Center support building.", 800.0, Vector2(400, 400), ["unlock_apartments"], 3, "Unlocks Recreation Center", 10)
+	_add_node("housing_income_2", "Urban Sprawl", "Expands city limits globally.", 1200.0, Vector2(280, 520), ["unlock_apartments"], 4, "+20% Global credit payout from all housing.", 5, NodeShape.DIAMOND)
+	
+	_add_node("unlock_luxury_complex", "Luxury Complex", "Unlocks premium housing for elites.", 2000.0, Vector2(400, 640), ["housing_income_2"], 4, "Unlocks Luxury Complex", 10)
+	_add_node("unlock_opera_house", "High Society", "Unlocks the Opera House support building.", 3500.0, Vector2(520, 640), ["unlock_luxury_complex"], 5, "Unlocks Opera House", 10)
+	_add_node("housing_maintenance", "Self-Sustaining Architecture", "Reduces energy consumption in cities.", 5000.0, Vector2(400, 760), ["unlock_luxury_complex"], 5, "-10% Energy consumption for City buildings", 5, NodeShape.DIAMOND)
 
-	# --- BRANCH 4: URBANIZATION (Down) ---
-	_add_node("unlock_commercial", "Commercial Hubs", "Transitions from simple trade to high-density commercial centers.", 150.0, Vector2(0, 320), ["unlock_residential"], 2, "Unlocks Commercial Center", 10)
-	_add_node("unlock_luxury_complex", "Luxury Complex", "Unlocks premium housing for elites.", 600.0, Vector2(0, 640), ["unlock_commercial"], 3, "Unlocks Luxury Complex", 10)
-	_add_node("credit_boost", "Market Integration", "Integrates residential areas with local credit exchanges.", 400.0, Vector2(-160, 480), ["unlock_commercial"], 2, "+25% Residential credit payout", 5, NodeShape.DIAMOND)
+	# (Temporarily moved Commercial so it doesn't overlap until we do Trading)
+	_add_node("unlock_commercial", "Commercial Hubs", "Transitions from simple trade to high-density commercial centers.", 150.0, Vector2(0, 240), ["root"], 2, "Unlocks Commercial Center", 10)
 
-	# --- BRANCH 5: TRADE/LOGISTICS (Mid-Right-Down) ---
-	_add_node("unlock_trade_hub", "Interplanetary Trade Hub", "Massive logistics center that prints credits.", 1500.0, Vector2(240, 240), ["root"], 2, "Unlocks Trade Hub", 1)
-	_add_node("global_logistics", "Global Logistics", "Optimizes supply chains for all colonized worlds.", 2000.0, Vector2(240, 360), ["unlock_trade_hub"], 3, "+5% global production speed", 10, NodeShape.DIAMOND)
-	_add_node("unlock_commercial_hub", "Mega Commercial Hub", "Massive commercial hubs processing refined minerals.", 2000.0, Vector2(240, 480), ["unlock_trade_hub"], 3, "Unlocks Commercial Hub", 10)
-	_add_node("planetary_architecture", "Planetary Architecture", "Increases maximum districts available on all planets.", 2500.0, Vector2(360, 480), ["unlock_commercial_hub"], 4, "+1 Max District", 3, NodeShape.DIAMOND)
-	_add_node("unlock_logistics_center", "Planetary Logistics", "Blueprints for planet-wide logistics centers.", 5000.0, Vector2(240, 600), ["unlock_commercial_hub"], 4, "Unlocks Logistics Center", 1)
-	_add_node("unlock_command_center", "Planetary Command", "Blueprints for planet-wide command centers.", 5000.0, Vector2(360, 600), ["unlock_commercial_hub"], 4, "Unlocks Command Center", 1)
+	# --- BRANCH 5: TRADE/LOGISTICS (Mid-Down) ---
+	_add_node("unlock_trade_hub", "Interplanetary Trade Hub", "Massive logistics center that prints credits.", 1500.0, Vector2(0, 400), ["unlock_commercial"], 2, "Unlocks Trade Hub", 1)
+	_add_node("global_logistics", "Global Logistics", "Optimizes supply chains for all colonized worlds.", 2000.0, Vector2(0, 520), ["unlock_trade_hub"], 3, "+5% global production speed", 10, NodeShape.DIAMOND)
+	_add_node("unlock_commercial_hub", "Mega Commercial Hub", "Massive commercial hubs processing refined minerals.", 2000.0, Vector2(0, 640), ["unlock_trade_hub"], 3, "Unlocks Commercial Hub", 10)
+	_add_node("planetary_architecture", "Planetary Architecture", "Increases maximum districts available on all planets.", 2500.0, Vector2(120, 640), ["unlock_commercial_hub"], 4, "+1 Max District", 3, NodeShape.DIAMOND)
+	_add_node("unlock_logistics_center", "Planetary Logistics", "Blueprints for planet-wide logistics centers.", 5000.0, Vector2(0, 760), ["unlock_commercial_hub"], 4, "Unlocks Logistics Center", 1)
+	_add_node("unlock_command_center", "Planetary Command", "Blueprints for planet-wide command centers.", 5000.0, Vector2(120, 760), ["unlock_commercial_hub"], 4, "Unlocks Command Center", 1)
 
 	# --- BRANCH 6: ENERGY (Right-Down) ---
 	_add_node("unlock_generator", "Thermal Plant", "Unlocks the standard mineral-burning Thermal Generator.", 100.0, Vector2(480, 160), ["unlock_solar_panel"], 2, "Unlocks Thermal Generator.", 10)
@@ -193,8 +201,8 @@ func _init() -> void:
 # Get the maximum allowed level for a building (based on skill upgrades)
 	# --- DEFAULT BUILDING UNLOCKS & UPGRADES ---
 	_add_node("unlock_solar_panel", "Energy Operations", "Unlocks Energy Districts and Solar Panels.\nUpgrade to increase Solar Panel max level.", 50.0, Vector2(240, 0), ["root"], 1, "Unlocks Solar Panel & +1 Max Level", 10, NodeShape.HEXAGON)
-	_add_node("unlock_residential", "Habitation Operations", "Unlocks Urban Districts and Residential blocks.\nUpgrade to increase Habitation max level.", 50.0, Vector2(0, 160), ["root"], 1, "Unlocks Residential & +1 Max Level", 10, NodeShape.HEXAGON)
-	_add_node("unlock_lab", "Research Operations", "Unlocks University facilities.\nUpgrade to increase University max level.", 100.0, Vector2(-120, 120), ["root"], 1, "Unlocks University & +1 Max Level", 10, NodeShape.HEXAGON)
+	_add_node("unlock_residential", "Habitation Operations", "Unlocks Urban Districts and Residential blocks.\nUpgrade to increase Habitation max level.", 50.0, Vector2(160, 160), ["root"], 1, "Unlocks Residential & +1 Max Level", 10, NodeShape.HEXAGON)
+	_add_node("unlock_lab", "Research Operations", "Unlocks University facilities.\nUpgrade to increase University max level.", 100.0, Vector2(-160, 160), ["root"], 1, "Unlocks University & +1 Max Level", 10, NodeShape.HEXAGON)
 func get_building_max_level(building_id: String) -> int:
 	# Default level is 1. Upgrades increase this.
 	var max_lv = 1
@@ -361,7 +369,10 @@ func get_generator_output_mult() -> float:
 	return base
 
 func get_credits_mult() -> float:
-	return 1.25 if "credit_boost" in unlocked_skills else 1.0
+	var mult := 1.0
+	if "housing_income_1" in unlocked_skills: mult += 0.15
+	if "housing_income_2" in unlocked_skills: mult += 0.20
+	return mult
 
 func get_mine_output_mult() -> float:
 	var base := 1.0
