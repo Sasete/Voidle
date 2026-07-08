@@ -8,18 +8,18 @@ script = ExtResource("1_logic")
 
 [resource]
 script = ExtResource("2_def")
-building_id = "advanced_lab"
-display_name = "Institute of Technology"
-description = "Advanced science facility. Generates massive science points."
+building_id = "data_center"
+display_name = "Data Center"
+description = "Consumes massive energy to calculate complex data, yielding science points."
 allowed_poi_types = Array[int]([0, 4])
-base_cost = 1500.0
+base_cost = 1000.0
 slot_cost = 1
-min_planet_lv = 2
-tick_duration = 75.0
-energy_per_tick = -100.0
+min_planet_lv = 1
+tick_duration = 15.0
+energy_per_tick = -150.0
 output_type = 5
-output_amount = 25.0
+output_amount = 15.0
 input_type = 0
 input_amount = 0.0
 logic = SubResource("Resource_logic")
-unlocked_by_default = false
+unlocked_by_default = true

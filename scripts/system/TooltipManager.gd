@@ -12,6 +12,8 @@ var _visible:    bool  = false
 var _sub_panel:  PanelContainer
 var _sub_lbl:    RichTextLabel
 var _hide_timer: float = 0.0
+var _hbox:       HBoxContainer
+var _flipped:    bool = false
 
 func _ready() -> void:
 	layer = 300
@@ -119,13 +121,13 @@ func _ready() -> void:
 	_sub_lbl.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	_sub_panel.add_child(_sub_lbl)
 
-	var hbox := HBoxContainer.new()
-	hbox.add_theme_constant_override("separation", 6)
-	hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	hbox.add_child(_panel)
-	hbox.add_child(_sub_panel)
-	
-	add_child(hbox)
+	_hbox = HBoxContainer.new()
+	_hbox.add_theme_constant_override("separation", 6)
+	_hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hbox.add_child(_panel)
+	_hbox.add_child(_sub_panel)
+
+	add_child(_hbox)
 
 func _process(delta: float) -> void:
 	if _hide_timer > 0.0:
@@ -150,13 +152,21 @@ func _process(delta: float) -> void:
 	var mouse := get_viewport().get_mouse_position()
 	var vp    := get_viewport().get_visible_rect().size
 	var pos := mouse + Vector2(10, -ph - 8.0)
-	if pos.x + pw > vp.x:
+	var should_flip := pos.x + pw > vp.x
+	if should_flip:
 		# Flip to the left of the mouse so it doesn't block clicks!
 		pos.x = mouse.x - pw - 10.0
 	if pos.x < 4.0:       pos.x = 4.0
 	if pos.y < 4.0:       pos.y = mouse.y + 14.0
 	root_node.position = pos
 	root_node.visible  = true
+	# When flipped left: sub_panel (small) goes to left, _panel (big) to right
+	if should_flip != _flipped:
+		_flipped = should_flip
+		if should_flip:
+			_hbox.move_child(_sub_panel, 0)
+		else:
+			_hbox.move_child(_panel, 0)
 
 ## Show a tooltip.
 ## body: String or Array — Array elements may be String or ImageTexture (rendered inline).

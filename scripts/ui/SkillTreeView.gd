@@ -7,6 +7,8 @@ signal tree_opened
 signal tree_closed
 
 static var is_open: bool = false
+static var _saved_position: Vector2 = Vector2.ZERO
+static var _saved_zoom:     float   = 1.0
 
 var _font: Font
 var _nodes_container: Control
@@ -80,6 +82,12 @@ func _ready() -> void:
 	_nodes_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_center_ctrl.add_child(_nodes_container)
 
+	# Restore last pan/zoom position from this session
+	if _saved_position != Vector2.ZERO or _saved_zoom != 1.0:
+		_center_ctrl.position = _saved_position
+		_zoom = _saved_zoom
+		_center_ctrl.scale = Vector2(_zoom, _zoom)
+
 	# Build all nodes and position them
 	_build_tree_graph()
 
@@ -135,6 +143,8 @@ func _ready() -> void:
 	
 	_close_btn.pressed.connect(func() -> void:
 		CursorManager.set_state(CursorManager.State.NORMAL)
+		SkillTreeView._saved_position = _center_ctrl.position
+		SkillTreeView._saved_zoom     = _zoom
 		SkillTreeView.is_open = false
 		tree_closed.emit()
 		queue_free())
@@ -479,6 +489,9 @@ func _build_tree_graph() -> void:
 					effect_text = effect_text.replace(def.display_name, "[color=#fce205]" + def.display_name + "[/color]")
 					var cycle := " / %ds" % def.tick_duration
 					sub_body.append("[color=#fce205]" + def.display_name + " Blueprint[/color]\n\n")
+					
+					if def.description != "":
+						sub_body.append("[color=#c0c0c0]" + def.description + "[/color]\n\n")
 					
 					if def.input_type != BuildingDef.OutputType.NONE:
 						sub_body.append("[color=#99aab5]Consumes -%.0f [/color]" % def.input_amount)

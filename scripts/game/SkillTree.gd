@@ -107,52 +107,58 @@ func _init() -> void:
 
 	_add_node("unlock_interstellar", "Interstellar Travel", "Bend spacetime to discover entirely new Star Systems.", 10000.0, Vector2(0, -1600), ["unlock_planetary_colonization"], 7, "Discovers 1 New Star System per level", 999, NodeShape.CIRCLE)
 
-	# --- BRANCH 2: SCIENCE (Mid-Left-Down) ---
-	_add_node("unlock_advanced_lab", "Advanced Research", "Upgrades the basic University into a dedicated high-yield Research Lab.", 150.0, Vector2(-120, 240), ["unlock_lab"], 2, "Unlocks Advanced Lab", 10)
-	_add_node("unlock_research_academy", "Research Academy", "Large-scale science academy to generate passive Science.", 800.0, Vector2(-240, 480), ["unlock_advanced_lab"], 3, "Unlocks Research Academy", 10)
-
-	# --- BRANCH 3: MINING (Left-Down) ---
-	# Mirrored exactly from Branch 6: Energy
-	_add_node("unlock_mining", "Mining Operations", "Establishes the geological survey programs needed to locate and extract raw minerals from planetary crust.\nUpgrade to increase Mine max level.", 20.0, Vector2(-240, 0), ["root"], 1, "Unlocks Mining District & Mine & +1 Max Level", 10, NodeShape.HEXAGON)
+	# --- BRANCH 2: SCIENCE (Staircase Zigzag Left) ---
+	_add_node("unlock_library", "Archival Systems", "Unlocks the Library, boosting Science output in the district by +15% per level.", 150.0, Vector2(-280, 160), ["unlock_lab"], 2, "Unlocks Library", 10)
+	_add_node("science_income_1", "Educational Grants", "Increases global Science output.", 300.0, Vector2(-160, 280), ["unlock_lab"], 2, "+15% Global Science output.", 5, NodeShape.DIAMOND)
 	
-	_add_node("unlock_deep_drill", "Deep Drill", "Unlocks high-yield Deep Drills to penetrate bedrock.", 200.0, Vector2(-480, 160), ["unlock_mining"], 2, "Unlocks Deep Drill", 10)
+	_add_node("unlock_advanced_lab", "Advanced Research", "Upgrades the basic University into a dedicated high-yield Research Lab.", 500.0, Vector2(-280, 400), ["science_income_1"], 3, "Unlocks Institute of Technology", 10)
+	_add_node("unlock_observatory", "Deep Space Optics", "Unlocks the Observatory, increasing Science tick speed in the district by +10% per level.", 800.0, Vector2(-400, 400), ["unlock_advanced_lab"], 3, "Unlocks Observatory", 10)
+	_add_node("science_income_2", "Unified Theory", "A breakthrough in theoretical physics boosts all research.", 1200.0, Vector2(-280, 520), ["unlock_advanced_lab"], 4, "+20% Global Science output.", 5, NodeShape.DIAMOND)
+	
+	_add_node("unlock_research_academy", "Research Academy", "Large-scale science academy to generate massive passive Science.", 2000.0, Vector2(-400, 640), ["science_income_2"], 4, "Unlocks Research Academy", 10)
+	_add_node("unlock_research_nexus", "Scientific Nexus", "Unlocks the Research Nexus, boosting Science output in the district by +30% per level.", 3500.0, Vector2(-520, 640), ["unlock_research_academy"], 5, "Unlocks Research Nexus", 10)
+	_add_node("science_maintenance", "Energy Conservation", "Optimizes scientific facilities.", 5000.0, Vector2(-400, 760), ["unlock_research_academy"], 5, "-10% Energy consumption for Science buildings", 5, NodeShape.DIAMOND)
+	# --- BRANCH 3: MINING (Left-Down) ---
+	_add_node("unlock_mining", "Mining Operations", "Establishes the geological survey programs needed to locate and extract raw minerals from planetary crust.\nUpgrade to increase Mine max level.", 20.0, Vector2(-360, 0), ["root"], 1, "Unlocks Mining District & Mine & +1 Max Level", 10, NodeShape.HEXAGON)
+	
+	_add_node("unlock_deep_drill", "Deep Drill", "Unlocks high-yield Deep Drills to penetrate bedrock.", 200.0, Vector2(-600, 160), ["unlock_mining"], 2, "Unlocks Deep Drill", 10)
 	
 	# Main Extractor Line
-	_add_node("unlock_precision_extractor", "Precision Extractor", "Extracts only the TARGETED raw mineral.", 1000.0, Vector2(-600, 160), ["unlock_deep_drill"], 3, "Unlocks Precision Extractor", 10)
-	_add_node("unlock_mantle_cracker", "Mantle Cracker", "Cracks the mantle for massive mixed raw minerals.", 3000.0, Vector2(-720, 160), ["unlock_precision_extractor"], 4, "Unlocks Mantle Cracker", 10)
-	_add_node("unlock_quantum_harvester", "Quantum Harvester", "Godlike TARGETED extraction via quantum teleportation.", 10000.0, Vector2(-840, 220), ["unlock_mantle_cracker"], 5, "Unlocks Quantum Harvester", 10)
+	_add_node("unlock_precision_extractor", "Precision Extractor", "Extracts only the TARGETED raw mineral.", 1000.0, Vector2(-720, 160), ["unlock_deep_drill"], 3, "Unlocks Precision Extractor", 10)
+	_add_node("unlock_mantle_cracker", "Mantle Cracker", "Cracks the mantle for massive mixed raw minerals.", 3000.0, Vector2(-840, 160), ["unlock_precision_extractor"], 4, "Unlocks Mantle Cracker", 10)
+	_add_node("unlock_quantum_harvester", "Quantum Harvester", "Godlike TARGETED extraction via quantum teleportation.", 10000.0, Vector2(-960, 220), ["unlock_mantle_cracker"], 5, "Unlocks Quantum Harvester", 10)
 
 	# Main Refinery Line
-	_add_node("unlock_refinery", "Refinery", "Unlocks ore-to-mineral Refineries.", 400.0, Vector2(-480, 40), ["unlock_deep_drill"], 2, "Unlocks Refinery", 10)
-	_add_node("unlock_plasma_smelter", "Plasma Smelter", "Uses plasma to rapidly smelt minerals.", 1500.0, Vector2(-480, -80), ["unlock_refinery"], 3, "Unlocks Plasma Smelter", 10)
-	_add_node("unlock_molecular_forge", "Molecular Forge", "Reconstructs minerals at the molecular level.", 5000.0, Vector2(-480, -200), ["unlock_plasma_smelter"], 4, "Unlocks Molecular Forge", 10)
-	_add_node("unlock_singularity_forge", "Singularity Forge", "Extreme gravity compression refining.", 15000.0, Vector2(-480, -320), ["unlock_molecular_forge"], 5, "Unlocks Singularity Forge", 10)
+	_add_node("unlock_refinery", "Refinery", "Unlocks ore-to-mineral Refineries.", 400.0, Vector2(-600, 40), ["unlock_deep_drill"], 2, "Unlocks Refinery", 10)
+	_add_node("unlock_plasma_smelter", "Plasma Smelter", "Uses plasma to rapidly smelt minerals.", 1500.0, Vector2(-600, -80), ["unlock_refinery"], 3, "Unlocks Plasma Smelter", 10)
+	_add_node("unlock_molecular_forge", "Molecular Forge", "Reconstructs minerals at the molecular level.", 5000.0, Vector2(-600, -200), ["unlock_plasma_smelter"], 4, "Unlocks Molecular Forge", 10)
+	_add_node("unlock_singularity_forge", "Singularity Forge", "Extreme gravity compression refining.", 15000.0, Vector2(-600, -320), ["unlock_molecular_forge"], 5, "Unlocks Singularity Forge", 10)
 
 	# Passive Skills (Diamonds)
-	_add_node("mine_speed", "Excavation Drills", "Equips mining facilities with high-torque diamond drills.", 50.0, Vector2(-480, 280), ["unlock_deep_drill"], 2, "+5% Mining speed per level", 10, NodeShape.DIAMOND)
-	_add_node("deep_mining", "Seismic Sensors", "Deep scans tectonic plates to output higher yields.", 350.0, Vector2(-600, 280), ["unlock_deep_drill"], 3, "+2% Mine output multiplier per level", 10, NodeShape.DIAMOND)
-	_add_node("mining_logistics", "Automated Conveyors", "Reduces operational energy costs.", 900.0, Vector2(-720, 280), ["deep_mining"], 4, "-2% Mining Energy Cost per level", 10, NodeShape.DIAMOND)
-	_add_node("refinery_efficiency", "Refinery Optimization", "Enhances standard smelting procedures.", 450.0, Vector2(-600, 40), ["unlock_refinery"], 3, "+5% Refinery speed per level", 10, NodeShape.DIAMOND)
+	_add_node("mine_speed", "Excavation Drills", "Equips mining facilities with high-torque diamond drills.", 50.0, Vector2(-600, 280), ["unlock_deep_drill"], 2, "+5% Mining speed per level", 10, NodeShape.DIAMOND)
+	_add_node("deep_mining", "Seismic Sensors", "Deep scans tectonic plates to output higher yields.", 350.0, Vector2(-720, 280), ["unlock_deep_drill"], 3, "+2% Mine output multiplier per level", 10, NodeShape.DIAMOND)
+	_add_node("mining_logistics", "Automated Conveyors", "Reduces operational energy costs.", 900.0, Vector2(-840, 280), ["deep_mining"], 4, "-2% Mining Energy Cost per level", 10, NodeShape.DIAMOND)
+	_add_node("refinery_efficiency", "Refinery Optimization", "Enhances standard smelting procedures.", 450.0, Vector2(-720, 40), ["unlock_refinery"], 3, "+5% Refinery speed per level", 10, NodeShape.DIAMOND)
 
 	# Buff Buildings
-	_add_node("unlock_extraction_optimizer", "Extraction Optimizer", "Increases raw output for all extractors.", 800.0, Vector2(-480, 400), ["mine_speed"], 3, "Unlocks Extraction Optimizer", 10)
-	_add_node("unlock_sonic_resonator", "Sonic Resonator", "Increases tick speed for all extractors.", 1200.0, Vector2(-840, 400), ["unlock_quantum_harvester"], 3, "Unlocks Sonic Resonator", 10)
-	_add_node("unlock_thermal_crusher", "Thermal Crusher", "Increases tick speed for all refineries.", 1200.0, Vector2(-720, 40), ["unlock_mantle_cracker"], 3, "Unlocks Thermal Crusher", 10)
-	_add_node("unlock_logistics_hub", "Logistics Hub", "Reduces energy cost for all mining buildings.", 1800.0, Vector2(-600, -80), ["unlock_plasma_smelter"], 4, "Unlocks Logistics Hub", 10)
+	_add_node("unlock_extraction_optimizer", "Extraction Optimizer", "Increases raw output for all extractors.", 800.0, Vector2(-600, 400), ["mine_speed"], 3, "Unlocks Extraction Optimizer", 10)
+	_add_node("unlock_sonic_resonator", "Sonic Resonator", "Increases tick speed for all extractors.", 1200.0, Vector2(-960, 400), ["unlock_quantum_harvester"], 3, "Unlocks Sonic Resonator", 10)
+	_add_node("unlock_thermal_crusher", "Thermal Crusher", "Increases tick speed for all refineries.", 1200.0, Vector2(-840, 40), ["unlock_mantle_cracker"], 3, "Unlocks Thermal Crusher", 10)
+	_add_node("unlock_logistics_hub", "Logistics Hub", "Reduces energy cost for all mining buildings.", 1800.0, Vector2(-720, -80), ["unlock_plasma_smelter"], 4, "Unlocks Logistics Hub", 10)
 
 
 	# Specialized: Asteroid
 	_add_node("unlock_micro_g_drill", "Micro-G Drill", "Fires tethers deep into the core.\n[color=#ff5555]Requires: Deep Drill[/color]", 1200.0, Vector2(-160, -480), ["unlock_asteroids"], 3, "Unlocks Micro-G Drill (Asteroid)", 10)
 	_add_node("unlock_zero_g_sorter", "Zero-G Sorter", "Improves extraction speed on Asteroids.", 1500.0, Vector2(-320, -480), ["unlock_micro_g_drill"], 4, "Unlocks Zero-G Sorter", 10)	# --- BRANCH 4: HOUSING / URBANIZATION (Staircase Zigzag) ---
-	_add_node("unlock_culture_center", "Cultural Investments", "Unlocks the Culture Center support building.", 150.0, Vector2(280, 160), ["unlock_residential"], 2, "Unlocks Culture Center", 10)
+	_add_node("unlock_culture_center", "Cultural Investments", "Unlocks the Culture Center, boosting Residential credit output in the district by +20% per level.", 150.0, Vector2(280, 160), ["unlock_residential"], 2, "Unlocks Culture Center", 10)
 	_add_node("housing_income_1", "Subsidized Housing", "Global initiative to subsidize residential developments.", 300.0, Vector2(160, 280), ["unlock_residential"], 2, "+15% Global credit payout from all housing.", 5, NodeShape.DIAMOND)
 	
 	_add_node("unlock_apartments", "Apartments", "Unlocks denser housing for higher income.", 500.0, Vector2(280, 400), ["housing_income_1"], 3, "Unlocks Apartments", 10)
-	_add_node("unlock_recreation_center", "Public Entertainment", "Unlocks the Recreation Center support building.", 800.0, Vector2(400, 400), ["unlock_apartments"], 3, "Unlocks Recreation Center", 10)
+	_add_node("unlock_recreation_center", "Public Entertainment", "Unlocks the Recreation Center, boosting Apartment credit output in the district by +25% per level.", 800.0, Vector2(400, 400), ["unlock_apartments"], 3, "Unlocks Recreation Center", 10)
 	_add_node("housing_income_2", "Urban Sprawl", "Expands city limits globally.", 1200.0, Vector2(280, 520), ["unlock_apartments"], 4, "+20% Global credit payout from all housing.", 5, NodeShape.DIAMOND)
 	
 	_add_node("unlock_luxury_complex", "Luxury Complex", "Unlocks premium housing for elites.", 2000.0, Vector2(400, 640), ["housing_income_2"], 4, "Unlocks Luxury Complex", 10)
-	_add_node("unlock_opera_house", "High Society", "Unlocks the Opera House support building.", 3500.0, Vector2(520, 640), ["unlock_luxury_complex"], 5, "Unlocks Opera House", 10)
+	_add_node("unlock_opera_house", "High Society", "Unlocks the Opera House, boosting Luxury Complex credit output in the district by +30% per level.", 3500.0, Vector2(520, 640), ["unlock_luxury_complex"], 5, "Unlocks Opera House", 10)
 	_add_node("housing_maintenance", "Self-Sustaining Architecture", "Reduces energy consumption in cities.", 5000.0, Vector2(400, 760), ["unlock_luxury_complex"], 5, "-10% Energy consumption for City buildings", 5, NodeShape.DIAMOND)
 
 	# (Temporarily moved Commercial so it doesn't overlap until we do Trading)
