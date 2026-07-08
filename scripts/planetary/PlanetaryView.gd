@@ -98,7 +98,13 @@ func _ready() -> void:
 	get_node("/root/SkillTree").skill_unlocked.connect(func(_id: String) -> void:
 		for k: String in _bar_meta:
 			_refresh_bar_label_status(k)
-		_refresh_district_energy_lbl())
+		_refresh_district_energy_lbl()
+		if current_data != null:
+			_update_panel(current_data)
+			if _active_district_poi == null:
+				_build_planet_overview(current_data)
+			else:
+				_build_district_panel(_active_district_poi, current_data))
 
 	# load from transition if navigating from SolarView or first launch
 	var planet_to_load: PlanetData = SceneTransition.pending_data as PlanetData
@@ -802,10 +808,18 @@ func _spawn_district(data: PlanetData, lbl: String, def: DistrictDef) -> void:
 		AudioManager.play("construct")
 		AchievementManager.notify_trigger(AchievementDef.Trigger.FIRST_DISTRICT)
 		AchievementManager.notify_trigger(AchievementDef.Trigger.FIRST_ORBITAL)
+		# Set construct_duration to match rocket animation BEFORE appending so ProductionManager
+		# never reads the stale def.construction_duration value.
+		const _BASE_LD: float = 22.0
+		const _REF_R:   float = 200.0
+		const _DEPLOY:  float = 2.2
+		poi.construct_duration = (planet_renderer._planet_radius_px / _REF_R) * _BASE_LD + _DEPLOY
 		# Add immediately so panel shows "Constructing"; OrbitalLayer skips constructing=true pois
 		data.custom_pois.append(poi)
 		_play_rocket_animation(data.seed, launch_poi, func() -> void:
 			poi.constructing = false
+			poi.construct_progress = 1.0
+			AudioManager.play("building_done")
 			GameState.planet_progress_changed.emit(data.seed),
 			"", "Pioneer", "station", {}, "", "", "", 0, false, [], poi)
 		load_planet(data)
@@ -1978,13 +1992,14 @@ func _process(delta: float) -> void:
 				for poi: POIData in current_data.custom_pois:
 					if poi.label == poi_label:
 						if poi.constructing:
-							# Smooth UI update
-							poi.construct_progress += delta / max(0.1, poi.construct_duration)
-							if poi.construct_progress >= 1.0:
-								poi.construct_progress = 1.0
-								poi.constructing = false
-								any_finished = true
-								AudioManager.play("building_done")
+							# Smooth UI update — orbital progress is driven by rocket animation
+							if not poi.is_orbital():
+								poi.construct_progress += delta / max(0.1, poi.construct_duration)
+								if poi.construct_progress >= 1.0:
+									poi.construct_progress = 1.0
+									poi.constructing = false
+									any_finished = true
+									AudioManager.play("building_done")
 						pbar.value = poi.construct_progress * 100.0
 						break
 		if any_finished:
@@ -2014,6 +2029,7 @@ func _apply_light_angle() -> void:
 	# at the END of every frame (after both parent and child _process have run),
 	# so light_direction is always computed with fresh rotation_offset + light_angle.
 	planet_renderer.light_angle = _light_angle
+
 
 
 func _rotate_to_lon(lon_deg: float, duration: float = 0.45) -> void:
@@ -2654,14 +2670,13 @@ func _build_planet_overview(data: PlanetData) -> void:
 		return
 
 	# ── District slot indicators ─────────────────────────────────────────────
-	var p_max_orbital := 0
 	var st := get_node_or_null("/root/SkillTree")
 	var has_orbital_unlocked := false
 	for p_def: DistrictDef in DistrictDef.all():
 		if p_def.is_orbital and p_def.max_per_planet > 0:
 			if p_def.unlock_skill == "" or (st != null and st.is_unlocked(p_def.unlock_skill)):
 				has_orbital_unlocked = true
-				p_max_orbital += p_def.max_per_planet
+	var p_max_orbital: int = pp.max_orbital_districts
 
 	# Single row: [Surface group] [spacer] [Orbital group]
 	# Each group is a VBox: slots on top, label below.
@@ -2670,7 +2685,7 @@ func _build_planet_overview(data: PlanetData) -> void:
 	limits_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var slot_info_arr: Array = [ ["Surface", surface_pois.size(), pp.max_districts] ]
 	if has_orbital_unlocked:
-		slot_info_arr.append(["Orbital", orbital_pois.size(), max(1, p_max_orbital)])
+		slot_info_arr.append(["Orbital", orbital_pois.size(), p_max_orbital])
 		
 	for slot_info: Array in slot_info_arr:
 		var group_vbox := VBoxContainer.new()
@@ -2766,12 +2781,7 @@ func _build_planet_overview(data: PlanetData) -> void:
 	for poi: POIData in orbital_pois:
 		orbital_page.add_child(_build_district_overview_card(poi, data, pp, panel_content, root))
 
-	var can_add_orbital := true
-	for def: DistrictDef in DistrictDef.all():
-		if def.is_orbital and def.max_per_planet > 0:
-			if DistrictDef.count_on_planet(def, data) >= def.max_per_planet:
-				can_add_orbital = false
-				break
+	var can_add_orbital := orbital_pois.size() < pp.max_orbital_districts
 	orbital_page.add_child(_build_add_district_card(data, can_add_orbital, true))
 
 	# ── Tab switching ─────────────────────────────────────────────────────────
@@ -3075,12 +3085,14 @@ func _build_district_overview_card(poi: POIData, planet: PlanetData, pp: PlanetP
 				and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
 			AudioManager.play("click")
 			if cap_poi.is_orbital():
-				# Rotate planet so station faces camera, then highlight
+				# Rotate planet so station faces camera, then highlight.
+				# Derive equatorial longitude by inverting _project_poi: rx=0, rz<0.
 				if _orbital_layer != null and is_instance_valid(_orbital_layer):
 					_orbital_layer.set_selected_station(cap_poi.label)
-				var eq_lon: float = rad_to_deg(cap_poi.orbit_node + atan2(
-					sin(cap_poi.orbit_angle) * cos(cap_poi.orbit_inclination),
-					cos(cap_poi.orbit_angle)))
+				var eq_lon: float = rad_to_deg(
+					atan2(cos(cap_poi.orbit_angle),
+						-sin(cap_poi.orbit_angle) * cos(cap_poi.orbit_inclination))
+					- cap_poi.orbit_node)
 				_rotate_to_lon(eq_lon)
 			else:
 				_select_district_on_planet(cap_poi.label)
@@ -3207,8 +3219,13 @@ func _build_district_type_row(data: PlanetData, def: DistrictDef,
 	_apply_orbitron(btn, 9)
 	var cost: float = DistrictDef.placement_cost(def, data)
 	var can_afford: bool = GameState.credits >= cost
-	var at_limit: bool = def.max_per_planet > 0 and \
-		DistrictDef.count_on_planet(def, data) >= def.max_per_planet
+	var at_limit: bool
+	if def.is_orbital:
+		var pp2 := GameState.get_planet(data.seed)
+		var orbital_count := data.custom_pois.filter(func(p: POIData) -> bool: return p.is_orbital()).size()
+		at_limit = pp2 == null or orbital_count >= pp2.max_orbital_districts
+	else:
+		at_limit = def.max_per_planet > 0 and DistrictDef.count_on_planet(def, data) >= def.max_per_planet
 
 	btn.disabled = not can_afford or at_limit
 	if at_limit:
@@ -3238,7 +3255,9 @@ func _build_district_type_row(data: PlanetData, def: DistrictDef,
 		var t_title = def.display_name
 		var t_desc = def.description
 		if at_limit:
-			t_desc += "\n\n[color=gray]Already built (limit: %d)[/color]" % def.max_per_planet
+			var _pp_lim := GameState.get_planet(data.seed)
+			var _lim: int = (_pp_lim.max_orbital_districts if _pp_lim != null else 1) if def.is_orbital else def.max_per_planet
+			t_desc += "\n\n[color=gray]Already built (limit: %d)[/color]" % _lim
 		elif not can_afford:
 			t_desc += "\n\n[color=red]Insufficient Credits[/color]"
 		TooltipManager.show_tip(t_title, t_desc, cost_str))
@@ -3517,6 +3536,11 @@ func _play_rocket_animation(planet_seed: int, poi: POIData, on_complete: Callabl
 	const LAUNCH_TIME_SCALE: float = 1.0   # hook here for upgrade (lower = faster)
 	var launch_dur: float = (planet_r / REF_RADIUS) * BASE_LAUNCH_DUR * LAUNCH_TIME_SCALE
 
+	# For orbital district POIs, sync construct_duration to the exact animation time
+	const _DEPLOY_ANIM_DUR: float = 2.2
+	if station_district_poi != null:
+		station_district_poi.construct_duration = launch_dur + _DEPLOY_ANIM_DUR
+
 	# Planet center — same reference as POILayer (_planet.global_position + size*0.5)
 	var planet_center_global: Vector2 = planet_renderer.global_position + planet_renderer.size * 0.5
 	var center_local:         Vector2 = planet_center_global - container.get_global_rect().position
@@ -3726,6 +3750,12 @@ func _tick_one_rocket(d: Dictionary, delta: float) -> void:
 				t = 1.0
 				finished = true
 			d["phase_t"] = t
+			# Drive orbital district progress bar from rocket t (launch takes ~91% of total)
+			const _DEPLOY_DUR: float = 2.2
+			var _st_poi: POIData = d.get("station_district_poi", null)
+			if _st_poi != null and _st_poi.constructing:
+				var _launch_frac: float = LAUNCH_DUR / (LAUNCH_DUR + _DEPLOY_DUR)
+				_st_poi.construct_progress = t * _launch_frac
 			var _eta_sec: int = int(ceil((1.0 - t) * LAUNCH_DUR))
 			var _eta_lbl: Label = d.get("eta_lbl")
 			if _eta_lbl != null and is_instance_valid(_eta_lbl):
@@ -4006,8 +4036,10 @@ func _finish_rocket_anim(d: Dictionary) -> void:
 		st_poi.orbit_speed       = speed_sign * exit_rate
 		st_poi.orbit_radius      = 1.06
 		if _orbital_layer != null and is_instance_valid(_orbital_layer):
-			_spawn_station_deploy_poi(st_poi, d["container"])
+			_spawn_station_deploy_poi(st_poi, d["container"], d["on_complete"])
 			_orbital_layer.queue_redraw()
+		d["_finished"] = true
+		return  # on_complete called by _spawn_station_deploy_poi when anim ends
 	else:
 		var ship := ShipManager.launch(d["planet_seed"], d.get("ship_name", "Pioneer"))
 		ship.ship_type         = d.get("ship_type", "shuttle")
@@ -4084,25 +4116,29 @@ func _spawn_station_deploy(ship: ShipData, container: Control) -> void:
 
 	_deploy_anims.append(da)
 
-func _spawn_station_deploy_poi(poi: POIData, container: Control) -> void:
+func _spawn_station_deploy_poi(poi: POIData, container: Control, on_complete: Callable = Callable()) -> void:
 	if _orbital_layer == null or not is_instance_valid(_orbital_layer):
+		if on_complete.is_valid(): on_complete.call()
 		return
 	var ctrl := Control.new()
 	ctrl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ctrl.z_index = 10
 	container.add_child(ctrl)
 	var da: Dictionary = {
-		"poi":      poi,
-		"ctrl":     ctrl,
-		"t":        0.0,
-		"duration": 2.2,
+		"poi":          poi,
+		"ctrl":         ctrl,
+		"t":            0.0,
+		"duration":     2.2,
+		"launch_frac":  poi.construct_progress,
+		"on_complete":  on_complete,
 	}
 	ctrl.draw.connect(func() -> void:
 		var sv2 := _orbital_layer._project_poi(poi, poi.orbit_angle)
 		if _orbital_layer._is_occluded_r(sv2):
 			return
-		var origin: Vector2 = _orbital_layer._planet_center + Vector2(sv2.x, sv2.y)
-		var p2 := ctrl.get_global_transform().affine_inverse() * origin
+		var origin_local: Vector2 = _orbital_layer._planet_center + Vector2(sv2.x, sv2.y)
+		var origin_global: Vector2 = _orbital_layer.get_global_transform() * origin_local
+		var p2 := ctrl.get_global_transform().affine_inverse() * origin_global
 		var t2: float = da.get("t", 0.0)
 		var progress: float = clampf(t2 / da["duration"], 0.0, 1.0)
 		var ease_p: float   = ease(progress, -2.0)
@@ -4133,9 +4169,17 @@ func _tick_deploy_anims(delta: float) -> void:
 		if not is_instance_valid(ctrl2):
 			done.append(da)
 			continue
+		# Drive orbital district progress bar through deploy phase (launch_frac → 1.0)
+		var dp_poi: POIData = da.get("poi", null)
+		if dp_poi != null and dp_poi.constructing:
+			const _DEP: float = 2.2
+			var _lf: float = da.get("launch_frac", 1.0 - _DEP / (_DEP + 1.0))
+			dp_poi.construct_progress = lerpf(_lf, 1.0, minf(da["t"] / da["duration"], 1.0))
 		if da["t"] >= da["duration"]:
 			ctrl2.queue_free()
 			done.append(da)
+			var cb: Callable = da.get("on_complete", Callable())
+			if cb.is_valid(): cb.call()
 		else:
 			ctrl2.queue_redraw()
 	for da: Dictionary in done:

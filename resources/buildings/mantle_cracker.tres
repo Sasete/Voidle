@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="BuildingDef" load_steps=3 format=3 uid="uid://b_deep_drill_eeefbd33"]
+[gd_resource type="Resource" script_class="BuildingDef" load_steps=3 format=3 uid="uid://b_mantle_cracker_4370f063"]
 
 [ext_resource type="Script" path="res://scripts/game/logic/MineLogic.gd" id="1_logic"]
 [ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="2_def"]
@@ -8,19 +8,19 @@ script = ExtResource("1_logic")
 
 [resource]
 script = ExtResource("2_def")
-building_id = "deep_drill"
-display_name = "Deep Drill"
-description = "Drills deeper for all raw minerals."
+building_id = "mantle_cracker"
+display_name = "Mantle Cracker"
+description = "Cracks the mantle for massive mixed raw minerals."
 allowed_poi_types = Array[int]([2])
 allowed_planet_types = Array[int]([])
-base_cost = 600.0
+base_cost = 4000.0
 slot_cost = 1
-min_planet_lv = 2
+min_planet_lv = 4
 construct_duration = 0.0
-tick_duration = 15.0
-energy_per_tick = -5.0
+tick_duration = 12.0
+energy_per_tick = -40.0
 output_type = 3
-output_amount = 28.0
+output_amount = 250.0
 input_type = 0
 input_amount = 0.0
 input_tier = 1

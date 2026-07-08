@@ -1,21 +1,28 @@
-[gd_resource type="Resource" script_class="BuildingDef" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="BuildingDef" load_steps=3 format=3 uid="uid://b_atmospheric_siphon_f1e1aaa5"]
 
-[ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="1_def"]
+[ext_resource type="Script" path="res://scripts/game/logic/MineLogic.gd" id="1_logic"]
+[ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="2_def"]
+
+[sub_resource type="Resource" id="Resource_logic"]
+script = ExtResource("1_logic")
 
 [resource]
-script = ExtResource("1_def")
+script = ExtResource("2_def")
 building_id = "atmospheric_siphon"
 display_name = "Atmospheric Siphon"
-description = "Extracts valuable gases to synthesize pure credits. Only available on Gas Giants."
-allowed_poi_types = Array[int]([1])
-base_cost = 8000.0
-slot_cost = 2
-min_planet_lv = 1
+description = "Filters rare particles from the atmosphere. (Gas Giant)"
+allowed_poi_types = Array[int]([2])
+allowed_planet_types = Array[int]([5])
+base_cost = 3000.0
+slot_cost = 1
+min_planet_lv = 3
 construct_duration = 0.0
-tick_duration = 45.0
-energy_per_tick = -20.0
-output_type = 2
+tick_duration = 25.0
+energy_per_tick = -8.0
+output_type = 3
 output_amount = 200.0
 input_type = 0
 input_amount = 0.0
+input_tier = 1
+logic = SubResource("Resource_logic")
 unlocked_by_default = false

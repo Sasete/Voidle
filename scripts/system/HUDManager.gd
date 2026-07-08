@@ -319,6 +319,8 @@ func _try_close_skill_tree() -> bool:
 			var sc = gc.get_script()
 			if sc != null and sc.resource_path.ends_with("SkillTreeView.gd"):
 				AudioManager.play("click")
+				CursorManager.set_state(CursorManager.State.NORMAL)
+				gc.set("is_open", false)
 				if gc.has_signal("tree_closed"):
 					gc.emit_signal("tree_closed")
 				child.queue_free()

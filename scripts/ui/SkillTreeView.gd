@@ -478,19 +478,25 @@ func _build_tree_graph() -> void:
 				if def:
 					effect_text = effect_text.replace(def.display_name, "[color=#fce205]" + def.display_name + "[/color]")
 					var cycle := " / %ds" % def.tick_duration
-					var details := "[color=#99aab5]"
-					
 					sub_body.append("[color=#fce205]" + def.display_name + " Blueprint[/color]\n\n")
-					if def.output_type == BuildingDef.OutputType.ENERGY:
-						details += "Produces +%.0f ⚡%s\n" % [def.output_amount, cycle]
 					
 					if def.input_type != BuildingDef.OutputType.NONE:
-						details += "Consumes -%.0f " % def.input_amount
-						sub_body.append(details + "[/color]")
+						sub_body.append("[color=#99aab5]Consumes -%.0f [/color]" % def.input_amount)
 						sub_body.append(MineralIcon.make(def.input_tier, Color.WHITE))
-						sub_body.append("[color=#99aab5]%s[/color]" % cycle)
-					else:
-						sub_body.append(details + "[/color]")
+						sub_body.append("[color=#99aab5]%s\n[/color]" % cycle)
+					
+					if def.output_type != BuildingDef.OutputType.NONE:
+						if def.output_type == BuildingDef.OutputType.ENERGY:
+							sub_body.append("[color=#99aab5]Produces +%.0f [/color][color=#fce205]⚡[/color][color=#99aab5]%s[/color]\n" % [def.output_amount, cycle])
+						elif def.output_type == BuildingDef.OutputType.CREDITS:
+							sub_body.append("[color=#99aab5]Produces +%.0f [/color][color=#55f58c]cr[/color][color=#99aab5]%s[/color]\n" % [def.output_amount, cycle])
+						elif def.output_type == BuildingDef.OutputType.SCIENCE:
+							sub_body.append("[color=#99aab5]Produces +%.0f [/color][color=#55aaff]sci[/color][color=#99aab5]%s[/color]\n" % [def.output_amount, cycle])
+						else:
+							sub_body.append("[color=#99aab5]Produces +%.0f [/color]" % def.output_amount)
+							var out_tier: int = def.input_tier + 1 if def.output_type == BuildingDef.OutputType.REFINED_MINERAL else def.input_tier
+							sub_body.append(MineralIcon.make(out_tier, Color.WHITE))
+							sub_body.append("[color=#99aab5]%s[/color]\n" % cycle)
 
 			if max_lv > 1:
 				# Leveled Upgrades

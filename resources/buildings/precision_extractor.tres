@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="BuildingDef" load_steps=3 format=3 uid="uid://b_deep_drill_eeefbd33"]
+[gd_resource type="Resource" script_class="BuildingDef" load_steps=3 format=3 uid="uid://b_precision_extractor_0889f7a3"]
 
 [ext_resource type="Script" path="res://scripts/game/logic/MineLogic.gd" id="1_logic"]
 [ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="2_def"]
@@ -8,19 +8,19 @@ script = ExtResource("1_logic")
 
 [resource]
 script = ExtResource("2_def")
-building_id = "deep_drill"
-display_name = "Deep Drill"
-description = "Drills deeper for all raw minerals."
+building_id = "precision_extractor"
+display_name = "Precision Extractor"
+description = "Extracts only the TARGETED raw mineral."
 allowed_poi_types = Array[int]([2])
 allowed_planet_types = Array[int]([])
-base_cost = 600.0
+base_cost = 1500.0
 slot_cost = 1
-min_planet_lv = 2
+min_planet_lv = 3
 construct_duration = 0.0
-tick_duration = 15.0
-energy_per_tick = -5.0
+tick_duration = 20.0
+energy_per_tick = -15.0
 output_type = 3
-output_amount = 28.0
+output_amount = 80.0
 input_type = 0
 input_amount = 0.0
 input_tier = 1

@@ -18,6 +18,9 @@ var _drag_anchor: Vector2  = Vector2.ZERO  # ship 2D pos (in orbit-radius units)
 ## Per-ship orbit-reveal: ship_id -> {progress: float, spawn_angle: float}
 var _reveal: Dictionary = {}
 
+## Per-POI orbit-reveal: poi_label -> {progress: float, spawn_angle: float}
+var _reveal_poi: Dictionary = {}
+
 ## Per-ship landing animation state
 var _landing: Dictionary = {}
 
@@ -88,6 +91,10 @@ func _process(delta: float) -> void:
 		var rv: Dictionary = _reveal[ship_id]
 		if rv["progress"] < 1.0:
 			rv["progress"] = minf(rv["progress"] + delta * 1.8, 1.0)
+	for poi_label: String in _reveal_poi:
+		var rv: Dictionary = _reveal_poi[poi_label]
+		if rv["progress"] < 1.0:
+			rv["progress"] = minf(rv["progress"] + delta * 0.6, 1.0)
 	_tick_landing(delta)
 	_tick_rendezvous(delta)
 	queue_redraw()
@@ -636,7 +643,7 @@ func _draw_station_pois(center: Vector2) -> void:
 			col = Color(1.0, 0.95, 0.5, 0.90)
 		else:
 			col = Color(0.65, 0.75, 1.0, 0.85)
-		# Dashed orbit trail
+		# Dashed orbit trail (progressive reveal on first appearance)
 		var orbit_col: Color
 		if is_selected:
 			orbit_col = Color(1.0, 0.92, 0.30, 0.75)
@@ -644,11 +651,21 @@ func _draw_station_pois(center: Vector2) -> void:
 			orbit_col = Color(1.0, 0.95, 0.5, 0.55)
 		else:
 			orbit_col = Color(col, 0.30)
+		if not _reveal_poi.has(poi.label):
+			_reveal_poi[poi.label] = {"progress": 0.0, "spawn_angle": poi.orbit_angle}
+		var rv_poi: Dictionary = _reveal_poi[poi.label]
+		var arc_frac: float = rv_poi["progress"]
+		var spawn_a:  float = rv_poi["spawn_angle"]
+		var dir_p:    float = sign(poi.orbit_speed) if poi.orbit_speed != 0.0 else 1.0
+		var arc_total: float = arc_frac * TAU
 		const STEPS := 72
-		var prev_v  := _project_poi(poi, poi.orbit_angle)
+		var prev_v  := _project_poi(poi, spawn_a)
 		var prev_p  := center + Vector2(prev_v.x, prev_v.y)
 		for s in range(1, STEPS + 1):
-			var a := poi.orbit_angle + float(s) / float(STEPS) * TAU
+			var frac: float = float(s) / float(STEPS)
+			if frac * TAU > arc_total:
+				break
+			var a := spawn_a + dir_p * frac * TAU
 			var v := _project_poi(poi, a)
 			var p := center + Vector2(v.x, v.y)
 			if (s % 6) < 3 and not _is_occluded_r(prev_v) \

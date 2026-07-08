@@ -59,35 +59,91 @@ func _init() -> void:
 	
 	_add_node("unlock_asteroids", "Deep Space Tracking", "Allows tracking and mining of resource-rich Asteroids.", 1200.0, Vector2(0, -480), ["unlock_moon"], 4, "Unlocks Asteroid Mining", 1)
 	_add_node("unlock_asteroid_harvester", "Asteroid Harvester", "Colossal mining rig tailored for zero-G asteroid cracking.", 3000.0, Vector2(160, -480), ["unlock_asteroids"], 5, "Unlocks Asteroid Harvester", 1)
+	_add_node("unlock_planetary_colonization", "Planetary Colonization", "Develops extreme environment survival systems, enabling colonization of hostile worlds.", 2000.0, Vector2(0, -640), ["unlock_asteroids"], 5, "Unlocks Specialized Colonization", 1, NodeShape.CIRCLE)
 	
-	_add_node("colonize_ice", "Cryo-Habitation", "Thermal insulation tech for Ice Worlds.", 2500.0, Vector2(-360, -640), ["unlock_asteroids"], 5, "Unlocks Ice Planet Colonization", 1)
-	_add_node("unlock_cryo_vault", "Cryo-Vault Architecture", "Blueprints for massive underground cryo-vaults.", 4000.0, Vector2(-480, -800), ["colonize_ice"], 6, "Unlocks Cryo-Vault", 10)
+	# === TOP-LEFT: ICE (Vertical) ===
+	_add_node("colonize_ice", "Cryo-Habitation", "Thermal insulation tech for Ice Worlds.", 2500.0, Vector2(-160, -800), ["unlock_planetary_colonization"], 5, "Unlocks Ice Planet Colonization", 1)
+	_add_node("ice_extraction", "Cryo-Extraction", "Improves extraction speed on Ice planets.", 1500.0, Vector2(-240, -880), ["colonize_ice"], 4, "+20% Mine Speed on Ice Planets", 5, NodeShape.DIAMOND)
+	_add_node("ice_logistics", "Cryo-Logistics", "Improves energy efficiency on Ice planets.", 1500.0, Vector2(-80, -880), ["colonize_ice"], 4, "-10% Energy Cost on Ice Planets", 5, NodeShape.DIAMOND)
+	_add_node("unlock_cryo_vault", "Cryo-Vault Architecture", "Blueprints for massive underground cryo-vaults.", 4000.0, Vector2(-160, -960), ["ice_logistics", "ice_extraction"], 6, "Unlocks Cryo-Vault", 10)
 
-	_add_node("colonize_desert", "Arid Habitation", "Water reclamation for Desert Worlds.", 2500.0, Vector2(-120, -640), ["unlock_asteroids"], 5, "Unlocks Desert Planet Colonization", 1)
-	_add_node("unlock_solar_matrix", "Solar Matrix", "Blueprints for colossal solar arrays.", 4000.0, Vector2(-160, -800), ["colonize_desert"], 6, "Unlocks Solar Matrix", 10)
+	# === LEFT: DESERT (Horizontal) ===
+	_add_node("colonize_desert", "Arid Habitation", "Water reclamation for Desert Worlds.", 2500.0, Vector2(-160, -640), ["unlock_planetary_colonization"], 5, "Unlocks Desert Planet Colonization", 1)
+	_add_node("desert_solar_cost", "Arid Mirrors", "Reduces Solar Matrix construction cost.", 1500.0, Vector2(-240, -720), ["colonize_desert"], 4, "-10% Solar Matrix Cost", 5, NodeShape.DIAMOND)
+	_add_node("desert_solar_output", "Arid Photovoltaics", "Increases Solar Matrix output.", 1500.0, Vector2(-240, -560), ["colonize_desert"], 4, "+20% Solar Energy on Desert", 5, NodeShape.DIAMOND)
+	_add_node("unlock_solar_matrix", "Solar Matrix", "Blueprints for colossal solar arrays.", 4000.0, Vector2(-320, -640), ["desert_solar_output", "desert_solar_cost"], 6, "Unlocks Solar Matrix", 10)
 
-	_add_node("colonize_gas", "Atmospheric Harvesters", "Floating platforms for Gas Giants.", 2500.0, Vector2(120, -640), ["unlock_asteroids"], 5, "Unlocks Gas Planet Colonization", 1)
-	_add_node("unlock_atmospheric_siphon", "Atmospheric Siphon", "Blueprints for massive gas siphons.", 4000.0, Vector2(160, -800), ["colonize_gas"], 6, "Unlocks Atmospheric Siphon", 10)
-
-	_add_node("colonize_volcanic", "Thermal Shielding", "Extreme heat resistance for Volcanic Worlds.", 2500.0, Vector2(360, -640), ["unlock_asteroids"], 5, "Unlocks Volcanic Planet Colonization", 1)
-	_add_node("unlock_geothermal_plant", "Geothermal Plant", "Blueprints for extreme geothermal energy extraction.", 4000.0, Vector2(480, -800), ["colonize_volcanic"], 6, "Unlocks Geothermal Plant", 10)
+	# === TOP-RIGHT: GAS (Vertical) ===
+	_add_node("colonize_gas", "Atmospheric Harvesters", "Floating platforms for Gas Giants.", 2500.0, Vector2(160, -800), ["unlock_planetary_colonization"], 5, "Unlocks Gas Planet Colonization", 1)
 	
-	_add_node("unlock_interstellar", "Interstellar Travel", "Bend spacetime to discover entirely new Star Systems.", 10000.0, Vector2(0, -960), ["colonize_ice", "colonize_desert", "colonize_gas", "colonize_volcanic"], 7, "Discovers 1 New Star System per level", 999, NodeShape.CIRCLE)
+	_add_node("gas_siphon_speed", "Aero-Siphon", "Increases Atmospheric Siphon speed.", 1500.0, Vector2(240, -880), ["colonize_gas"], 4, "+20% Siphon Speed", 5, NodeShape.DIAMOND)
+	_add_node("gas_siphon_yield", "Aero-Condenser", "Increases Atmospheric Siphon yield.", 1500.0, Vector2(80, -880), ["colonize_gas"], 4, "+20% Siphon Output", 5, NodeShape.DIAMOND)
+	_add_node("unlock_atmospheric_siphon", "Atmospheric Siphon", "Filters rare particles from the atmosphere.\n[color=#ff5555]Requires: Precision Extractor[/color]", 2500.0, Vector2(160, -960), ["gas_siphon_speed", "gas_siphon_yield"], 4, "Unlocks Atmospheric Siphon (Gas Giant)", 10)
+	
+	_add_node("gas_refinery_speed", "Pressure Refining", "Increases Aerosol Refinery speed.", 1500.0, Vector2(240, -1040), ["unlock_atmospheric_siphon"], 4, "+20% Refinery Speed", 5, NodeShape.DIAMOND)
+	_add_node("gas_refinery_yield", "Pressure Condensation", "Increases Aerosol Refinery yield.", 1500.0, Vector2(80, -1040), ["unlock_atmospheric_siphon"], 4, "+20% Refinery Output", 5, NodeShape.DIAMOND)
+	_add_node("unlock_aerosol_refinery", "Aerosol Refinery", "Uses extreme atmospheric pressure to refine efficiently.", 3000.0, Vector2(160, -1120), ["gas_refinery_speed", "gas_refinery_yield"], 4, "Unlocks Aerosol Refinery (Gas Giant)", 10)
+	
+	_add_node("gas_funnel_boost", "Vortex Funnel", "Increases Pressure Funnel boost.", 1500.0, Vector2(240, -1200), ["unlock_aerosol_refinery"], 4, "+10% Funnel Boost Multiplier", 5, NodeShape.DIAMOND)
+	_add_node("gas_funnel_range", "Vortex Reach", "Increases Pressure Funnel radius.", 1500.0, Vector2(80, -1200), ["unlock_aerosol_refinery"], 4, "+1 Range to Pressure Funnel", 5, NodeShape.DIAMOND)
+	_add_node("unlock_pressure_funnel", "Pressure Funnel", "Boosts Speed of Siphons and Aerosol Refineries.", 2000.0, Vector2(160, -1280), ["gas_funnel_boost", "gas_funnel_range"], 5, "Unlocks Pressure Funnel", 10)
+
+	# === RIGHT: VOLCANIC (Horizontal) ===
+	_add_node("colonize_volcanic", "Thermal Shielding", "Extreme heat resistance for Volcanic Worlds.", 2500.0, Vector2(160, -640), ["unlock_planetary_colonization"], 5, "Unlocks Volcanic Planet Colonization", 1)
+	
+	_add_node("volcanic_dredge_speed", "Magma Flow", "Increases Magma Dredge speed.", 1500.0, Vector2(240, -720), ["colonize_volcanic"], 4, "+20% Dredge Speed", 5, NodeShape.DIAMOND)
+	_add_node("volcanic_dredge_yield", "Magma Filtering", "Increases Magma Dredge yield.", 1500.0, Vector2(240, -560), ["colonize_volcanic"], 4, "+20% Dredge Output", 5, NodeShape.DIAMOND)
+	_add_node("unlock_magma_dredge", "Magma Dredge", "Filters lava streams for extreme raw yield.\n[color=#ff5555]Requires: Precision Extractor[/color]", 2500.0, Vector2(320, -640), ["volcanic_dredge_speed", "volcanic_dredge_yield"], 4, "Unlocks Magma Dredge (Volcanic)", 10)
+	
+	_add_node("unlock_geothermal_plant", "Geothermal Plant", "Blueprints for extreme geothermal energy extraction.", 4000.0, Vector2(320, -480), ["volcanic_dredge_yield"], 6, "Unlocks Geothermal Plant", 10)
+
+	_add_node("volcanic_forge_speed", "Pyro-Smelting", "Increases Pyroclastic Forge speed.", 1500.0, Vector2(400, -720), ["unlock_magma_dredge"], 4, "+20% Forge Speed", 5, NodeShape.DIAMOND)
+	_add_node("volcanic_forge_yield", "Pyro-Casting", "Increases Pyroclastic Forge yield.", 1500.0, Vector2(400, -560), ["unlock_magma_dredge"], 4, "+20% Forge Output", 5, NodeShape.DIAMOND)
+	_add_node("unlock_pyroclastic_forge", "Pyroclastic Forge", "Uses geothermal heat to refine at near-zero energy cost.", 3000.0, Vector2(480, -640), ["volcanic_forge_speed", "volcanic_forge_yield"], 4, "Unlocks Pyroclastic Forge (Volcanic)", 10)
+	
+	_add_node("volcanic_stab_boost", "Tectonic Resonance", "Increases Tectonic Stabilizer boost.", 1500.0, Vector2(560, -720), ["unlock_pyroclastic_forge"], 4, "+10% Stabilizer Boost Multiplier", 5, NodeShape.DIAMOND)
+	_add_node("volcanic_stab_range", "Tectonic Wave", "Increases Tectonic Stabilizer radius.", 1500.0, Vector2(560, -560), ["unlock_pyroclastic_forge"], 4, "+1 Range to Tectonic Stabilizer", 5, NodeShape.DIAMOND)
+	_add_node("unlock_tectonic_stabilizer", "Tectonic Stabilizer", "Boosts Output of Magma Dredges.", 2000.0, Vector2(640, -640), ["volcanic_stab_boost", "volcanic_stab_range"], 5, "Unlocks Tectonic Stabilizer", 10)
+
+	_add_node("unlock_interstellar", "Interstellar Travel", "Bend spacetime to discover entirely new Star Systems.", 10000.0, Vector2(0, -1600), ["unlock_planetary_colonization"], 7, "Discovers 1 New Star System per level", 999, NodeShape.CIRCLE)
 
 	# --- BRANCH 2: SCIENCE (Mid-Left-Down) ---
 	_add_node("unlock_advanced_lab", "Advanced Research", "Upgrades the basic University into a dedicated high-yield Research Lab.", 150.0, Vector2(-120, 240), ["unlock_lab"], 2, "Unlocks Advanced Lab", 10)
 	_add_node("unlock_research_academy", "Research Academy", "Large-scale science academy to generate passive Science.", 800.0, Vector2(-240, 480), ["unlock_advanced_lab"], 3, "Unlocks Research Academy", 10)
 
 	# --- BRANCH 3: MINING (Left-Down) ---
+	# Mirrored exactly from Branch 6: Energy
 	_add_node("unlock_mining", "Mining Operations", "Establishes the geological survey programs needed to locate and extract raw minerals from planetary crust.\nUpgrade to increase Mine max level.", 20.0, Vector2(-240, 0), ["root"], 1, "Unlocks Mining District & Mine & +1 Max Level", 10, NodeShape.HEXAGON)
-	_add_node("unlock_deep_drill", "Deep Drill", "Unlocks high-yield Deep Drills to penetrate bedrock.", 200.0, Vector2(-240, 160), ["unlock_mining"], 2, "Unlocks Deep Drill", 10)
-	_add_node("mine_speed", "Excavation Drills", "Equips mining facilities with high-torque diamond drills.", 50.0, Vector2(-240, 320), ["unlock_deep_drill"], 2, "+5% Mining production speed per level", 10, NodeShape.DIAMOND)
-	_add_node("unlock_refinery", "Refinery", "Unlocks ore-to-mineral Refineries.", 400.0, Vector2(-480, 320), ["unlock_deep_drill"], 3, "Unlocks Refinery", 10)
-	_add_node("deep_mining", "Seismic Sensors", "Deep scans tectonic plates to output higher yields.", 350.0, Vector2(-480, 160), ["unlock_refinery"], 3, "+25% Mine & Deep Drill output amount", 5, NodeShape.DIAMOND)
-	_add_node("core_extractor", "Core Extractor", "Extracts hyper-dense minerals directly from the planet's mantle.", 1200.0, Vector2(-720, 480), ["unlock_refinery"], 4, "Unlocks Core Extractor", 1)
-	_add_node("mineral_compression", "Matter Compression", "Condenses raw minerals, vastly increasing storage efficiency.", 900.0, Vector2(-480, 480), ["core_extractor"], 4, "+100% Mineral Storage", 5, NodeShape.DIAMOND)
-	_add_node("deep_core_drilling", "Planetary Fracture", "Taps into the core to maximize global mineral yield.", 1500.0, Vector2(-720, 640), ["core_extractor"], 5, "+10% Mine output multiplier", 10, NodeShape.DIAMOND)
-	_add_node("omega_drill", "Omega Drill", "The ultimate planetary mining solution. Consumes huge energy.", 3000.0, Vector2(-960, 640), ["core_extractor"], 5, "Unlocks Omega Drill", 1)
+	
+	_add_node("unlock_deep_drill", "Deep Drill", "Unlocks high-yield Deep Drills to penetrate bedrock.", 200.0, Vector2(-480, 160), ["unlock_mining"], 2, "Unlocks Deep Drill", 10)
+	
+	# Main Extractor Line
+	_add_node("unlock_precision_extractor", "Precision Extractor", "Extracts only the TARGETED raw mineral.", 1000.0, Vector2(-600, 160), ["unlock_deep_drill"], 3, "Unlocks Precision Extractor", 10)
+	_add_node("unlock_mantle_cracker", "Mantle Cracker", "Cracks the mantle for massive mixed raw minerals.", 3000.0, Vector2(-720, 160), ["unlock_precision_extractor"], 4, "Unlocks Mantle Cracker", 10)
+	_add_node("unlock_quantum_harvester", "Quantum Harvester", "Godlike TARGETED extraction via quantum teleportation.", 10000.0, Vector2(-840, 220), ["unlock_mantle_cracker"], 5, "Unlocks Quantum Harvester", 10)
+
+	# Main Refinery Line
+	_add_node("unlock_refinery", "Refinery", "Unlocks ore-to-mineral Refineries.", 400.0, Vector2(-480, 40), ["unlock_deep_drill"], 2, "Unlocks Refinery", 10)
+	_add_node("unlock_plasma_smelter", "Plasma Smelter", "Uses plasma to rapidly smelt minerals.", 1500.0, Vector2(-480, -80), ["unlock_refinery"], 3, "Unlocks Plasma Smelter", 10)
+	_add_node("unlock_molecular_forge", "Molecular Forge", "Reconstructs minerals at the molecular level.", 5000.0, Vector2(-480, -200), ["unlock_plasma_smelter"], 4, "Unlocks Molecular Forge", 10)
+	_add_node("unlock_singularity_forge", "Singularity Forge", "Extreme gravity compression refining.", 15000.0, Vector2(-480, -320), ["unlock_molecular_forge"], 5, "Unlocks Singularity Forge", 10)
+
+	# Passive Skills (Diamonds)
+	_add_node("mine_speed", "Excavation Drills", "Equips mining facilities with high-torque diamond drills.", 50.0, Vector2(-480, 280), ["unlock_deep_drill"], 2, "+5% Mining speed per level", 10, NodeShape.DIAMOND)
+	_add_node("deep_mining", "Seismic Sensors", "Deep scans tectonic plates to output higher yields.", 350.0, Vector2(-600, 280), ["unlock_deep_drill"], 3, "+2% Mine output multiplier per level", 10, NodeShape.DIAMOND)
+	_add_node("mining_logistics", "Automated Conveyors", "Reduces operational energy costs.", 900.0, Vector2(-720, 280), ["deep_mining"], 4, "-2% Mining Energy Cost per level", 10, NodeShape.DIAMOND)
+	_add_node("refinery_efficiency", "Refinery Optimization", "Enhances standard smelting procedures.", 450.0, Vector2(-600, 40), ["unlock_refinery"], 3, "+5% Refinery speed per level", 10, NodeShape.DIAMOND)
+
+	# Buff Buildings
+	_add_node("unlock_extraction_optimizer", "Extraction Optimizer", "Increases raw output for all extractors.", 800.0, Vector2(-480, 400), ["mine_speed"], 3, "Unlocks Extraction Optimizer", 10)
+	_add_node("unlock_sonic_resonator", "Sonic Resonator", "Increases tick speed for all extractors.", 1200.0, Vector2(-840, 400), ["unlock_quantum_harvester"], 3, "Unlocks Sonic Resonator", 10)
+	_add_node("unlock_thermal_crusher", "Thermal Crusher", "Increases tick speed for all refineries.", 1200.0, Vector2(-720, 40), ["unlock_mantle_cracker"], 3, "Unlocks Thermal Crusher", 10)
+	_add_node("unlock_logistics_hub", "Logistics Hub", "Reduces energy cost for all mining buildings.", 1800.0, Vector2(-600, -80), ["unlock_plasma_smelter"], 4, "Unlocks Logistics Hub", 10)
+
+
+	# Specialized: Asteroid
+	_add_node("unlock_micro_g_drill", "Micro-G Drill", "Fires tethers deep into the core.\n[color=#ff5555]Requires: Deep Drill[/color]", 1200.0, Vector2(-160, -480), ["unlock_asteroids"], 3, "Unlocks Micro-G Drill (Asteroid)", 10)
+	_add_node("unlock_zero_g_sorter", "Zero-G Sorter", "Improves extraction speed on Asteroids.", 1500.0, Vector2(-320, -480), ["unlock_micro_g_drill"], 4, "Unlocks Zero-G Sorter", 10)
 
 	# --- BRANCH 4: URBANIZATION (Down) ---
 	_add_node("unlock_commercial", "Commercial Hubs", "Transitions from simple trade to high-density commercial centers.", 150.0, Vector2(0, 320), ["unlock_residential"], 2, "Unlocks Commercial Center", 10)
@@ -211,6 +267,14 @@ func can_purchase(id: String) -> bool:
 		if not parent_ok and not node.parents.is_empty():
 			return false
 
+		# Enforce cross-branch dependencies that we removed visually to keep tree clean
+		if id == "unlock_magma_dredge" and get_skill_level("unlock_precision_extractor") == 0:
+			return false
+		if id == "unlock_atmospheric_siphon" and get_skill_level("unlock_precision_extractor") == 0:
+			return false
+		if id == "unlock_micro_g_drill" and get_skill_level("unlock_deep_drill") == 0:
+			return false
+
 	var next_cost := get_next_cost(id)
 	return GameState.science_points >= next_cost
 
@@ -302,11 +366,20 @@ func get_credits_mult() -> float:
 func get_mine_output_mult() -> float:
 	var base := 1.0
 	if "deep_mining" in unlocked_skills:
-		base += 0.25
-	if "deep_core_drilling" in unlocked_skills:
-		var lv := get_skill_level("deep_core_drilling")
-		base += 0.02 * lv
+		base += 0.02 * get_skill_level("deep_mining")
 	return base
+
+func get_refinery_speed_mult() -> float:
+	var base := 1.0
+	if "refinery_efficiency" in unlocked_skills:
+		base += 0.05 * get_skill_level("refinery_efficiency")
+	return base
+
+func get_mining_energy_mult() -> float:
+	var base := 1.0
+	if "mining_logistics" in unlocked_skills:
+		base -= 0.02 * get_skill_level("mining_logistics")
+	return maxf(0.1, base)
 
 func get_energy_consume_mult() -> float:
 	var mult := 1.0

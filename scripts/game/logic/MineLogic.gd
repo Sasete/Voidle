@@ -2,7 +2,10 @@ class_name MineLogic
 extends BuildingLogic
 
 func produce(pp: PlanetProgress, def: BuildingDef, amount: int, mods: Array, entry: Dictionary, skill_tree: Node) -> void:
-	var mult: float = PlanetModifier.combined(mods, PlanetModifier.Effect.MINE_OUTPUT_MULT) * skill_tree.get_mine_output_mult()
+	var dbuffs = ProductionManager.get_district_buffs(pp, entry.get("district_id", ""))
+	var mult: float = PlanetModifier.combined(mods, PlanetModifier.Effect.MINE_OUTPUT_MULT) * skill_tree.get_mine_output_mult() * dbuffs.mine_output_mult
+	if def.building_id == "magma_dredge":
+		mult *= dbuffs.magma_dredge_output_mult
 	
 	# Basic extractor -> Mix of all minerals based on PlanetData
 	var pd: PlanetData = GameState.get_planet_data(pp.planet_seed)
@@ -23,6 +26,13 @@ func produce(pp: PlanetProgress, def: BuildingDef, amount: int, mods: Array, ent
 		total_density += d
 		
 	var total_out := def.output_amount * amount * mult
+	
+	# Targeted extraction
+	var target_min: String = entry.get("target_mineral", "")
+	if target_min != "" and def.building_id in ["precision_extractor", "quantum_harvester"]:
+		pp.add_resource(target_min, total_out)
+		return
+		
 	if total_density > 0.0:
 		for i in raw_list.size():
 			var share := total_out * (densities[i] / total_density)

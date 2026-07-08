@@ -86,7 +86,7 @@ static func for_planet(planet_type: PlanetData.Type) -> Array[PlanetModifier]:
 				_m("Micro-Gravity",    "Cramped conditions reduce district space.",  Effect.MAX_DISTRICTS_ADD, -3.0),
 				_m("Tight Quarters",   "Each district fits fewer buildings.",        Effect.MAX_SLOTS_ADD,     -1.0),
 				_m("Metal-Rich Core",  "Exceptional ore concentration.",             Effect.MINE_OUTPUT_MULT,  1.75),
-				_m("Fast Extraction",  "Proximity of ore dramatically speeds mining.", Effect.MINE_SPEED_MULT, 2.00),
+				_m("Fast Extraction",  "Proximity of ore dramatically speeds mining.", Effect.MINE_SPEED_MULT, 3.00),
 			])
 	return []
 

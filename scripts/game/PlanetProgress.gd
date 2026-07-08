@@ -10,10 +10,14 @@ extends Resource
 @export var upgrade_progress: float = 0.0
 @export var upgrade_duration: float = 60.0
 
-@export var max_districts:   int = 4
-@export var max_mining_lv:   int = 1
-@export var max_generators:  int = 2
-@export var max_spaceports:  int = 0
+const BASE_DISTRICTS:        int = 2   # district slots at level 1
+const BASE_ORBITAL_DISTRICTS: int = 1  # orbital slots at level 1–5
+
+@export var max_districts:          int = BASE_DISTRICTS
+@export var max_orbital_districts:  int = BASE_ORBITAL_DISTRICTS
+@export var max_mining_lv:          int = 1
+@export var max_generators:         int = 2
+@export var max_spaceports:         int = 0
 
 # ── Districts ────────────────────────────────────────────────────────────────
 @export var districts_used: int = 0
@@ -69,19 +73,20 @@ func get_upgrade_cost() -> Dictionary:
 	return cost
 
 func recalculate_limits() -> void:
-	max_districts  = 2  + (level - 1)
-	
+	max_districts         = BASE_DISTRICTS + (level - 1)
+	max_orbital_districts = ceili(level / 5.0)
+
 	if has_building("cryo_vault"):
 		max_districts += 2
-		
+
 	var st = null
 	if Engine.has_singleton("SceneTree") and Engine.get_main_loop():
 		st = Engine.get_main_loop().root.get_node_or_null("SkillTree")
 	if st and st.has_method("get_max_districts_add"):
 		max_districts += st.get_max_districts_add()
-		
-	max_mining_lv  = 1  + (level - 1)
-	max_generators = 2  + (level - 1) * 2
+
+	max_mining_lv  = 1 + (level - 1)
+	max_generators = 2 + (level - 1) * 2
 	max_spaceports = 1 if level >= 2 else 0
 
 func districts_free() -> int:

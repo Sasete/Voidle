@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="BuildingDef" load_steps=2 format=3 uid="uid://b_logistics_hub_b2521044"]
+
+[ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="1_def"]
+
+[resource]
+script = ExtResource("1_def")
+building_id = "logistics_hub"
+display_name = "Logistics Hub"
+description = "Reduces energy cost for all mining buildings."
+allowed_poi_types = Array[int]([2])
+allowed_planet_types = Array[int]([])
+base_cost = 2000.0
+slot_cost = 1
+min_planet_lv = 3
+construct_duration = 0.0
+tick_duration = 30.0
+energy_per_tick = -5.0
+output_type = 0
+output_amount = 0.0
+input_type = 0
+input_amount = 0.0
+input_tier = 1
+unlocked_by_default = false

@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="BuildingDef" load_steps=3 format=3 uid="uid://b_refinery_5864779f"]
+[gd_resource type="Resource" script_class="BuildingDef" load_steps=3 format=3 uid="uid://b_singularity_forge_0e0712c3"]
 
 [ext_resource type="Script" path="res://scripts/game/logic/RefineryLogic.gd" id="1_logic"]
 [ext_resource type="Script" path="res://scripts/game/BuildingDef.gd" id="2_def"]
@@ -8,21 +8,21 @@ script = ExtResource("1_logic")
 
 [resource]
 script = ExtResource("2_def")
-building_id = "refinery"
-display_name = "Refinery"
-description = "Converts raw ore to refined minerals."
+building_id = "singularity_forge"
+display_name = "Singularity Forge"
+description = "Extreme gravity compression refining."
 allowed_poi_types = Array[int]([2])
 allowed_planet_types = Array[int]([])
-base_cost = 800.0
+base_cost = 20000.0
 slot_cost = 1
-min_planet_lv = 2
+min_planet_lv = 5
 construct_duration = 0.0
-tick_duration = 24.0
-energy_per_tick = -8.0
+tick_duration = 5.0
+energy_per_tick = -150.0
 output_type = 4
-output_amount = 5.0
+output_amount = 200.0
 input_type = 3
-input_amount = 10.0
-input_tier = 1
+input_amount = 400.0
+input_tier = 4
 logic = SubResource("Resource_logic")
 unlocked_by_default = false

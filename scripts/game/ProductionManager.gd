@@ -97,13 +97,14 @@ func _tick_all(delta: float) -> void:
 
 			for poi in pd.custom_pois:
 				if poi.constructing:
+					if poi.is_orbital():
+						continue  # Orbital progress is driven by rocket animation in PlanetaryView
 					poi.construct_progress += delta / max(0.1, poi.construct_duration)
 					if poi.construct_progress >= 1.0:
 						poi.constructing = false
 						poi.construct_progress = 1.0
 						district_changed = true
-					else:
-						building_progress_changed.emit(planet_seed, poi.label, poi.construct_progress)
+					building_progress_changed.emit(planet_seed, poi.label, poi.construct_progress)
 			if district_changed:
 				GameState.planet_progress_changed.emit(planet_seed)
 
@@ -205,10 +206,17 @@ func _tick_all(delta: float) -> void:
 
 			# ── Tick production bar ───────────────────────────────────────────
 			var speed_mult: float = _deposit_speed(def, planet_seed, mods) * energy_speed * get_node("/root/SkillTree").get_global_speed_mult() * planet_speed_mult
-			if def.output_type == BuildingDef.OutputType.RAW_MINERAL:
-				speed_mult *= get_node("/root/SkillTree").get_mine_speed_mult()
-			var eff_dur: float = entry.get("effective_duration", def.tick_duration)
 			var d_buffs := get_district_buffs(pp, poi_label)
+			if def.output_type == BuildingDef.OutputType.RAW_MINERAL:
+				speed_mult *= get_node("/root/SkillTree").get_mine_speed_mult() * d_buffs.mine_speed_mult
+				if def.building_id == "atmospheric_siphon":
+					speed_mult *= d_buffs.gas_mining_speed_mult
+			elif def.output_type == BuildingDef.OutputType.REFINED_MINERAL:
+				speed_mult *= d_buffs.refinery_speed_mult * get_node("/root/SkillTree").get_refinery_speed_mult()
+				if def.building_id == "aerosol_refinery":
+					speed_mult *= d_buffs.gas_mining_speed_mult
+					
+			var eff_dur: float = entry.get("effective_duration", def.tick_duration)
 			if def.input_type != BuildingDef.OutputType.NONE and def.output_type == BuildingDef.OutputType.ENERGY:
 				eff_dur *= d_buffs.generator_duration_mult
 				var in_min: String = entry.get("burning_mineral", "")
@@ -261,7 +269,10 @@ func _on_tick_complete(pp: PlanetProgress, def: BuildingDef,
 			var pd: PlanetData = GameState.get_planet_data(pp.planet_seed)
 			var tag := ResourceData.Tag.RAW_MINERAL if def.output_type == BuildingDef.OutputType.RAW_MINERAL else ResourceData.Tag.REFINED_MINERAL
 			var res_list := GameState.get_body_resources_for(pd).get_by_tag(tag)
-			var mult: float = get_building_level_mult(entry.get("level", 1)) * st.get_mine_output_mult()
+			var dbuffs := get_district_buffs(pp, poi_lbl)
+			var mult: float = get_building_level_mult(entry.get("level", 1)) * st.get_mine_output_mult() * dbuffs.mine_output_mult
+			if def.building_id == "magma_dredge":
+				mult *= dbuffs.magma_dredge_output_mult
 			var total_density: float = 0.0
 			var densities: Array[float] = []
 			var rng := RandomNumberGenerator.new()
@@ -333,7 +344,9 @@ func get_building_output(pp: PlanetProgress, entry: Dictionary, def: BuildingDef
 			if in_min == "":
 				out_val = 0.0 # No fuel
 	elif def.output_type == BuildingDef.OutputType.RAW_MINERAL or def.output_type == BuildingDef.OutputType.REFINED_MINERAL:
-		out_val *= st.get_mine_output_mult()
+		out_val *= st.get_mine_output_mult() * dbuffs.mine_output_mult
+		if def.building_id == "magma_dredge":
+			out_val *= dbuffs.magma_dredge_output_mult
 	return out_val
 
 
@@ -342,7 +355,13 @@ func get_district_buffs(pp: PlanetProgress, district_id: String) -> Dictionary:
 		"solar_mult": 1.0,
 		"geothermal_mult": 1.0,
 		"clean_energy_mult": 1.0,
-		"generator_duration_mult": 1.0
+		"generator_duration_mult": 1.0,
+		"mine_output_mult": 1.0,
+		"mine_speed_mult": 1.0,
+		"refinery_speed_mult": 1.0,
+		"mining_energy_cost_mult": 1.0,
+		"magma_dredge_output_mult": 1.0,
+		"gas_mining_speed_mult": 1.0
 	}
 	for b in pp.buildings_in_district(district_id):
 		if b.get("constructing", false): continue
@@ -359,6 +378,20 @@ func get_district_buffs(pp: PlanetProgress, district_id: String) -> Dictionary:
 			buffs.clean_energy_mult += 0.01 * amt * lv_mult
 		elif bid == "combustion_stabilizer":
 			buffs.generator_duration_mult += 0.05 * amt * lv_mult
+		elif bid == "extraction_optimizer":
+			buffs.mine_output_mult += 0.05 * amt * lv_mult
+		elif bid == "sonic_resonator":
+			buffs.mine_speed_mult += 0.05 * amt * lv_mult
+		elif bid == "thermal_crusher":
+			buffs.refinery_speed_mult += 0.05 * amt * lv_mult
+		elif bid == "logistics_hub":
+			buffs.mining_energy_cost_mult -= 0.05 * amt * lv_mult
+		elif bid == "tectonic_stabilizer":
+			buffs.magma_dredge_output_mult += 0.50 * amt * lv_mult
+		elif bid == "pressure_funnel":
+			buffs.gas_mining_speed_mult += 0.50 * amt * lv_mult
+		elif bid == "zero_g_sorter":
+			buffs.mine_speed_mult += 0.20 * amt * lv_mult
 	return buffs
 
 ## Computes global energy balance and ratio across ALL colonized planets.
@@ -401,7 +434,10 @@ func _calc_global_energy() -> void:
 				total_prod += contrib
 				net += contrib
 			elif def.energy_per_tick < 0.0:
-				var contrib := def.energy_per_tick * amt * consume_mult * (st.get_energy_consume_mult() as float) * planet_energy_mult
+				var building_consume: float = consume_mult
+				if def.output_type == BuildingDef.OutputType.RAW_MINERAL or def.output_type == BuildingDef.OutputType.REFINED_MINERAL:
+					building_consume *= max(0.1, dbuffs.mining_energy_cost_mult as float) * st.get_mining_energy_mult()
+				var contrib := def.energy_per_tick * amt * building_consume * (st.get_energy_consume_mult() as float) * planet_energy_mult
 				total_demand += abs(contrib)
 				net += contrib
 				
@@ -452,7 +488,10 @@ func planet_energy_net(pp: PlanetProgress) -> float:
 				mult *= dbuffs.clean_energy_mult * dbuffs.geothermal_mult
 			total += def.energy_per_tick * amt * mult
 		elif def.energy_per_tick < 0.0:
-			total += def.energy_per_tick * amt * consume_mult * (st.get_energy_consume_mult() as float)
+			var building_consume: float = consume_mult
+			if def.output_type == BuildingDef.OutputType.RAW_MINERAL or def.output_type == BuildingDef.OutputType.REFINED_MINERAL:
+				building_consume *= max(0.1, dbuffs.mining_energy_cost_mult as float) * st.get_mining_energy_mult()
+			total += def.energy_per_tick * amt * building_consume * (st.get_energy_consume_mult() as float)
 			
 		if def.output_type == BuildingDef.OutputType.ENERGY:
 			var mult: float = lv_mult
