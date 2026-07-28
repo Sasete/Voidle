@@ -3,7 +3,7 @@ extends ColorRect
 
 signal planet_clicked(screen_pos: Vector2)
 
-@export var momentum_decay: float = 0.88
+@export var momentum_decay: float = 0.92
 
 ## Editor preview controls — no effect at runtime.
 @export_group("Editor Preview")
@@ -29,6 +29,7 @@ signal planet_clicked(screen_pos: Vector2)
 
 var _dragging := false
 var _drag_velocity := 0.0
+var _last_drag_time := 0
 var _drag_total_px := 0.0
 var _rotation_offset := 0.0
 var _last_mouse_x := 0.0
@@ -164,10 +165,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		var local := get_local_mouse_position()
 		var center := size * 0.5
-		# account for aspect ratio when hit-testing the circle
-		var ar: float = size.x / size.y if size.y > 0 else 1.0
-		var corrected := Vector2((local.x - center.x) * ar, local.y - center.y)
-		var dist := corrected.length()
+		var dist := local.distance_to(center)
 		if event.pressed and dist < _planet_radius_px:
 			_dragging = true
 			_drag_velocity = 0.0
@@ -177,6 +175,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			# Only treat as a tap if total drag distance was small
 			if _dragging and _drag_total_px < 8.0:
 				planet_clicked.emit(event.position)
+			if Time.get_ticks_msec() - _last_drag_time > 100:
+				_drag_velocity = 0.0
 			_dragging = false
 			_drag_total_px = 0.0
 
@@ -200,7 +200,15 @@ func _unhandled_input(event: InputEvent) -> void:
 		# 1:1 surface mapping: dragging by r_px = π radians rotation
 		var delta_rot: float = delta_x / _planet_radius_px
 		_rotation_offset = fposmod(_rotation_offset - delta_rot, TAU)
-		_drag_velocity = -delta_rot
+		
+		# Smooth velocity so a single tiny mouse event doesn't kill momentum
+		if _drag_velocity == 0.0:
+			_drag_velocity = -delta_rot
+		else:
+			_drag_velocity = lerp(_drag_velocity, -delta_rot, 0.6)
+			
+		_last_drag_time = Time.get_ticks_msec()
+		
 		if material:
 			material.set_shader_parameter("rotation_offset", _rotation_offset)
 			# light_direction synced at end of _process every frame
