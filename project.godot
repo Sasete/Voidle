@@ -35,9 +35,11 @@ AudioManager="*res://scripts/system/AudioManager.gd"
 AchievementManager="*res://scripts/game/AchievementManager.gd"
 TutorialManager="*res://scripts/system/TutorialManager.gd"
 SettingsManager="*res://scripts/system/SettingsManager.gd"
+ScreenshotManager="*res://scripts/system/ScreenshotManager.gd"
 
 [display]
 
+window/size/mode=3
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 

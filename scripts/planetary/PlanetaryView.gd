@@ -6550,13 +6550,13 @@ func _toggle_slot_dropdown(card: PanelContainer, poi: POIData, planet: PlanetDat
 	var tut_bid := TutorialManager.get_action_building_target()
 	if tut_bid != "":
 		for row in list.get_children():
-			if not (row is Button) or not row.has_meta("building_id"): continue
+			if not row.has_meta("building_id"): continue
 			if row.get_meta("building_id") == tut_bid:
 				_tut_highlight_node = row as Control
 				_start_tut_node_pulse(_tut_highlight_node)
 			else:
-				(row as Button).disabled = true
-				(row as Button).modulate = Color(0.35, 0.35, 0.45, 0.5)
+				row.set_meta("tut_disabled", true)
+				row.modulate = Color(0.35, 0.35, 0.45, 0.5)
 
 func _toggle_mineral_dropdown(btn: Control, raw_list: Array, target_key: String, current_tgt: String, poi: POIData, planet: PlanetData, entry: Dictionary) -> void:
 	if _active_slot_dropdown != null and is_instance_valid(_active_slot_dropdown):

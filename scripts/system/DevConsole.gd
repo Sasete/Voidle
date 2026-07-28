@@ -328,6 +328,7 @@ func _exec(line: String) -> void:
 			_log_info("  [color=#88ddcc]clear_save[/color]        — delete save file")
 			_log_info("[color=#33cc55]── DEBUG ─────────────────────────────────[/color]")
 			_log_info("  [color=#88ddcc]state[/color]  [color=#88ddcc]clear[/color]  [color=#88ddcc]debug coords[/color]")
+			_log_info("  [color=#88ddcc]tutorial complete[/color] — skip/finish tutorial")
 
 		# ── Credits ─────────────────────────────────────────────────────────
 		"credits":
@@ -489,6 +490,23 @@ func _exec(line: String) -> void:
 				elif cnt < 3:  status = "[color=#ffcc55]%d/3 scanned[/color]" % cnt
 				else:          status = "[color=#88ddaa]fully scanned[/color]"
 				_log_info("  [color=#aaaaaa]slot %d[/color] — %s" % [sl, status])
+
+		# ── Tutorial ────────────────────────────────────────────────────────
+		"tutorial":
+			var target := parts[1].to_lower() if parts.size() > 1 else ""
+			if target == "complete":
+				if TutorialManager._active and not TutorialManager._tutorial_done:
+					TutorialManager._run_finale()
+					_log_ok("Tutorial forced to finish.")
+				else:
+					TutorialManager._tutorial_done = true
+					SettingsManager.tutorial_ever_done = true
+					SettingsManager.save_settings()
+					TutorialManager._quest_step = TutorialManager.TUTORIAL_QUEST_COUNT
+					TutorialManager._quest_sub = 0
+					_log_ok("Tutorial marked as complete for next run.")
+			else:
+				_log_err("Unknown target. Try: tutorial complete")
 
 		# ── State ───────────────────────────────────────────────────────────
 		"state":

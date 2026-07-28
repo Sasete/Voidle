@@ -15,6 +15,7 @@ allowed_poi_types = Array[int]([0])
 base_cost = 100.0
 slot_cost = 1
 min_planet_lv = 1
+construct_duration = 3.0
 tick_duration = 60.0
 energy_per_tick = -2.0
 output_type = 2

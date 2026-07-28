@@ -10,7 +10,7 @@ os.makedirs(ACHIEVEMENTS_DIR, exist_ok=True)
 def write_achievement(a_id, title, desc, icon, trigger, int_val=0, float_val=0.0, str_val=""):
     content = f"""[gd_resource type="Resource" script_class="AchievementDef" format=3]
 
-[ext_resource type="Script" path="res://scripts/game/AchievementDef.gd" id="1_def"]
+[ext_resource type="Script" path="res://resources/achievements/AchievementDef.gd" id="1_def"]
 
 [resource]
 script = ExtResource("1_def")

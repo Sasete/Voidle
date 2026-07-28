@@ -634,6 +634,12 @@ func _close_skill_tree() -> void:
 				return
 
 func _run_finale() -> void:
+	# Clean up any open narrative UI or action bar if skipped
+	_narr_done_cb = Callable()
+	_narr_instant = true
+	if is_instance_valid(_narr_panel): _narr_panel.queue_free(); _narr_panel = null
+	_hide_action_bar()
+
 	# Close SkillTree and return to planet view
 	_close_skill_tree()
 	await get_tree().create_timer(0.55).timeout
@@ -851,16 +857,18 @@ func _type_page(page: int) -> void:
 			continue
 
 		for ci in full.length():
-			if _narr_instant: break
+			if _narr_instant or not is_instance_valid(_narr_lbl): break
 			var partial := full.substr(0, ci + 1)
 			_narr_lbl.text = _compose_bbcode(typed_segs, is_bold, partial, true)
 			AudioManager.play("tick", -19.0)
 			await get_tree().create_timer(TW_NARR).timeout
-			if _narr_instant: break
+			if _narr_instant or not is_instance_valid(_narr_lbl): break
 
 		typed_segs.append(seg)
-		_narr_lbl.text = _compose_bbcode(typed_segs, false, "", false)
+		if is_instance_valid(_narr_lbl):
+			_narr_lbl.text = _compose_bbcode(typed_segs, false, "", false)
 
+	if not is_instance_valid(_narr_lbl): return
 	# Show complete page (handles instant-skip)
 	_narr_lbl.text = _all_bbcode(segs)
 	_narr_typing   = false
