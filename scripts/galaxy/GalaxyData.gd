@@ -57,11 +57,11 @@ func compute_hop_distances() -> Array[int]:
 				queue.append(nb)
 	return dist
 
-static func from_seed(s: int) -> GalaxyData:
+static func from_seed(s: int, custom_n: int = 34) -> GalaxyData:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = s ^ 0xCA1A
 	var g   := GalaxyData.new()
-	var n   := 34
+	var n   := custom_n
 
 	# home star at center
 	g.names.append(_gen_name(rng))

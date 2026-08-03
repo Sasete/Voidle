@@ -1,0 +1,36 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/trailer_director.gd" id="1_director"]
+
+[node name="TrailerScene" type="CanvasLayer" node_paths=PackedStringArray("music_player", "animation_player", "title_label", "overlay_rect", "gameplay_container")]
+script = ExtResource("1_director")
+music_player = NodePath("MusicPlayer")
+animation_player = NodePath("TrailerAnim")
+title_label = NodePath("TitleLabel")
+overlay_rect = NodePath("OverlayRect")
+gameplay_container = NodePath("GameplayContainer")
+
+[node name="GameplayContainer" type="Node2D" parent="."]
+
+[node name="OverlayRect" type="ColorRect" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 1)
+
+[node name="TitleLabel" type="Label" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_font_sizes/font_size = 72
+text = "TRAILER BAŞLIYOR..."
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="MusicPlayer" type="AudioStreamPlayer" parent="."]
+
+[node name="TrailerAnim" type="AnimationPlayer" parent="."]

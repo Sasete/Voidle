@@ -189,26 +189,8 @@ func _build_tree_graph() -> void:
 		card.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 
 		# Style based on status (Cyberpunk Theme)
-		var bg_color := Color(0.08, 0.09, 0.12, 0.9)
-		var border_color := Color(0.5, 0.6, 0.7, 0.8) # <--- Brighter border for locked nodes
-		var shadow_color := Color(0.0, 0.0, 0.0, 0.0)
-		var border_width := 1.0
-		
-		if is_max_level:
-			bg_color = Color(0.02, 0.1, 0.05, 0.95)
-			border_color = Color(0.25, 0.95, 0.45, 1.0)
-			shadow_color = Color(0.25, 0.95, 0.45, 0.3)
-			border_width = 2.0
-		elif cur_lv > 0:
-			bg_color = Color(0.1, 0.08, 0.02, 0.95)
-			border_color = Color(0.95, 0.65, 0.25, 0.9)
-			shadow_color = Color(0.95, 0.65, 0.25, 0.2)
-			border_width = 2.0
-		elif purchasable:
-			bg_color = Color(0.04, 0.08, 0.15, 0.95)
-			border_color = Color(0.15, 0.85, 0.95, 0.85)
-			shadow_color = Color(0.15, 0.85, 0.95, 0.2)
-			border_width = 2.0
+		var st_ref = st
+		var id_ref = id
 
 		card.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 
@@ -248,6 +230,32 @@ func _build_tree_graph() -> void:
 					pts.append(c + Vector2(cos(angle), sin(angle)) * r)
 					glow_pts.append(c + Vector2(cos(angle), sin(angle)) * (r + 2.0))
 			
+			var d_cur_lv: int = st_ref.call("get_skill_level", id_ref)
+			var d_max_lv: int = st_ref.get("nodes")[id_ref].max_level
+			var d_is_max: bool = d_cur_lv >= d_max_lv
+			var d_purchasable: bool = st_ref.call("can_purchase", id_ref)
+			
+			var bg_color := Color(0.08, 0.09, 0.12, 0.9)
+			var border_color := Color(0.5, 0.6, 0.7, 0.8)
+			var shadow_color := Color(0.0, 0.0, 0.0, 0.0)
+			var border_width := 1.0
+			
+			if d_is_max:
+				bg_color = Color(0.02, 0.1, 0.05, 0.95)
+				border_color = Color(0.25, 0.95, 0.45, 1.0)
+				shadow_color = Color(0.25, 0.95, 0.45, 0.3)
+				border_width = 2.0
+			elif d_cur_lv > 0:
+				bg_color = Color(0.1, 0.08, 0.02, 0.95)
+				border_color = Color(0.95, 0.65, 0.25, 0.9)
+				shadow_color = Color(0.95, 0.65, 0.25, 0.2)
+				border_width = 2.0
+			elif d_purchasable:
+				bg_color = Color(0.04, 0.08, 0.15, 0.95)
+				border_color = Color(0.15, 0.85, 0.95, 0.85)
+				shadow_color = Color(0.15, 0.85, 0.95, 0.2)
+				border_width = 2.0
+
 			# Draw Glow (Shadow)
 			if shadow_color.a > 0:
 				bg_shape.draw_polyline(glow_pts, shadow_color, 4.0, true)
@@ -418,6 +426,10 @@ func _build_tree_graph() -> void:
 			"unlock_interstellar":
 				icon_col = Color(1.0, 1.0, 1.0) # Pure White (Star)
 				icon_tier = 5 # Star -> Core
+
+		# Store base properties for dynamic refresh
+		texture_rect.set_meta("base_color", icon_col)
+		texture_rect.set_meta("tier", icon_tier)
 
 		# De-saturate color slightly if locked/unpurchasable
 		if not unlocked and not purchasable:
@@ -668,6 +680,32 @@ func _draw_connections() -> void:
 					_connections_draw.draw_circle(p2, line_width * 1.2, line_col)
 
 			_connections_draw.draw_polyline(pts, line_col, line_width, true)
+
+func force_refresh_node(id: String) -> void:
+	if not _ui_nodes.has(id): return
+	var card = _ui_nodes[id]
+	var wrapper = card.get_child(0)
+	var bg_shape = wrapper.get_child(0)
+	bg_shape.queue_redraw()
+	
+	var center = wrapper.get_child(1)
+	var texture_rect = center.get_child(0)
+	if texture_rect.has_meta("base_color") and texture_rect.has_meta("tier"):
+		var base_color = texture_rect.get_meta("base_color")
+		var tier = texture_rect.get_meta("tier")
+		
+		var st: Node = get_node("/root/SkillTree")
+		var cur_lv: int = st.call("get_skill_level", id)
+		var unlocked: bool = cur_lv > 0
+		var purchasable: bool = st.call("can_purchase", id)
+		
+		var icon_col = base_color
+		if not unlocked and not purchasable:
+			icon_col = icon_col.lerp(Color(0.25, 0.27, 0.32), 0.4)
+		elif purchasable:
+			icon_col = icon_col.lightened(0.1)
+			
+		texture_rect.texture = TechIcon.make(tier, icon_col)
 
 var _zoom: float = 1.0
 

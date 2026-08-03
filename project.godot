@@ -43,6 +43,10 @@ window/size/mode=3
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 
+[editor]
+
+movie_writer/movie_file="/Users/sasete/Projects/iBright/Voidle/Trailer.avi"
+
 [physics]
 
 3d/physics_engine="Jolt Physics"

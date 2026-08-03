@@ -102,7 +102,8 @@ func _ready() -> void:
 	elif random_on_start:
 		load_system(SolarData.from_seed(randi() % 99999))
 	else:
-		load_system(SolarData.from_seed(debug_seed))
+		if not has_meta("is_trailer"):
+			load_system(SolarData.from_seed(debug_seed))
 
 	_is_ready = true
 

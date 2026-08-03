@@ -91,6 +91,7 @@ func _ready() -> void:
 		_zoom   = 2.5
 
 func _build_right_panel() -> void:
+	if has_meta("is_trailer"): return
 	var panel := PanelContainer.new()
 	var ps := StyleBoxFlat.new()
 	ps.bg_color    = Color(0.04, 0.05, 0.10, 0.92)

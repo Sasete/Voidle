@@ -56,6 +56,10 @@ func _get_planet_params() -> Dictionary:
 func _get_rotation() -> float:
 	if _planet and _planet.has_method("get_rotation_offset"):
 		return _planet.get_rotation_offset()
+	if _planet and _planet.material and _planet.material is ShaderMaterial:
+		var rot = _planet.material.get_shader_parameter("rotation_offset")
+		if rot != null:
+			return float(rot)
 	return 0.0
 
 func _process(_delta: float) -> void:
@@ -121,7 +125,7 @@ func spawn_floating_text_at_screen(screen_pos: Vector2, text: String, color: Col
 		"fixed": true
 	})
 
-func spawn_floating_text(lon_deg: float, lat_deg: float, text: String, color: Color = Color.WHITE, font_size: int = 14, icon: Texture2D = null) -> void:
+func spawn_floating_text(lon_deg: float, lat_deg: float, text: String, color: Color = Color.WHITE, font_size: int = 14, icon: Texture2D = null, duration: float = 2.5) -> void:
 	# Stagger multiple texts spawned at same location so they don't overlap
 	var same_count := 0
 	for ft in _floating_texts:
@@ -145,7 +149,7 @@ func spawn_floating_text(lon_deg: float, lat_deg: float, text: String, color: Co
 		"text": text,
 		"color": color,
 		"time": same_count * 0.35,
-		"max_time": 2.5 + same_count * 0.35,
+		"max_time": duration + same_count * 0.15,
 		"visible": true,
 		"screen": init_screen,
 		"alpha": 1.0,
@@ -170,7 +174,9 @@ func _draw() -> void:
 		var text_alpha: float = (1.0 - progress * progress) * ft.alpha
 		if text_alpha <= 0.0: continue
 		
-		var float_up_offset := Vector2(0, -progress * 40.0 - ft.get("y_offset", 0.0))
+		# Hız, duration ile ters orantılı. Normalde 40.0. Eğer duration kısaysa (1.0 gibi) 100 piksel uçar.
+		var float_speed = 100.0 / max(0.5, ft.max_time)
+		var float_up_offset := Vector2(0, -progress * float_speed - ft.get("y_offset", 0.0))
 		var pos: Vector2 = to_local(ft.screen) + float_up_offset
 		
 		var c: Color = ft.color
@@ -202,25 +208,38 @@ func _draw() -> void:
 		var poi: Dictionary = _pois[i]
 
 		# ── Night-side glow ──────────────────────────────────────────────────────
-		# Draw city-light glow only for POIs that face the camera (sz > 0)
-		# but have low alpha (near the terminator / in shadow from the light).
-		# Back-facing POIs (sz ≤ 0) project inside the planet disc and must
-		# NOT draw anything — otherwise they appear as stray 1-px yellow dots.
 		var poi_sz: float = poi.get("sz", 1.0)
 		var data_dict: Dictionary = poi.get("data", {}) as Dictionary
 		var night_size: int = data_dict.get("night_size", 0)
-		if night_size > 0 and poi_sz > 0.05 and poi["alpha"] < 0.55:
+		
+		# Işık yönünü shaderdan çek
+		var ld := Vector3(0.6, -0.55, 0.65)
+		if _planet and _planet.material is ShaderMaterial:
+			var param = _planet.material.get_shader_parameter("light_direction")
+			if param != null:
+				ld = param
+		ld = ld.normalized()
+		
+		var rot2: float = _get_rotation()
+		var lon2: float = poi["lon"] - rot2
+		var lat2: float = poi["lat"]
+		var nx2: float = sin(lon2) * cos(lat2)
+		var ny2: float = -sin(lat2)
+		var nz2: float = cos(lon2) * cos(lat2)
+		
+		var n_dot_l: float = nx2 * ld.x + ny2 * ld.y + nz2 * ld.z
+		
+		# Eğer noktanın normali ile ışık yönü arasındaki açı ışık almıyorsa (Gece)
+		if night_size > 0 and poi_sz > 0.05 and n_dot_l < 0.2:
 			var p2 := _get_planet_params()
 			if not p2.is_empty():
 				var center2: Vector2 = p2["center"]
 				var r_px2: float     = p2["r_px"]
-				var rot2: float      = _get_rotation()
-				var lon2: float = poi["lon"] - rot2
-				var lat2: float = poi["lat"]
 				var sx2  := sin(lon2) * cos(lat2)
 				var sy2  := -sin(lat2)
-				# Fade glow as POI approaches the terminator (alpha rising toward 0.55)
-				var night_a: float = clampf((0.55 - poi["alpha"]) * 3.0, 0.0, 1.0)
+				
+				# Işıktan uzaklaştıkça karanlık (night_a) artar
+				var night_a: float = clampf((0.2 - n_dot_l) * 4.0, 0.0, 1.0)
 				var glow_r: float  = clampf(
 					NIGHT_GLOW_MIN + float(night_size - 1) * 0.8,
 					NIGHT_GLOW_MIN, NIGHT_GLOW_MAX)
@@ -230,6 +249,8 @@ func _draw() -> void:
 				draw_circle(sp2, glow_r,        Color(1.0, 0.95, 0.65, night_a * 0.38))
 				draw_circle(sp2, maxf(glow_r * 0.5, 0.5),
 					Color(1.0, 1.0, 0.92, night_a * 0.65))
+
+		var is_fake: bool = data_dict.get("fake", false)
 
 		if not poi["visible"]:
 			continue
@@ -257,26 +278,31 @@ func _draw() -> void:
 		var dot_col := Color(1.0, 0.95, 0.5, alpha) if active else Color(1.0, 0.82, 0.25, alpha)
 		var dot_r   := DOT_HOVER_RADIUS if active else DOT_RADIUS
 
-		# dot — circle normally, filled square when hovered or selected
-		if active:
-			var half := dot_r
-			draw_rect(Rect2(sp - Vector2(half + 1.5, half + 1.5), Vector2((half + 1.5) * 2, (half + 1.5) * 2)),
-				Color(0, 0, 0, alpha * 0.55))
-			draw_rect(Rect2(sp - Vector2(half, half), Vector2(half * 2, half * 2)), dot_col)
-			var ring := half + 3.5
-			var ring_col := Color(1.0, 0.95, 0.5, alpha * 0.80) if selected else Color(1.0, 0.95, 0.5, alpha * 0.55)
-			draw_rect(Rect2(sp - Vector2(ring, ring), Vector2(ring * 2, ring * 2)),
-				ring_col, false, 1.2 if hovered else 1.5)
-		else:
-			draw_circle(sp, dot_r + 1.5, Color(0, 0, 0, alpha * 0.5))
-			draw_circle(sp, dot_r, dot_col)
+		# Sadece animasyon için oluşturulan sahte ışıklarda dot çizilmesin
+		if not is_fake:
+			# dot — circle normally, filled square when hovered or selected
+			if active:
+				var half := dot_r
+				draw_rect(Rect2(sp - Vector2(half + 1.5, half + 1.5), Vector2((half + 1.5) * 2, (half + 1.5) * 2)),
+					Color(0, 0, 0, alpha * 0.55))
+				draw_rect(Rect2(sp - Vector2(half, half), Vector2(half * 2, half * 2)), dot_col)
+				var ring := half + 3.5
+				var ring_col := Color(1.0, 0.95, 0.5, alpha * 0.80) if selected else Color(1.0, 0.95, 0.5, alpha * 0.55)
+				draw_rect(Rect2(sp - Vector2(ring, ring), Vector2(ring * 2, ring * 2)),
+					ring_col, false, 1.2 if hovered else 1.5)
+			else:
+				draw_circle(sp, dot_r + 1.5, Color(0, 0, 0, alpha * 0.5))
+				draw_circle(sp, dot_r, dot_col)
+
+		var label: String = poi["label"]
+		if label == "":
+			continue
 
 		# leader lines
 		draw_line(sp, diag_end, col, 1.0, true)
 		draw_line(diag_end, horiz_end, col, 1.0, true)
 
 		# label
-		var label: String = poi["label"]
 		var text_size := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE)
 		var label_pos := horiz_end + Vector2(horiz_dir * 3.0, text_size.y * 0.35)
 		if horiz_dir < 0.0:
